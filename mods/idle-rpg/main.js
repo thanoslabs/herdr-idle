@@ -232,7 +232,8 @@ const PLATE_ICON_H = 18; // and under them, while the boss has a status or the p
 // Weapon effects (effects.js). Damage over time is gathered tick by tick and
 // lands once a second (as the attempt's time shown turns, when the plate is
 // drawn anyway; every DOT_TICKS ticks while it stands still), one sum per
-// class and status, so it adds no renders; burn in ember, venom in green.
+// class and status (plus the render on the next tick that starts its number's
+// fade, as for any blow); burn in ember, venom in green.
 const DOT_TICKS = 4;
 const DOT_COLOURS = { burn: "ember", venom: "venom" };
 const DOT_SPOT = { burn: -1, venom: 1 }; // its number shows left or right of the boss's middle
@@ -879,6 +880,9 @@ export default class RaidParty extends View {
       this.dots = Object.create(null);
     }
     if (blows.length && this.fight(blows)) changed = true;
+    // a number that popped in on the last tick starts its rise and fade on this one
+    // (an attacker's rest draws it; damage over time can land with nobody mid-attack)
+    if (this.damage.some((d) => d.tick === t - 1)) changed = true;
     // the attempt's time runs while the boss is alive and someone attacks it;
     // the plate shows whole seconds, so it is drawn again as each one passes
     if (keys.length && this.monster.hp > 0) {
