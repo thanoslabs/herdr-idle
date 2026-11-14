@@ -1,36 +1,67 @@
-// Idle RPG's game rules: experience, levels, skill points, the blows they buy,
-// gold, kill counts, and loading the saved state. Plain functions with no host
-// calls, so main.js does the drawing and these can be run on their own.
+// Idle RPG's game rules: stages, experience, levels, skill points, training,
+// the blows they buy, gold, kill counts, and loading the saved state. Plain
+// functions with no host calls, so main.js does the drawing and these can be
+// run on their own.
+//
+// The party fights the boss of a stage, numbered from 1, against the clock:
+// killing it in time clears the stage and pays gold; running out of time only
+// restarts the attempt. Boss HP grows exponentially with the stage, and gold
+// more slowly, so the party has to keep growing to push on.
 //
 // Progress never belongs to an agent (agents come and go): it belongs to you
-// and to the four classes. Every point of damage that lands earns experience
-// for the class of whoever dealt it, and for you, who leads the raid. Each
-// level a class gains earns it a skill point, spent on that class's skills,
-// which make every character on that class hit harder, faster or with a
-// chance of a critical blow. Killing a monster earns gold and counts towards
-// its kind. Gold buys looks in the shop, which also belong to a class: every
-// character with that class on wears its colourway, its weapon and its hat (a
-// hat, once bought, can be worn by any class). Levels are worked out from total
-// experience, never stored; skill ranks are stored, and points left are
-// worked out from levels and ranks. Settings (SETTINGS) are kept with the
-// rest of the state.
+// and to the four classes. Every blow that lands earns experience for the
+// class of whoever dealt it, and for you, who leads the raid, in proportion to
+// the share of the boss's HP it took. Each level a class gains makes it hit
+// harder and earns it a skill point, spent on that class's skills (harder,
+// faster, or a chance of a critical blow); gold trains a class to hit harder
+// still. All of it applies to every character on that class. Killing a boss
+// also counts towards its kind. Gold buys looks in the shop, which also belong
+// to a class: every character with that class on wears its colourway, its
+// weapon and its hat (a hat, once bought, can be worn by any class). Levels are
+// worked out from total experience, never stored; skill ranks and training
+// levels are stored, and points left are worked out from levels and ranks.
+// Settings (SETTINGS) are kept with the rest of the state.
 
 export const CLASSES = ["wizard", "healer", "warrior", "archer"];
 export const YOU = "you"; // the person's key in `sprites`, `xp` and as an open card
-export const STATE_VERSION = 5;
-// Each kind's HP, kept on a monster as `maxHp` when it turns up. The kinds are
-// the keys of MONSTERS in main.js, which draws them (each needs its pictures
-// in MONSTER_ART below too).
-export const MONSTER_HP = { slime: 100, ogre: 300, dragon: 500 };
-export const KINDS = Object.keys(MONSTER_HP);
-const OLD_MONSTER_HP = 100; // what every monster had before HP by kind, for one saved without `maxHp`
+export const STATE_VERSION = 6;
+// The kinds of boss, in the order the stages cycle through them (slime, ogre,
+// dragon, slime, ...). main.js draws them (MONSTERS there), each needs its
+// pictures in MONSTER_ART below.
+export const KINDS = ["slime", "ogre", "dragon"];
 
-// Defaults chosen to be retuned; nothing else depends on their values.
-export const CLASS_XP_PER_HP = 1; // to a class, per point of damage one of its characters deals
-export const PLAYER_XP_PER_HP = 1; // to you, per point of damage anyone in the party deals
+// Stages. Defaults chosen with a simulation (see PLAN.md) to be retuned; nothing
+// else depends on their values. Boss HP grows exponentially, by HP_GROWTH a
+// stage, times the stage number to HP_POWER, which makes the first stages
+// steeper (a fresh party has to start growing within a few stages, not hit a
+// wall at once); gold grows by GOLD_GROWTH, which is less: the further the
+// party gets, the longer the next stage takes.
+export const STAGE_HP = 50; // the stage 1 boss's HP
+export const HP_GROWTH = 1.175; // in the long run each stage's boss has this many times the HP of the one before
+export const HP_POWER = 0.75; // and early on more: HP also grows as the stage number to this power
+export const STAGE_MS = 30000; // the time limit of an attempt at any stage (see stageTime), counted only while someone attacks
+export const STAGE_GOLD = 2; // gold for killing the stage 1 boss
+export const GOLD_GROWTH = 1.12; // each stage's boss pays this many times the gold of the one before (rounded down)
+export const STAGE_XP = 60; // experience a whole kill at stage 1 earns, shared out by the damage each blow dealt
+export const XP_GROWTH = 1.04; // each stage's kill earns this many times the experience of the one before
+export const MAX_STAGE = 1000; // the furthest stage believed (a saved one past it is cut down)
+
+// Damage. A blow deals BASE_DAMAGE times the class's level bonus, training
+// bonus and Power bonus; a critical one CRIT_MULTIPLIER times that.
+export const BASE_DAMAGE = 10; // a blow by a class at level 1, untrained, Power 0
+export const LEVEL_BONUS = 0.12; // added to the damage multiplier per class level past 1 (level 11: x2.2)
 export const CLASS_LEVEL_XP = 100; // a class goes from level n to n + 1 for CLASS_LEVEL_XP * n
 export const PLAYER_LEVEL_XP = 250; // you go from level n to n + 1 for PLAYER_LEVEL_XP * n
-export const HP_PER_GOLD = 100; // gold on a kill: one per this much of the monster's max HP
+export const PLAYER_XP_SHARE = 1; // you earn this many times what the classes earn, from every blow
+
+// Training: gold makes a class hit harder, one level at a time, each level
+// dearer than the last. A kind of training is { key, name }; "attack" is the
+// only one for now (a "health" one comes with monsters fighting back).
+export const TRAINING = [{ key: "attack", name: "Attack" }];
+export const TRAINING_BONUS = 1.12; // damage multiplier per level of Attack training (compounding)
+export const TRAINING_PRICE = 3; // gold for the first level
+export const TRAINING_PRICE_GROWTH = 1.25; // each level costs this many times the one before (rounded down)
+export const MAX_TRAINING = 1000; // the most levels believed (a saved number past it is cut down)
 
 // Skills. Every class has the same three for now; CLASS_SKILLS keeps a list per
 // class so one can get its own later. Ranks are per class, so a skill applies
@@ -40,8 +71,7 @@ export const CLASS_SKILLS = Object.fromEntries(CLASSES.map((c) => [c, SKILLS]));
 export const POINTS_PER_LEVEL = 1; // skill points a class earns per level past 1
 export const RANK_COST = 1; // skill points per rank
 export const MAX_RANK = 5;
-export const BASE_DAMAGE = 1; // a blow at Power 0
-export const POWER_DAMAGE = 1; // added to every blow per rank of Power
+export const POWER_BONUS = 0.2; // added to the damage multiplier per rank of Power
 export const CRIT_CHANCE = 0.05; // chance of a critical blow per rank of Crit
 export const CRIT_MULTIPLIER = 2; // a critical blow deals this many times the damage
 
@@ -196,13 +226,36 @@ export function monsterArt(kind, part = "idle") {
 // The settings menu (the gear in the top-right corner): one switch per entry,
 // in this order, each { key, name, default }. A setting is a boolean saved under
 // `settings.<key>`; adding one is adding an entry here and reading it in main.js.
-export const SETTINGS = [{ key: "damageNumbers", name: "Show damage numbers", default: true }];
+export const SETTINGS = [
+  { key: "damageNumbers", name: "Show damage numbers", default: true },
+  { key: "advance", name: "Advance after a kill", default: true }, // else a kill repeats the stage (farming)
+];
 
 // The pixel font (main.js lays numbers out with it): the characters it has,
 // each drawn in every one of GLYPH_COLOURS by tools/idle-rpg-sprites.py.
-export const GLYPHS = "0123456789+!";
+// Digits, a sign or two, and what shortNumber writes: a point and K, M, B, T.
+export const GLYPHS = "0123456789+!.KMBT";
 export const GLYPH_COLOURS = ["white", "gold"];
-const GLYPH_NAMES = { "+": "plus", "!": "bang" };
+const GLYPH_NAMES = { "+": "plus", "!": "bang", ".": "point", K: "k", M: "m", B: "b", T: "t" };
+// How many art px wide each character is without its outline (3 unless named
+// here); main.js sets them one art px apart, sharing an outline column.
+const GLYPH_WIDTHS = { ".": 1 };
+export const glyphWidth = (ch) => GLYPH_WIDTHS[ch] ?? 3;
+
+// A number as the game shows it (damage, HP): rounded to a whole number, and
+// from 1,000 up shortened with K, M, B or T, one decimal while under 10 of
+// them ("1.2K", "12K", "345M"), and past that in T ("12000T"). Anything that
+// is not a number from 0 up is "0".
+const UNITS = ["", "K", "M", "B", "T"];
+export function shortNumber(n) {
+  if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return "0";
+  if (Math.round(n) < 1000) return String(Math.round(n));
+  for (let i = 1; ; i++) {
+    const x = n / 1000 ** i;
+    const r = x < 9.95 ? Math.round(x * 10) / 10 : Math.round(x);
+    if (r < 1000 || i === UNITS.length - 1) return `${r}${UNITS[i]}`;
+  }
+}
 
 // The path in art/ of one character of the pixel font in `colour`
 // ("font/gold/7.png", "font/white/plus.png"), or null for a character or
@@ -213,11 +266,15 @@ export function glyphArt(colour, ch) {
 }
 
 const MAX = Number.MAX_SAFE_INTEGER;
-const MAX_MONSTER_HP = 1e6; // the most a saved monster is believed to have
 
 // A count read back from disk: a whole number from 0 up, else 0.
 function count(v) {
   return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.min(Math.floor(v), MAX) : 0;
+}
+
+// An amount read back from disk: a number from 0 up, fractions kept, else 0.
+function amount(v) {
+  return typeof v === "number" && Number.isFinite(v) && v > 0 ? Math.min(v, MAX) : 0;
 }
 
 function finite(v) {
@@ -267,14 +324,36 @@ export function levelOf(xp, step) {
 export const classLevel = (xp) => levelOf(xp, CLASS_LEVEL_XP);
 export const playerLevel = (xp) => levelOf(xp, PLAYER_LEVEL_XP);
 
-// Gold for killing a monster with `maxHp`, rounded down.
-export function goldFor(maxHp) {
-  return Math.floor(count(maxHp) / HP_PER_GOLD);
+// A stage number as the rules take it: a whole number from 1 to MAX_STAGE
+// (anything else is 1).
+export function stageOf(s) {
+  return typeof s === "number" && Number.isFinite(s) && s >= 1 ? Math.min(Math.floor(s), MAX_STAGE) : 1;
 }
 
-// The HP a new monster of `kind` turns up with.
-export function monsterHp(kind) {
-  return MONSTER_HP[kind] ?? OLD_MONSTER_HP;
+// The kind of boss at stage `s`: slime, ogre, dragon, slime, ...
+export const stageKind = (s) => KINDS[(stageOf(s) - 1) % KINDS.length];
+
+// The HP of stage `s`'s boss: STAGE_HP x HP_GROWTH^(s-1) x s^HP_POWER, a real number.
+export const bossHp = (s) => STAGE_HP * HP_GROWTH ** (stageOf(s) - 1) * stageOf(s) ** HP_POWER;
+
+// Gold for killing stage `s`'s boss, rounded down: exponential too, but slower.
+export const stageGold = (s) => Math.min(Math.floor(STAGE_GOLD * GOLD_GROWTH ** (stageOf(s) - 1)), MAX);
+
+// Experience a whole kill at stage `s` earns (each blow earns its share, see credit).
+export const stageXp = (s) => STAGE_XP * XP_GROWTH ** (stageOf(s) - 1);
+
+// How long an attempt at stage `s` has, in ms.
+export const stageTime = (_s) => STAGE_MS;
+
+// Stage `s`'s boss at full HP: { kind, hp, maxHp, stage, id }.
+export function bossOf(s, id = 1) {
+  const stage = stageOf(s);
+  return { kind: stageKind(stage), hp: bossHp(stage), maxHp: bossHp(stage), stage, id };
+}
+
+// A class's training with every kind at 0: { attack: 0 }.
+function noTraining() {
+  return Object.fromEntries(TRAINING.map((t) => [t.key, 0]));
 }
 
 // A class's skill ranks with every rank at 0: { power: 0, haste: 0, crit: 0 }.
@@ -298,11 +377,14 @@ function noLooks() {
 // Fresh progress: what a new party starts with.
 export function newProgress() {
   return {
+    stage: 1, // the stage being fought
+    best: 1, // the highest stage reached: every one up to it can be picked
     slain: 0,
     gold: 0,
     kills: Object.fromEntries(KINDS.map((k) => [k, 0])),
     xp: Object.fromEntries([YOU, ...CLASSES].map((k) => [k, 0])),
     skills: Object.fromEntries(CLASSES.map((c) => [c, noRanks(c)])),
+    training: Object.fromEntries(CLASSES.map((c) => [c, noTraining()])),
     looks: noLooks(),
     ...Object.fromEntries(SHARED.map(([, key]) => [key, []])), // hats: [<id>], bought for every class
   };
@@ -358,16 +440,64 @@ export function resetSkills(progress, cls) {
 }
 
 // What each rank gives. `ranks` is a class's ranks; a missing one counts as 0.
-export const damageOf = (ranks) => BASE_DAMAGE + POWER_DAMAGE * rank(ranks, "power");
+export const powerOf = (ranks) => 1 + POWER_BONUS * rank(ranks, "power");
 export const critChanceOf = (ranks) => CRIT_CHANCE * rank(ranks, "crit");
 export const attackTicksOf = (ranks) => ATTACK_TICKS[rank(ranks, "haste")];
 
-// One blow by a character whose class has `ranks`, given a random number `r`
-// from 0 up to 1: { damage, crit }. It is critical when `r` falls under the
-// crit chance.
-export function blow(ranks, r) {
-  const crit = r < critChanceOf(ranks);
-  return { damage: damageOf(ranks) * (crit ? CRIT_MULTIPLIER : 1), crit };
+// The damage multiplier a class's level gives.
+export const levelBonus = (xp) => 1 + LEVEL_BONUS * (classLevel(xp).level - 1);
+
+// A class's level of training `key` (one of TRAINING), 0 if none.
+export function trainingOf(progress, cls, key = "attack") {
+  return count(progress.training?.[cls]?.[key]);
+}
+
+// The damage multiplier `level` levels of Attack training give.
+export const trainingBonus = (level) => TRAINING_BONUS ** Math.min(count(level), MAX_TRAINING);
+
+// What the next level of training costs from `level`, in gold.
+export const trainingPrice = (level) => Math.min(Math.floor(TRAINING_PRICE * TRAINING_PRICE_GROWTH ** Math.min(count(level), MAX_TRAINING)), MAX);
+
+// The damage of one plain blow by a character of class `cls`: BASE_DAMAGE
+// times the class's level bonus, training bonus and Power. A real number;
+// shown rounded (shortNumber). An unknown class deals BASE_DAMAGE.
+export function damageOf(progress, cls) {
+  if (!CLASSES.includes(cls)) return BASE_DAMAGE;
+  return BASE_DAMAGE * levelBonus(progress.xp?.[cls]) * trainingBonus(trainingOf(progress, cls)) * powerOf(progress.skills?.[cls]);
+}
+
+// One blow by a character of class `cls`, given a random number `r` from 0 up
+// to 1: { damage, crit }. It is critical when `r` falls under the class's crit
+// chance.
+export function blow(progress, cls, r) {
+  const crit = r < critChanceOf(progress.skills?.[cls]);
+  return { damage: damageOf(progress, cls) * (crit ? CRIT_MULTIPLIER : 1), crit };
+}
+
+// Whether `cls` can buy its next level of training `key`: a class, a kind of
+// training, below MAX_TRAINING, and the gold is there.
+export function canTrain(progress, cls, key = "attack") {
+  if (!CLASSES.includes(cls) || !TRAINING.some((t) => t.key === key)) return false;
+  const level = trainingOf(progress, cls, key);
+  return level < MAX_TRAINING && count(progress.gold) >= trainingPrice(level);
+}
+
+// Buys `cls` its next level of training `key` if it can: the price comes off
+// the gold. Returns whether it did.
+export function train(progress, cls, key = "attack") {
+  if (!canTrain(progress, cls, key)) return false;
+  const level = trainingOf(progress, cls, key);
+  progress.gold = count(progress.gold) - trainingPrice(level);
+  ((progress.training ??= {})[cls] ??= noTraining())[key] = level + 1;
+  return true;
+}
+
+// Moves the fight to stage `s` if it is one the party has reached (1 to
+// `best`) and not the one it is on. Returns whether it changed.
+export function selectStage(progress, s) {
+  if (typeof s !== "number" || !Number.isInteger(s) || s < 1 || s > progress.best || s === progress.stage) return false;
+  progress.stage = s;
+  return true;
 }
 
 // How many ticks after one attack starts the next one does, given a random
@@ -387,26 +517,47 @@ export function firstAttack(ranks, r) {
   return 1 + Math.min(base - 1, Math.floor(r * base));
 }
 
-// Credits `hp` points of damage that landed, dealt by a character of class
-// `cls`: experience to that class and to you. Returns the keys (the class,
-// YOU) that went up a level on it, in that order.
-export function credit(progress, cls, hp = 1) {
+// Experience earned by `hp` damage landing on `monster` ({ maxHp, stage }):
+// that share of its HP, of what a whole kill at its stage earns. So a class
+// earns by the share of the fight it carries, and levels do not run away as
+// damage grows.
+export function blowXp(hp, monster) {
+  const maxHp = monster?.maxHp;
+  if (!finite(hp) || hp <= 0 || !finite(maxHp) || maxHp <= 0) return 0;
+  return (Math.min(hp, maxHp) / maxHp) * stageXp(monster.stage);
+}
+
+// Credits `hp` points of damage that landed on `monster`, dealt by a
+// character of class `cls`: experience to that class and to you (see blowXp).
+// Returns the keys (the class, YOU) that went up a level on it, in that order.
+// Experience is a real number; levels count only whole points.
+export function credit(progress, cls, hp, monster) {
   const up = [];
-  const gain = (key, by, levels) => {
+  const by = blowXp(hp, monster);
+  const gain = (key, add, levels) => {
     const before = levels(progress.xp[key]).level;
-    progress.xp[key] = Math.min(count(progress.xp[key]) + by, MAX);
+    const now = finite(progress.xp[key]) && progress.xp[key] > 0 ? progress.xp[key] : 0;
+    progress.xp[key] = Math.min(now + add, MAX);
     if (levels(progress.xp[key]).level > before) up.push(key);
   };
-  if (CLASSES.includes(cls)) gain(cls, hp * CLASS_XP_PER_HP, classLevel);
-  gain(YOU, hp * PLAYER_XP_PER_HP, playerLevel);
+  if (by <= 0) return up;
+  if (CLASSES.includes(cls)) gain(cls, by, classLevel);
+  gain(YOU, by * PLAYER_XP_SHARE, playerLevel);
   return up;
 }
 
-// Books a kill: the total, the count for its kind and the gold.
-export function slay(progress, monster) {
-  progress.slain = Math.min(progress.slain + 1, MAX);
-  if (KINDS.includes(monster.kind)) progress.kills[monster.kind] = Math.min(progress.kills[monster.kind] + 1, MAX);
-  progress.gold = Math.min(progress.gold + goldFor(monster.maxHp), MAX);
+// Books a kill of `monster` ({ kind, stage }): the total, the count for its
+// kind and its stage's gold, and the stage cleared: the next one is reached
+// (`best`), and with `advance` (the setting) the fight moves on to it, else
+// it stays to farm this one.
+export function slay(progress, monster, advance = true) {
+  const stage = stageOf(monster.stage);
+  progress.slain = Math.min(count(progress.slain) + 1, MAX);
+  if (KINDS.includes(monster.kind)) progress.kills[monster.kind] = Math.min(count(progress.kills[monster.kind]) + 1, MAX);
+  progress.gold = Math.min(count(progress.gold) + stageGold(stage), MAX);
+  const next = Math.min(stage + 1, MAX_STAGE);
+  if (next > progress.best) progress.best = next;
+  if (advance && progress.stage === stage) progress.stage = next;
 }
 
 // What the shop sells of `kind` for class `cls`: [{ id, name, price }], the
@@ -566,15 +717,14 @@ export function settingsOf(saved) {
   return Object.fromEntries(SETTINGS.map(({ key, default: on }) => [key, record(saved) && has(saved, key) && typeof saved[key] === "boolean" ? saved[key] : on]));
 }
 
-// The saved monster, or null if it is not one: { kind, hp, maxHp, id, slainAt? }.
-// An absurd max HP is cut down, and a time of death in the future is brought
-// back to now, so neither can leave a monster that never falls or never leaves.
-function monsterOf(m, now) {
-  if (!record(m) || !KINDS.includes(m.kind)) return null;
-  const maxHp = Math.min(count(m.maxHp) || OLD_MONSTER_HP, MAX_MONSTER_HP);
-  const out = { kind: m.kind, hp: Math.min(count(m.hp), maxHp), maxHp, id: count(m.id) };
-  if (finite(m.slainAt)) out.slainAt = Math.max(0, Math.min(m.slainAt, now));
-  return out;
+// The version that first had stages and training: state saved before it
+// starts at stage 1 with no training, whatever it says.
+const STAGES_SINCE = 6;
+
+// A class's saved training: each kind a whole number from 0 up (anything else
+// is 0), cut down to MAX_TRAINING.
+function trainingOfSaved(saved) {
+  return Object.fromEntries(TRAINING.map(({ key }) => [key, Math.min(record(saved) && has(saved, key) ? count(saved[key]) : 0, MAX_TRAINING)]));
 }
 
 // A class's saved skill ranks, given its experience `xp`. Each rank must be a
@@ -591,19 +741,26 @@ function ranksOf(saved, cls, xp) {
 
 // The saved state as this version keeps it, from whatever was read back:
 // older versions without the progress fields, skill ranks, looks, weapons,
-// hats or settings, or anything malformed. Never throws; a bad field falls back to
-// its default, a bad entry is dropped.
+// hats, settings, stages or training, or anything malformed. Never throws; a
+// bad field falls back to its default, a bad entry is dropped. The boss is
+// not saved: an attempt starts afresh at the saved stage when the layout
+// loads (main.js makes it, see bossOf).
 //
 // State written by a later version keeps its version number: this version can
 // read what it knows of it, but must not save over it (see save in main.js),
 // since it would drop whatever it does not know.
-export function loadState(saved, now = Date.now()) {
+export function loadState(saved) {
   const s = record(saved) ? saved : {};
   const fresh = newProgress();
-  const xp = Object.fromEntries(Object.keys(fresh.xp).map((k) => [k, count(record(s.xp) ? s.xp[k] : 0)]));
+  // experience is a real number from 0 up (blows earn fractions of a point)
+  const xp = Object.fromEntries(Object.keys(fresh.xp).map((k) => [k, amount(record(s.xp) ? s.xp[k] : 0)]));
   // version 3 and before sold no hats: none owned. Every class sells the same
   // hats, so the first class's catalogue checks them.
   const shared = Object.fromEntries(SHARED.map(([kind, key]) => [key, kept(has(s, key) ? s[key] : undefined, catalogue(CLASSES[0], kind))]));
+  // version 5 and before had no stages or training: stage 1, nothing trained
+  const staged = count(s.version) >= STAGES_SINCE;
+  const best = staged ? stageOf(s.best) : 1;
+  const training = record(s.training) && staged ? s.training : {};
   return {
     version: Math.max(STATE_VERSION, count(s.version)),
     you: point(s.you) ?? { x: 154, y: 16 },
@@ -611,7 +768,9 @@ export function loadState(saved, now = Date.now()) {
     sprites: entries(s.sprites, (c) => (CLASSES.includes(c) ? c : undefined)),
     seen: entries(s.seen, (t) => (finite(t) ? t : undefined)),
     battle: typeof s.battle === "boolean" ? s.battle : true,
-    monster: monsterOf(s.monster, now),
+    // the stage being fought is one reached, else the highest reached
+    stage: staged && stageOf(s.stage) === s.stage && s.stage <= best ? s.stage : best,
+    best,
     // `slain` predates the counts by kind, which start from zero
     slain: count(s.slain),
     gold: count(s.gold),
@@ -619,11 +778,12 @@ export function loadState(saved, now = Date.now()) {
     xp,
     // version 1 had no skills: every rank starts at 0
     skills: Object.fromEntries(CLASSES.map((c) => [c, ranksOf(record(s.skills) ? s.skills[c] : undefined, c, xp[c])])),
+    training: Object.fromEntries(CLASSES.map((c) => [c, trainingOfSaved(has(training, c) ? training[c] : undefined)])),
     // versions 1 and 2 had no shop: every class owns and wears its default;
     // versions 1 to 4 sold no weapons: every class owns and holds its default
     looks: Object.fromEntries(CLASSES.map((c) => [c, looksOf(record(s.looks) && has(s.looks, c) ? s.looks[c] : undefined, c, shared, count(s.version))])),
     ...shared, // hats: [<id>], owned by every class
-    // versions 1 to 3 had no settings: every one starts at its default
+    // versions 1 to 3 had no settings, and 1 to 5 not "advance": each starts at its default
     settings: settingsOf(s.settings),
   };
 }

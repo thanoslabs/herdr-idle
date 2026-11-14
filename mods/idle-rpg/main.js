@@ -12,17 +12,23 @@
 // and drag an agent: it dangles from the
 // pointer; let go to drop it where it is (it falls to the floor). Spots and
 // classes are remembered.
-// Battle mode (the Start Raid / Return to town button by the sign): a random monster stands in the middle
-// (a slime has 100 HP, an ogre 300, a dragon 500) and the party forms up
-// around it, warriors up close and everyone else at range. Every working agent
-// attacks in its own way (a swing, an arrow or bolt, a spell, a thrown potion,
-// each looking like the weapon its class holds) on its own rhythm, every 3
-// seconds or less; when the monster falls another one turns up. Turning it off sends everyone back to their spots.
-// Progress (rules.js): every point of damage that lands earns experience for
-// the attacker's class and for you; a kill earns gold. Each class level earns
-// that class a skill point, spent in the skills panel on Power (damage),
-// Haste (attack speed) or Crit (double damage now and then). Levels show on
-// the cards and the class choices, gold, kills and points to spend on the sign.
+// Battle mode (the Start Raid / Return to town button by the sign): the boss
+// of a stage stands in the middle (stages cycle slime, ogre, dragon, their HP
+// growing with the stage) and the party forms up around it, warriors up close
+// and everyone else at range. Every working agent attacks in its own way (a
+// swing, an arrow or bolt, a spell, a thrown potion, each looking like the
+// weapon its class holds) on its own rhythm, every 3 seconds or less. Each
+// attempt has a time limit, shown on the name plate, that runs only while
+// someone attacks: a kill in time clears the stage (and, with the "Advance
+// after a kill" setting, moves on to the next); time running out brings the
+// same boss back at full HP. Arrows on the plate pick any stage reached, to
+// farm. Turning battle mode off sends everyone back to their spots.
+// Progress (rules.js): every blow that lands earns experience for the
+// attacker's class and for you; a kill earns gold. Each class level makes the
+// class hit harder and earns it a skill point, spent in the skills panel on
+// Power (damage), Haste (attack speed) or Crit (double damage now and then);
+// gold buys the class Attack training there. Levels show on the cards and the
+// class choices, gold, kills and points to spend on the sign.
 // Gold buys colourways, weapons and hats for a class in the shop (the coin on
 // the sign); everyone with that class on wears what it has equipped. A hat is
 // bought once for every class, and each class picks its own. A weapon changes
@@ -40,18 +46,22 @@ import {
   CLASSES,
   CLASS_SKILLS,
   MAX_RANK,
+  POWER_BONUS,
   SHOP,
   SHOP_KINDS,
   STATE_VERSION,
   TICK_STEP,
+  TRAINING,
   YOU,
   attackArt,
   attackGap,
   attackTicksOf,
   blow,
+  bossOf,
   buy,
   canBuy,
   canRaise,
+  canTrain,
   catalogue,
   classLevel,
   credit,
@@ -61,11 +71,11 @@ import {
   equipped,
   firstAttack,
   glyphArt,
+  glyphWidth,
   hatArt,
   loadState,
   lookArt,
   monsterArt,
-  monsterHp,
   owns,
   playerLevel,
   pointsEarned,
@@ -75,7 +85,14 @@ import {
   raise,
   resetSkills,
   SETTINGS,
+  selectStage,
+  shortNumber,
   slay,
+  stageTime,
+  train,
+  trainingBonus,
+  trainingOf,
+  trainingPrice,
   weaponArt,
 } from "./rules.js";
 
@@ -87,11 +104,11 @@ const ART = "mods/idle-rpg/art";
 // attackArt, monsterArt, glyphArt), and the rest are named where they are drawn.
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
-//   seen, battle, monster, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
-//   skills: { <class>: { power, haste, crit } },
+//   seen, battle, stage, best, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
+//   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
-//   hats: [<id>], settings: { damageNumbers } }
-//   (hats are owned by every class; see loadState)
+//   hats: [<id>], settings: { damageNumbers, advance } }
+//   (hats are owned by every class; the boss is not saved, see loadState)
 const STATE = "idle-rpg.state";
 const randomClass = () => CLASSES[Math.floor(Math.random() * CLASSES.length)];
 const STATUS = {
@@ -140,8 +157,8 @@ const SHOP_NAV_W = 78; // the kinds of item down the shop's left side
 const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
 const SHOP_ICONS = { armour: "icons/armour.png", weapon: "status/sword-l.png", hat: "icons/hat.png" };
 // Battle mode. Sizes are on-screen px (art px x 4, plus the outline). A new
-// kind also needs its HP in MONSTER_HP in rules.js, which lists the kinds, and
-// its pictures in MONSTER_ART there.
+// kind also needs to be in KINDS in rules.js, the order the stages cycle
+// through, and its pictures in MONSTER_ART there.
 const MONSTERS = {
   slime: { name: "Slime", w: 136, h: 104, core: { x: 0, y: 44, r: 18, half: 60 } },
   ogre: { name: "Ogre", w: 200, h: 200, core: { x: 0, y: 86, r: 24, half: 62 } },
@@ -152,9 +169,12 @@ const MONSTERS = {
 // half the bulk's width, which is how close a warrior stands. The picture is
 // often much wider than that (the dragon's head, wings and tail).
 const WATCH_MS = 1000; // how often to look for a monster due, or someone ready to attack
-const RESPAWN_MS = 9000; // how long a fallen monster lies there before the next
+const RESPAWN_MS = 3000; // how long a fallen boss lies there before the next (its fade takes 1.6s)
+const TIMES_UP_FRESH = 1000; // the "Time's up!" note over the plate shows this long,
+const TIMES_UP_MS = 2600; // then fades out until this long after the attempt ran out
 const MONSTER_Y = 108; // where its feet are on the floor
 const BAR_W = 120;
+const PLATE_H = 50; // the boss's name plate: the stage line, the name and HP, the health bar, the time bar
 const MELEE = 90; // how close to the monster's bulk a warrior must be to reach it
 const SWORD = 44; // how far outside the bulk a warrior stands, so the swing lands on it
 const RANGE = 360; // how far the ranged classes stand from the monster: five characters
@@ -190,11 +210,16 @@ const HUD_EDGE = 10; // from the scene's right edge
 const HUD_H = 36; // the strip's height: the icons (3 screen px per art px) and its padding
 const HUD_NARROW = 640;
 // What a class's skill ranks give, in words, for the skills panel.
+// `p` is the progress, `c` the class, `ranks` its ranks.
 const SKILL_TEXT = {
-  power: (ranks) => `${damageOf(ranks)} damage`,
-  haste: (ranks) => `attacks every ${(attackTicksOf(ranks) * TICK_STEP) / 1000}s`,
-  crit: (ranks) => `${Math.round(critChanceOf(ranks) * 100)}% crit`,
+  power: (p, c, ranks) => `${shortNumber(damageOf(p, c))} damage (+${Math.round(POWER_BONUS * (ranks.power ?? 0) * 100)}%)`,
+  haste: (_p, _c, ranks) => `attacks every ${(attackTicksOf(ranks) * TICK_STEP) / 1000}s`,
+  crit: (_p, _c, ranks) => `${Math.round(critChanceOf(ranks) * 100)}% crit`,
 };
+// The left and right arrows beside "Stage N" on the boss's name plate.
+const STAGE_ARROWS = { prev: "icons/prev.png", next: "icons/next.png" };
+// A multiplier as the training line shows it: "x1.12", "x24.5", "x1.2K".
+const times = (x) => `x${x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : shortNumber(x)}`;
 const GOLD = "#ffd166";
 
 function clamp(n, lo, hi) {
@@ -217,20 +242,29 @@ function tally(list) {
     .filter((t) => t.n > 0);
 }
 
-// Text in the pixel font (GLYPHS in rules.js: digits, "+" and "!"), as a row of
-// glyph pictures `scale` screen px per art px, in one of GLYPH_COLOURS. Each
-// glyph is 5x7 art px with its outline, set 4 apart so neighbours share an
-// outline column. Characters the font does not have are left out.
-// textW gives the width it takes up.
+// Text in the pixel font (GLYPHS in rules.js: digits, "+", "!", and the point
+// and K, M, B, T of shortNumber), as a row of glyph pictures `scale` screen px
+// per art px, in one of GLYPH_COLOURS. Each glyph is its width (glyphWidth: 3
+// art px, the point 1) plus a px of outline each side, 7 high, and each is set
+// its width plus 1 after the last, so neighbours share an outline column.
+// Characters the font does not have are left out. textW gives the width it
+// takes up.
 const GLYPH_H = 7;
-const textW = (text, scale) => (4 * text.length + 1) * scale;
+const textW = (text, scale) => ([...text].filter((ch) => glyphArt("white", ch)).reduce((x, ch) => x + glyphWidth(ch) + 1, 0) + 1) * scale;
 function pixelText(text, colour, scale) {
-  const arts = [...text].map((ch) => glyphArt(colour, ch)).filter(Boolean);
+  const parts = [];
+  let x = 0;
+  for (const ch of text) {
+    const art = glyphArt(colour, ch);
+    if (!art) continue;
+    parts.push(div().absolute().left(x * scale).top(0).child(image(src(art)).w((glyphWidth(ch) + 2) * scale).h(GLYPH_H * scale)));
+    x += glyphWidth(ch) + 1;
+  }
   return div()
     .relative()
-    .w((4 * arts.length + 1) * scale)
+    .w((x + 1) * scale)
     .h(GLYPH_H * scale)
-    .children(arts.map((art, i) => div().absolute().left(4 * i * scale).top(0).child(image(src(art)).w(5 * scale).h(GLYPH_H * scale))));
+    .children(parts);
 }
 
 function ago(ms) {
@@ -267,8 +301,25 @@ export default class RaidParty extends View {
     this.sprites = saved.sprites;
     this.seen = saved.seen; // <address>: when it was last here
     this.battle = saved.battle;
-    this.monster = saved.monster; // { kind, hp, maxHp, id, slainAt? }
-    this.progress = { slain: saved.slain, gold: saved.gold, kills: saved.kills, xp: saved.xp, skills: saved.skills, looks: saved.looks, hats: saved.hats };
+    this.progress = {
+      stage: saved.stage,
+      best: saved.best,
+      slain: saved.slain,
+      gold: saved.gold,
+      kills: saved.kills,
+      xp: saved.xp,
+      skills: saved.skills,
+      training: saved.training,
+      looks: saved.looks,
+      hats: saved.hats,
+    };
+    // The boss of the stage being fought, { kind, hp, maxHp, stage, id, slainAt? },
+    // and the attempt's time left in ms. Neither is saved: an attempt starts
+    // afresh when the layout loads. The time runs down one TICK_STEP per tick
+    // of the attack clock, so only while someone is attacking a live boss.
+    this.monster = bossOf(this.progress.stage, 1);
+    this.left = stageTime(this.monster.stage);
+    this.timesUp = null; // { at, id, fading? } after an attempt ran out of time, while its note shows
     this.settings = saved.settings; // { <key>: on } for every one of SETTINGS
     this.cheerSeq = 0;
     // The damage numbers on screen, oldest first, while the setting is on (it
@@ -364,28 +415,24 @@ export default class RaidParty extends View {
       sprites: this.sprites,
       seen: this.seen,
       battle: this.battle,
-      monster: this.monster,
       ...this.progress,
       settings: this.settings,
     });
   }
 
-  // Brings in a monster if one is due, otherwise lands `blows` on the one
+  // Brings in the next boss if one is due, otherwise lands `blows` on the one
   // there, in order: each { key, damage, crit, seed } (see blow in rules.js).
-  // Only damage that lands earns experience: a monster with 3 HP left takes 3
+  // Only damage that lands earns experience: a boss with 3 HP left takes 3
   // of a 4-point blow, and nothing of the blows after it. Returns whether
-  // anything changed. HP and experience are saved only on a kill (and the
-  // spawn): saving re-renders every mod in the window, so not on hits. What a
-  // fight earns since the last kill is lost if the app closes mid-fight.
+  // anything changed. Progress is saved on a kill, not on hits: saving
+  // re-renders every mod in the window. What a fight earns since the last kill
+  // or failed attempt is lost if the app closes mid-fight.
   fight(blows = []) {
     if (!this.battle) return false;
     const m = this.monster;
-    if (!m || !MONSTERS[m.kind] || (m.hp <= 0 && Date.now() - (m.slainAt ?? 0) >= RESPAWN_MS)) {
-      const kinds = Object.keys(MONSTERS).filter((k) => k !== m?.kind);
-      const kind = kinds[Math.floor(Math.random() * kinds.length)];
-      this.monster = { kind, hp: monsterHp(kind), maxHp: monsterHp(kind), id: (m?.id ?? 0) + 1 };
-      this.damage = []; // the last one's numbers go with it
-      this.save();
+    if (!MONSTERS[m?.kind] || (m.hp <= 0 && Date.now() - (m.slainAt ?? 0) >= RESPAWN_MS)) {
+      // the stage's boss: the next one after a kill, unless "Advance after a kill" is off
+      this.newBoss();
       return true;
     }
     // no blow lands while the scene is too narrow to show the fight
@@ -400,19 +447,51 @@ export default class RaidParty extends View {
         this.damage.push({ key, seed, n: dealt, crit, id: (this.cheerSeq += 1), at: Date.now(), monster: m.id });
         if (this.damage.length > MAX_DAMAGE) this.damage.shift();
       } else if (crit) this.crits[key] = { n: damage, seed, id: (this.cheerSeq += 1), at: Date.now() };
-      for (const up of credit(this.progress, this.sprites[key], dealt)) {
+      for (const up of credit(this.progress, this.sprites[key], dealt, m)) {
         // a class's level-up shows over whoever earned it, yours over you
         if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
         else this.cheer(key, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
       }
     }
     if (!landed) return false;
-    if (m.hp === 0) {
+    if (m.hp <= 0) {
+      m.hp = 0;
       m.slainAt = Date.now();
-      slay(this.progress, m);
+      // the stage is cleared: gold, and the next stage reached (and fought, if advancing)
+      slay(this.progress, m, this.settings.advance);
       this.save();
     }
     return true;
+  }
+
+  // A fresh attempt: the boss of the stage being fought, at full HP, and the
+  // full time limit. Its numbers go with the last one.
+  newBoss() {
+    this.monster = bossOf(this.progress.stage, (this.monster?.id ?? 0) + 1);
+    this.left = stageTime(this.monster.stage);
+    this.damage = [];
+    this.timesUp = null;
+  }
+
+  // The attempt ran out of time: the same boss is back at full HP with the
+  // full time limit, and "Time's up!" shows over its plate. Nothing is lost
+  // but the attempt; the experience its blows earned is saved.
+  fail() {
+    const m = this.monster;
+    m.hp = m.maxHp;
+    this.left = stageTime(m.stage);
+    this.damage = [];
+    this.timesUp = { at: Date.now(), id: (this.cheerSeq += 1) };
+    this.save();
+  }
+
+  // Moves the fight to stage `s` (an arrow on the plate), if it is one
+  // reached: a fresh attempt at its boss, saved at once.
+  toStage(s, cx) {
+    if (!selectStage(this.progress, s)) return;
+    this.newBoss();
+    this.save();
+    this.wake(cx);
   }
 
   // Shows a short note over someone's head (see cheerNote). Level-ups from the
@@ -495,13 +574,14 @@ export default class RaidParty extends View {
     cx.timer.after(TICK_STEP, next);
   }
 
-  // One tick of the attack clock. Each attacker keeps its own rhythm: someone
-  // who joins starts somewhere in their first gap, and each attack starts the
-  // next one's countdown (attackGap: their class's Haste, give or take a tick
-  // or two, so nobody falls into step). An attack runs ATTACK_PHASES ticks,
-  // then one of rest; its blow lands on the last phase. Whoever stops
-  // attacking (stops working, walks out of reach, the monster falls) loses
-  // their rhythm. Re-renders only while someone is mid-attack or something
+  // One tick of the attack clock, which also runs the attempt's time down.
+  // Each attacker keeps its own rhythm: someone who joins starts somewhere in
+  // their first gap, and each attack starts the next one's countdown
+  // (attackGap: their class's Haste, give or take a tick or two, so nobody
+  // falls into step). An attack runs ATTACK_PHASES ticks, then one of rest;
+  // its blow lands on the last phase. Whoever stops attacking (stops working,
+  // walks out of reach, the monster falls) loses their rhythm. Re-renders only
+  // while someone is mid-attack, the seconds shown change, or something else
   // changed. Returns whether to keep ticking: not once nobody is attacking.
   tick(cx) {
     const t = (this.clock += 1);
@@ -523,8 +603,24 @@ export default class RaidParty extends View {
     }
     const blows = keys
       .filter((key) => this.phaseOf(key) === ATTACK_PHASES)
-      .map((key) => ({ key, seed: this.rhythm[key].seed, ...blow(this.ranksOf(key), Math.random()) }));
+      .map((key) => ({ key, seed: this.rhythm[key].seed, ...blow(this.progress, this.sprites[key], Math.random()) }));
     if (blows.length && this.fight(blows)) changed = true;
+    // the attempt's time runs while the boss is alive and someone attacks it;
+    // the plate shows whole seconds, so it is drawn again as each one passes
+    if (keys.length && this.monster.hp > 0) {
+      const shown = Math.ceil(this.left / 1000);
+      this.left -= TICK_STEP;
+      if (this.left <= 0) {
+        this.fail();
+        changed = true;
+      } else if (Math.ceil(this.left / 1000) !== shown) changed = true;
+    }
+    // the "Time's up!" note shows for a moment, then is drawn once more to fade out
+    const note = this.timesUp;
+    if (note && !note.fading && Date.now() - note.at >= TIMES_UP_FRESH) {
+      note.fading = true;
+      changed = true;
+    }
     if (changed || keys.some((key) => this.rhythm[key].start !== null)) cx.notify();
     return keys.length > 0;
   }
@@ -676,7 +772,10 @@ export default class RaidParty extends View {
         .left(0)
         .top(0)
         .child(image(src(monsterArt(m.kind, part))).w(kind.w).h(kind.h));
-    const tone = m.hp > m.maxHp / 2 ? "#4cd47b" : m.hp > m.maxHp / 5 ? "#ffd166" : "#ff5d5d";
+    // the plate over its head, kept inside the scene when the wall is low
+    const plateTop = Math.max(top - PLATE_H - 4, 4 - this.wallH);
+    const plate = this.plate(m, kind, left + Math.round(kind.w / 2), plateTop);
+    const note = this.timesUpNote(left + Math.round(kind.w / 2), plateTop);
     return [
       div()
         .id(`idle-rpg-monster-${m.id}`)
@@ -713,31 +812,116 @@ export default class RaidParty extends View {
               ),
             ),
         ),
-      v_flex()
-        .absolute()
-        .left(left + Math.round(kind.w / 2) - BAR_W / 2 - 4)
-        .top(top - 34)
-        .w(BAR_W + 8)
-        .p(3)
-        .gap(2)
-        .bg("#000000a0")
-        .child(
-          h_flex()
-            .justify_between()
-            .text_size(10)
-            .font_semibold()
-            .text_color(CREAM)
-            .child(div().child(dead ? `${kind.name} slain!` : kind.name))
-            .child(div().child(dead ? "" : `${m.hp}/${m.maxHp}`)),
-        )
-        .child(
-          div()
-            .w(BAR_W)
-            .h(8)
-            .bg("#1b2233")
-            .child(div().id("idle-rpg-monster-hp").h(8).w(Math.round((BAR_W * m.hp) / m.maxHp)).bg(tone).transition("width", { duration: 150, easing: "ease-out" })),
-        ),
+      plate,
+      ...(note ? [note] : []),
     ];
+  }
+
+  // The boss's name plate, over its head (kept inside the scene when the wall
+  // is low): the stage, with an arrow either side to pick another one reached
+  // (dimmed and dead at stage 1 and at the highest reached), and the seconds
+  // left of the attempt, dim while its time stands still (nobody attacking);
+  // the boss's name and HP; its health bar; and a thin bar of the time left.
+  // The bars glide between renders, which come at least once a second while
+  // the time runs (see tick), so nothing renders just to move them.
+  plate(m, kind, x, top) {
+    const dead = m.hp <= 0;
+    const { stage, best } = this.progress;
+    const tone = m.hp > m.maxHp / 2 ? "#4cd47b" : m.hp > m.maxHp / 5 ? "#ffd166" : "#ff5d5d";
+    const limit = stageTime(m.stage);
+    const running = !dead && this.attackers().length > 0;
+    const arrow = (dir, to) => {
+      const live = to >= 1 && to <= best && to !== stage;
+      return div()
+        .id(`idle-rpg-stage-${dir}`)
+        .flex_none()
+        .px(2)
+        .py(1)
+        .rounded(3)
+        .opacity(live ? 1 : 0.3)
+        .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // not a click on the floor
+        .when(live, (el) =>
+          el
+            .cursor_pointer()
+            .hover((st) => st.bg("#ffffff30"))
+            .on_click((_e, cx) => {
+              this.toStage(to, cx);
+              cx.notify();
+            }),
+        )
+        .child(image(src(STAGE_ARROWS[dir])).w(10).h(14));
+    };
+    return v_flex()
+      .id("idle-rpg-plate")
+      .absolute()
+      .left(x - BAR_W / 2 - 4)
+      .top(top)
+      .w(BAR_W + 8)
+      .p(3)
+      .gap(2)
+      .bg("#000000a0")
+      .child(
+        h_flex()
+          .gap(2)
+          .items_center()
+          .text_size(10)
+          .font_semibold()
+          .text_color(GOLD)
+          .child(arrow("prev", stage - 1))
+          .child(div().child(`Stage ${stage}`))
+          .child(arrow("next", stage + 1))
+          .child(div().flex_1())
+          .child(div().text_color(running ? CREAM : "#8ea3bb").child(dead ? "" : `${Math.max(0, Math.ceil(this.left / 1000))}s`)),
+      )
+      .child(
+        h_flex()
+          .justify_between()
+          .text_size(10)
+          .font_semibold()
+          .text_color(CREAM)
+          .child(div().child(dead ? `${kind.name} slain!` : kind.name))
+          .child(div().child(dead ? "" : `${shortNumber(Math.ceil(m.hp))}/${shortNumber(m.maxHp)}`)),
+      )
+      .child(
+        div()
+          .w(BAR_W)
+          .h(8)
+          .bg("#1b2233")
+          .child(div().id("idle-rpg-monster-hp").h(8).w(Math.round((BAR_W * m.hp) / m.maxHp)).bg(tone).transition("width", { duration: 150, easing: "ease-out" })),
+      )
+      .child(
+        div()
+          .w(BAR_W)
+          .h(3)
+          .bg("#1b2233")
+          .child(
+            div()
+              .id("idle-rpg-monster-time")
+              .h(3)
+              .w(Math.round((BAR_W * clamp(this.left, 0, limit)) / limit))
+              .bg(running ? "#5cc8ff" : "#5d7088")
+              .transition("width", { duration: TICK_STEP, easing: "linear" }),
+          ),
+      );
+  }
+
+  // "Time's up!" over the plate, after an attempt ran out of time: it pops
+  // in, then on a render after TIMES_UP_FRESH (see tick) fades natively. Gone
+  // after TIMES_UP_MS.
+  timesUpNote(x, top) {
+    const t = this.timesUp;
+    if (!t || Date.now() - t.at > TIMES_UP_MS) return null;
+    const fresh = Date.now() - t.at < TIMES_UP_FRESH;
+    return h_flex()
+      .id(`idle-rpg-timesup-${t.id}`)
+      .absolute()
+      .left(x - 50)
+      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + PLATE_H + 4) // under the plate when there is no room over it
+      .w(100)
+      .justify_center()
+      .opacity(fresh ? 1 : 0)
+      .transition("opacity", { duration: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-in" })
+      .child(div().px(5).rounded(6).bg("#000000a0").text_size(10).font_semibold().text_color("#ff7b7b").child("Time's up!"));
   }
 
   // A pointer event on the root, as a point in floor coordinates.
@@ -1030,7 +1214,7 @@ export default class RaidParty extends View {
       .opacity(fresh ? 1 : 0)
       .transition("top", { duration: CRIT_MS, easing: "ease-out" })
       .transition("opacity", { duration: CRIT_MS, easing: "ease-in" })
-      .child(div().px(4).rounded(5).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`${c.n}!`));
+      .child(div().px(4).rounded(5).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`${shortNumber(c.n)}!`));
   }
 
   // One damage number in the pixel font, over the point where its blow landed:
@@ -1041,7 +1225,7 @@ export default class RaidParty extends View {
   // blows that land together do not cover each other exactly.
   damageNote(d, W, kind) {
     const at = this.hitOf(d.key, d.seed, W, kind);
-    const text = d.crit ? `${d.n}!` : String(d.n);
+    const text = d.crit ? `${shortNumber(d.n)}!` : shortNumber(d.n);
     const scale = d.crit ? 4 : 3;
     const w = textW(text, scale);
     const h = GLYPH_H * scale;
@@ -1505,7 +1689,8 @@ export default class RaidParty extends View {
 
     const { slain, gold } = this.progress;
     const spare = pointsLeftAll(this.progress); // skill points to spend, all classes together
-    const earned = CLASSES.some((c) => pointsEarned(this.progress.xp[c]) > 0);
+    // the star opens the skills and training: once there is a point or gold to spend, or anything trained
+    const earned = gold > 0 || CLASSES.some((c) => pointsEarned(this.progress.xp[c]) > 0 || TRAINING.some(({ key }) => trainingOf(this.progress, c, key) > 0));
     // one count on the sign: a small icon and its number
     const stat = (art, w, h, n) =>
       h_flex()
@@ -1686,8 +1871,9 @@ export default class RaidParty extends View {
                           }),
                       ),
                   )
-                  // once any class has a point, a star with the points to spend
-                  // opens the skills panel; gold while there are some, dim when not
+                  // once there is a point or gold to spend, a star with the points
+                  // to spend opens the skills and training; gold while there are
+                  // points, dim when not
                   .when(earned, (el) =>
                     el.child(
                       stat("icons/star.png", 18, 18, spare)
@@ -1907,7 +2093,7 @@ export default class RaidParty extends View {
   // Between raids the rampart has three stations, each opening one of the
   // panels the sign's chips open during one: the book on the table is the
   // codex, the merchant's stall the shop, and the training dummy the skills
-  // (with the points waiting to be spent, if any). Returns elements for the
+  // and training (labelled with the skill points waiting to be spent, if any). Returns elements for the
   // floor; they stand at the back, between the banners and torches.
   stations() {
     const spare = CLASSES.reduce((sum, c) => sum + pointsLeft(this.progress, c), 0);
@@ -2001,7 +2187,7 @@ export default class RaidParty extends View {
         -52,
         48,
         72,
-        spare > 0 ? `Skills +${spare}` : "Skills",
+        spare > 0 ? `Training +${spare}` : "Training",
         () => this.openSkills(this.skillsOpen ? null : (CLASSES.find((c) => pointsLeft(this.progress, c) > 0) ?? this.sprites[YOU])),
         (hot) => [art("dummy", hot, 48, 72)],
       ),
@@ -2107,8 +2293,12 @@ export default class RaidParty extends View {
   // The skills panel, under the sign like the codex: the four classes to pick
   // from, each with its level and any points it has to spend; then for the
   // one picked, its points, a Reset that gives them all back, and a line per
-  // skill with its rank, what it gives now, and a + that spends a point on it.
-  // Short enough for the scene at its lowest (230px, the sign taking 54).
+  // skill with its rank, what it gives now, and a + that spends a point on it;
+  // then its Training, bought with gold: a line per kind (TRAINING in
+  // rules.js) with its level, the damage it multiplies by, and Buy at the next
+  // level's price, dimmed and dead while the gold is short. Buying saves at
+  // once. Short enough for the scene at its lowest (230px, the sign taking 54)
+  // give or take a few px (see RECIPE.md).
   skillsCard(left) {
     const cls = this.skillsOpen;
     const ranks = this.progress.skills[cls];
@@ -2141,13 +2331,24 @@ export default class RaidParty extends View {
             .when(n > 0, (el) => el.child(div().text_color(GOLD).child(`+${n}`))),
         );
     };
+    // one kind of training (TRAINING in rules.js): its level, what it gives now, and Buy at its price
+    const drill = ({ key, name }) => {
+      const level = trainingOf(this.progress, cls, key);
+      return h_flex()
+        .gap(6)
+        .items_center()
+        .child(div().w(38).flex_none().text_color("#dbe7f3").child(name))
+        .child(div().w(30).flex_none().font_semibold().text_color(GOLD).child(`Lv ${level}`))
+        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(`${times(trainingBonus(level))} damage`))
+        .child(this.button(`idle-rpg-train-${key}`, `Buy ${trainingPrice(level)}`, canTrain(this.progress, cls, key), () => train(this.progress, cls, key)));
+    };
     const skill = (k) =>
       h_flex()
         .gap(6)
         .items_center()
         .child(div().w(38).flex_none().text_color("#dbe7f3").child(capital(k)))
         .child(div().w(22).flex_none().font_semibold().text_color(GOLD).child(`${ranks[k]}/${MAX_RANK}`))
-        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(SKILL_TEXT[k]?.(ranks) ?? ""))
+        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(SKILL_TEXT[k]?.(this.progress, cls, ranks) ?? ""))
         .child(this.button(`idle-rpg-skill-${k}`, "+", canRaise(this.progress, cls, k), () => raise(this.progress, cls, k)));
     return v_flex()
       .id("idle-rpg-skills")
@@ -2168,7 +2369,7 @@ export default class RaidParty extends View {
           .gap(6)
           .items_center()
           .child(image(src("icons/star.png")).w(18).h(18))
-          .child(div().flex_1().text_size(12).font_semibold().text_color("#ffffff").child("Skills"))
+          .child(div().flex_1().text_size(12).font_semibold().text_color("#ffffff").child("Skills & Training"))
           .child(
             div()
               .id("idle-rpg-skills-x")
@@ -2198,7 +2399,18 @@ export default class RaidParty extends View {
           )
           .child(this.button("idle-rpg-skills-reset", "Reset", spent, () => resetSkills(this.progress, cls))),
       )
-      .children((CLASS_SKILLS[cls] ?? []).map(skill));
+      .children((CLASS_SKILLS[cls] ?? []).map(skill))
+      // Training: gold buys the class a level at a time, each dearer than the last
+      .child(div().h(1).bg("#ffffff1c"))
+      .child(
+        h_flex()
+          .gap(6)
+          .items_center()
+          .text_size(10)
+          .child(div().flex_1().font_semibold().text_color("#dbe7f3").child("Training"))
+          .child(div().font_semibold().text_color(GOLD).child(`${this.progress.gold} gold`)),
+      )
+      .children(TRAINING.map(drill));
   }
 
   // The shop, under the sign like the skills panel: your gold, the four

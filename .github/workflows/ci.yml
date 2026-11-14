@@ -74,11 +74,20 @@ jobs:
           # main.js names outright
           node --input-type=module <<'EOF'
           import { existsSync, readFileSync } from "node:fs";
-          import { ATTACK_PARTS, CLASSES, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, MONSTER_ART, WEAPON_FRAMES, attackArt, catalogue, glyphArt, hatArt, lookArt, monsterArt, weaponArt } from "./mods/idle-rpg/rules.js";
+          import { ATTACK_PARTS, CLASSES, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, MONSTER_ART, WEAPON_FRAMES, attackArt, catalogue, glyphArt, hatArt, lookArt, monsterArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
           const dir = "mods/idle-rpg";
           const unknown = KINDS.filter((k) => !MONSTER_ART[k]);
           if (unknown.length) {
             console.error(`Kinds with no MONSTER_ART: ${unknown.join(", ")}`);
+            process.exit(1);
+          }
+          // every character a number can be written with (damage, HP: shortNumber,
+          // and "!" and "+" after or before one) is in the pixel font
+          const written = new Set("!+");
+          for (let n = 0; n < 1e19; n = n * 1.37 + 1) for (const ch of shortNumber(n)) written.add(ch);
+          const unwritable = [...written].filter((ch) => !GLYPHS.includes(ch));
+          if (unwritable.length) {
+            console.error(`Characters numbers are written with that the pixel font lacks: ${unwritable.join(" ")}`);
             process.exit(1);
           }
           const paths = [

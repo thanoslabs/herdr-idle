@@ -31,7 +31,8 @@
 #   light/      the night's darkness: candle, torch, fill, fire-0 to fire-23
 #   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
-#               coin, star, armour, hat, gear, and the card's wrench
+#               coin, star, armour, hat, gear, the card's wrench, and the
+#               stage arrows on the boss's plate: prev, next
 #   font/       <colour>/<character>, the pixel font
 import math, os, struct, sys, zlib
 if len(sys.argv) != 2 or sys.argv[1].startswith("-"):  # no options: "--help" is not a folder to fill
@@ -709,6 +710,8 @@ icon("icons/skull.png", [                                   # slain
     ".wkwkw.",
 ], {"w": "#ece6d6", "k": "#2a2433"})
 icon("stations/arrow.png", ["wwwww", ".www.", "..w.."], {"w": "#ffffff"})  # bobs over the station under the pointer
+icon("icons/prev.png", ["..w", ".ww", "www", ".ww", "..w"], {"w": "#ffd166"})  # the boss's plate: the stage before
+icon("icons/next.png", ["w..", "ww.", "www", "ww.", "w.."], {"w": "#ffd166"})  # and the stage after
 icon("icons/armour.png", [                                  # the shop's armours
     "aa...aa",
     "aAaaaAa",
@@ -1258,10 +1261,12 @@ for cls, (base, rows) in SPR.items():
             write(f"weapons/{cls}/{weapon}/{frame}.png", png(layer(g, shape[frame], pal), {}))
 
 # ---- The pixel font: digits and a few signs, 3x5, for damage numbers and the
-# badges on the status icons. Each glyph is outlined all round (corners too, so
-# it reads over a monster or the sky) and comes in every colour main.js uses.
-# Its characters and colours must match GLYPHS and GLYPH_COLOURS in
-# mods/idle-rpg/rules.js, which names the files (glyphArt): font/<colour>/<name>.
+# badges on the status icons, and the point and K, M, B, T that shorten big
+# numbers ("1.2K"; the point is 1 wide). Each glyph is outlined all round
+# (corners too, so it reads over a monster or the sky) and comes in every
+# colour main.js uses. Its characters, in order, and colours must match GLYPHS
+# and GLYPH_COLOURS in mods/idle-rpg/rules.js, which names the files
+# (glyphArt) and knows their widths (glyphWidth): font/<colour>/<name>.
 FONT = {
     "0": ["###", "#.#", "#.#", "#.#", "###"],
     "1": [".#.", "##.", ".#.", ".#.", "###"],
@@ -1275,6 +1280,11 @@ FONT = {
     "9": ["###", "#.#", "###", "..#", "###"],
     "plus": ["...", ".#.", "###", ".#.", "..."],
     "bang": [".#.", ".#.", ".#.", "...", ".#."],
+    "point": [".", ".", ".", ".", "#"],
+    "k": ["#.#", "#.#", "##.", "#.#", "#.#"],
+    "m": ["#.#", "###", "###", "#.#", "#.#"],
+    "b": ["##.", "#.#", "##.", "#.#", "##."],
+    "t": ["###", ".#.", ".#.", ".#.", ".#."],
 }
 GLYPH_COLOURS = {"white": "#ffffff", "gold": "#ffd166"}  # a plain hit and a badge; a critical blow
 
