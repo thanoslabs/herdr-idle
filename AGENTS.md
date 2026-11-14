@@ -16,7 +16,7 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 ```
 .
 ├── layouts/                  # idle-rpg.json, idle-rpg.svg (settings preview)
-├── mods/idle-rpg/            # main.js, rules.js, mod.json, art/ (PNGs in folders by entity, then animation)
+├── mods/idle-rpg/            # main.js, rules.js, party.js (the boss fighting back), mod.json, art/ (PNGs in folders by entity, then animation)
 ├── themes/                   # idle-rpg.json
 ├── RECIPE.md                 # Brief another agent could rebuild it from
 ├── PLAN.md                   # Planning notes for growing it into an idle RPG
