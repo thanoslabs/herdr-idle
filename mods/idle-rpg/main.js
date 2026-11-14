@@ -178,6 +178,9 @@ const MONSTERS = {
 // often much wider than that (the dragon's head, wings and tail).
 const WATCH_MS = 1000; // how often to look for a monster due, or someone ready to attack
 const RESPAWN_MS = 3000; // how long a fallen boss lies there before the next (its fade takes 1.6s)
+// after the kill that first clears a stage and moves on to a new one, the wait
+// is longer, with "Moving to stage N in 3" counting it down over the plate
+const ADVANCE_MS = 5000;
 const TIMES_UP_FRESH = 1000; // the "Time's up!" note over the plate shows this long,
 const TIMES_UP_MS = 2600; // then fades out until this long after the attempt ran out
 const MONSTER_Y = 108; // where its feet are on the floor
@@ -378,6 +381,7 @@ export default class RaidParty extends View {
       // nothing happens while the scene is too narrow to show the fight
       if (!this.battle || Math.max(320, this.size.width) < 640) return;
       if (this.fight()) cx.notify(); // a new monster walked in
+      else if (this.monster?.advancing && this.monster.hp <= 0) cx.notify(); // the countdown to the next stage, a second at a time
       this.wake(cx);
     });
     if (!CLASSES.includes(this.sprites[YOU])) {
@@ -439,7 +443,7 @@ export default class RaidParty extends View {
   fight(blows = []) {
     if (!this.battle) return false;
     const m = this.monster;
-    if (!MONSTERS[m?.kind] || (m.hp <= 0 && Date.now() - (m.slainAt ?? 0) >= RESPAWN_MS)) {
+    if (!MONSTERS[m?.kind] || (m.hp <= 0 && Date.now() - (m.slainAt ?? 0) >= (m.advancing ? ADVANCE_MS : RESPAWN_MS))) {
       // the stage's boss: the next one after a kill, unless "Advance after a kill" is off
       this.newBoss();
       return true;
@@ -467,7 +471,12 @@ export default class RaidParty extends View {
       m.hp = 0;
       m.slainAt = Date.now();
       // the stage is cleared: gold, and the next stage reached (and fought, if advancing)
+      const best = this.progress.best;
       slay(this.progress, m, this.settings.advance);
+      // a first clear that moves the fight on to a stage never fought before:
+      // the wait is ADVANCE_MS, counted down over the plate. Not while farming,
+      // with "Advance after a kill" off, or replaying a stage below the best.
+      if (this.progress.best > best && this.progress.stage === this.progress.best && this.progress.stage !== m.stage) m.advancing = this.progress.stage;
       this.save();
     }
     return true;
@@ -791,7 +800,7 @@ export default class RaidParty extends View {
     // the plate over its head, kept inside the scene when the wall is low
     const plateTop = Math.max(top - PLATE_H - 4, 4 - this.wallH);
     const plate = this.plate(m, kind, left + Math.round(kind.w / 2), plateTop);
-    const note = this.timesUpNote(left + Math.round(kind.w / 2), plateTop);
+    const note = this.timesUpNote(left + Math.round(kind.w / 2), plateTop) ?? this.advanceNote(m, left + Math.round(kind.w / 2), plateTop);
     return [
       div()
         .id(`idle-rpg-monster-${m.id}`)
@@ -940,6 +949,23 @@ export default class RaidParty extends View {
               .transition("width", { duration: TICK_STEP, easing: "linear" }),
           ),
       );
+  }
+
+  // "Moving to stage 13 in 3" over the plate while a boss that first cleared
+  // its stage lies there (see ADVANCE_MS): whole seconds to the next boss,
+  // drawn again by the watch once a second (no timer of its own). Picking a
+  // stage brings a fresh boss at once, so it goes with it.
+  advanceNote(m, x, top) {
+    if (!m.advancing || m.hp > 0) return null;
+    const secs = Math.max(1, Math.ceil((m.slainAt + ADVANCE_MS - Date.now()) / 1000));
+    return h_flex()
+      .id(`idle-rpg-advance-${m.id}`)
+      .absolute()
+      .left(x - 90)
+      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + PLATE_H + 4) // under the plate when there is no room over it
+      .w(180)
+      .justify_center()
+      .child(div().px(5).rounded(6).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`Moving to stage ${m.advancing} in ${secs}`));
   }
 
   // "Time's up!" over the plate, after an attempt ran out of time: it pops
