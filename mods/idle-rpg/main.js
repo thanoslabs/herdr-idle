@@ -450,6 +450,10 @@ export default class RaidParty extends View {
     }
     // no blow lands while the scene is too narrow to show the fight
     if (Math.max(320, this.size.width) < 640) return false;
+    // who took part in a kill, for its gold: everyone attacking now (the
+    // working agents, and you when you join in), counted while the boss still
+    // stands; at least the one landing the blow
+    const attackers = Math.max(1, this.attackers().length);
     let landed = false;
     for (const { key, damage, crit, seed } of blows) {
       if (m.hp <= 0) break;
@@ -472,7 +476,7 @@ export default class RaidParty extends View {
       m.slainAt = Date.now();
       // the stage is cleared: gold, and the next stage reached (and fought, if advancing)
       const best = this.progress.best;
-      slay(this.progress, m, this.settings.advance);
+      slay(this.progress, m, this.settings.advance, attackers);
       // a first clear that moves the fight on to a stage never fought before:
       // the wait is ADVANCE_MS, counted down over the plate. Not while farming,
       // with "Advance after a kill" off, or replaying a stage below the best.

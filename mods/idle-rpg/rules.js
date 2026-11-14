@@ -40,7 +40,13 @@ export const STAGE_HP = 50; // the stage 1 boss's HP
 export const HP_GROWTH = 1.175; // in the long run each stage's boss has this many times the HP of the one before
 export const HP_POWER = 0.75; // and early on more: HP also grows as the stage number to this power
 export const STAGE_MS = 30000; // the time limit of an attempt at any stage (see stageTime), counted only while someone attacks
-export const STAGE_GOLD = 2; // gold for killing the stage 1 boss
+// Gold for a kill grows with the party: more agents fighting means more gold,
+// so more of them means faster progress. A kill pays ATTACKER_GOLD per
+// attacker who took part, at stage 1, so the usual party of three agents and
+// you (4) gets 2.
+export const ATTACKER_GOLD = 0.5; // gold for killing the stage 1 boss, per attacker
+export const MAX_GOLD_ATTACKERS = 20; // a crowd past this many pays as this many
+export const GOLD_ATTACKERS = 4; // the attackers a kill is reckoned with when not told (3 agents and you)
 export const GOLD_GROWTH = 1.12; // each stage's boss pays this many times the gold of the one before (rounded down)
 export const STAGE_XP = 60; // experience a whole kill at stage 1 earns, shared out by the damage each blow dealt
 export const XP_GROWTH = 1.04; // each stage's kill earns this many times the experience of the one before
@@ -346,8 +352,14 @@ export const stageKind = (s) => KINDS[(stageOf(s) - 1) % KINDS.length];
 // The HP of stage `s`'s boss: STAGE_HP x HP_GROWTH^(s-1) x s^HP_POWER, a real number.
 export const bossHp = (s) => STAGE_HP * HP_GROWTH ** (stageOf(s) - 1) * stageOf(s) ** HP_POWER;
 
-// Gold for killing stage `s`'s boss, rounded down: exponential too, but slower.
-export const stageGold = (s) => Math.min(Math.floor(STAGE_GOLD * GOLD_GROWTH ** (stageOf(s) - 1)), MAX);
+// Gold for killing stage `s`'s boss with `attackers` taking part (a whole
+// number from 1 to MAX_GOLD_ATTACKERS; anything else counts as 1, more as
+// the most): ATTACKER_GOLD each, exponential in the stage but slower than HP,
+// rounded down and never under 1.
+export function stageGold(s, attackers = GOLD_ATTACKERS) {
+  const n = typeof attackers === "number" && Number.isFinite(attackers) && attackers >= 1 ? Math.min(Math.floor(attackers), MAX_GOLD_ATTACKERS) : 1;
+  return Math.min(Math.max(1, Math.floor(ATTACKER_GOLD * n * GOLD_GROWTH ** (stageOf(s) - 1))), MAX);
+}
 
 // Experience a whole kill at stage `s` earns (each blow earns its share, see credit).
 export const stageXp = (s) => STAGE_XP * XP_GROWTH ** (stageOf(s) - 1);
@@ -576,16 +588,16 @@ export function credit(progress, cls, hp, monster) {
   return up;
 }
 
-// Books a kill of `monster` ({ kind, stage }): the total, the count for its
-// kind and its stage's gold, and the stage cleared: the next one is reached
-// (`best`), and with `advance` (the setting) the fight moves on to it, unless
-// the party is farming after a failed attempt (see failStage); else it stays
-// on this one.
-export function slay(progress, monster, advance = true) {
+// Books a kill of `monster` ({ kind, stage }) by `attackers` taking part: the
+// total, the count for its kind, its stage's gold for that many (stageGold),
+// and the stage cleared: the next one is reached (`best`), and with `advance`
+// (the setting) the fight moves on to it, unless the party is farming after a
+// failed attempt (see failStage); else it stays on this one.
+export function slay(progress, monster, advance = true, attackers = GOLD_ATTACKERS) {
   const stage = stageOf(monster.stage);
   progress.slain = Math.min(count(progress.slain) + 1, MAX);
   if (KINDS.includes(monster.kind)) progress.kills[monster.kind] = Math.min(count(progress.kills[monster.kind]) + 1, MAX);
-  progress.gold = Math.min(count(progress.gold) + stageGold(stage), MAX);
+  progress.gold = Math.min(count(progress.gold) + stageGold(stage, attackers), MAX);
   const next = Math.min(stage + 1, MAX_STAGE);
   if (next > progress.best) progress.best = next;
   if (advance && !progress.farming && progress.stage === stage) progress.stage = next;
