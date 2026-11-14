@@ -1,6 +1,6 @@
 # Idle RPG: plan
 
-Planning notes for growing this layout from a visualizer with a battle mode into an idle RPG. Steps 1 to 3 of the proposed order (bookkeeping, experience, and class skills with per-attacker cadence) are built, and the colours, hats and weapons of step 4 (a shop selling colourways, hats and weapons; weapons as looks only, their effects still to decide); the rest is not. "Decided" items come from the repo owner; "Default" items were chosen while building and are constants in `mods/idle-rpg/rules.js`, easy to retune; "Proposed" items are suggestions that still need a yes.
+Planning notes for growing this layout from a visualizer with a battle mode into an idle RPG. Steps 1 to 3 of the proposed order (bookkeeping, experience, and class skills with per-attacker cadence) are built, the colours, hats and weapons of step 4 (a shop selling colourways, hats and weapons; weapons as looks only, their effects still to decide), and stages with a timer, exponential scaling and training (step 5, the first half of monsters getting tougher); the rest is not. "Decided" items come from the repo owner; "Default" items were chosen while building and are constants in `mods/idle-rpg/rules.js`, easy to retune; "Proposed" items are suggestions that still need a yes.
 
 ## Principles
 
@@ -13,7 +13,7 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 
 - The player has their own experience and level. **Built.**
 - What player levels unlock is **not decided yet** (parked).
-- Default: the player earns 1 XP per point of damage dealt by anyone in the party, their own blows included (`PLAYER_XP_PER_HP`). The player leads the raid.
+- Default: the player earns the same experience as the class of whoever lands a blow, their own blows included (`PLAYER_XP_SHARE`, 1; see Stages for the rate). The player leads the raid.
 - Default: going from level n to n + 1 costs `250 * n` XP (`PLAYER_LEVEL_XP`), no cap. Total XP is stored and the level derived from it.
 
 ### Class experience
@@ -21,7 +21,7 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 - Each class (wizard, healer, warrior, archer) has its own level. **Built.**
 - A class earns experience whenever it is equipped on an agent or on the player and that character attacks. **Built**, counting only blows that land.
 - Class levels unlock stronger attacks, faster attacks, buffs and similar. **Built** as skill points (below); buffs not built.
-- Default: per point of damage, not per attack: 1 XP per point a character of that class deals (`CLASS_XP_PER_HP`). Now that blows can deal more than 1, stronger blows earn more; overkill counts only what lands.
+- Default (changed with stages): per blow, by the share of the boss's HP it took, of what a whole kill at that stage is worth (`blowXp`; `STAGE_XP` 60 × `XP_GROWTH` 1.04^(stage-1)). Before stages it was 1 XP per point of damage; with damage growing exponentially that would make levels run away, so experience now follows the stage instead. Existing totals keep their meaning: levels and skill points derive from total XP exactly as before. Overkill counts only what lands.
 - Default: going from level n to n + 1 costs `100 * n` XP (`CLASS_LEVEL_XP`), no cap. Everyone starts at level 1 with 0 XP.
 - Default: several agents on one class each earn that class XP, so it levels faster. Intended.
 
@@ -31,7 +31,7 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 - **Decided:** skills are generic for now, the same for every class. Class-specific perks are **not decided** (parked); `CLASS_SKILLS` in `rules.js` keeps a list per class so one can get its own without a rewrite.
 - **Decided:** the player's own level still unlocks nothing.
 - Default: three skills, Power, Haste and Crit (`SKILLS`).
-- Default: Power adds 1 damage per blow per rank, from 1 at rank 0 (`BASE_DAMAGE`, `POWER_DAMAGE`).
+- Default (changed with stages): Power adds 20% to the class's damage per rank (`POWER_BONUS`); it used to add 1 flat damage, which means nothing against exponential HP.
 - Default: Haste shortens the time between one character's attacks by one 250ms tick per rank: 3s at rank 0, then 2.75, 2.5, 2.25, 2 and 1.75s at rank 5 (`ATTACK_TICKS`). Each gap is the rank's give or take up to 2 ticks at random (`ATTACK_JITTER`), never under 6 ticks (`MIN_ATTACK_TICKS`, so an attack and its impact have finished before the next starts).
 - Default: Crit adds 5% chance per rank of a blow dealing double damage (`CRIT_CHANCE`, `CRIT_MULTIPLIER`), shown as a gold damage number (or, with damage numbers off, a small gold number on a pill) where it lands.
 - Default: max rank 5 per skill (`MAX_RANK`), 1 point per rank (`RANK_COST`), 1 point per level (`POINTS_PER_LEVEL`).
@@ -39,15 +39,49 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 
 ### Gold
 
-- 1 gold per 100 HP of monster slain. **Built**, shown on the sign.
-- Awarded only when the monster is slain, not as damage is dealt.
-- Default: `Math.floor(maxHp / 100)` (`HP_PER_GOLD`): rounded down. Each monster records its `maxHp` when it spawns.
+- Gold on a kill. **Built**, shown on the sign. Awarded only when the boss is slain, not as damage is dealt.
+- **Decided** (stages): gold per kill grows with the stage, slower than boss HP, so training stays affordable. Default: `floor(STAGE_GOLD × GOLD_GROWTH^(stage-1))` = `floor(2 × 1.12^(stage-1))` (2 at stage 1, 5 at 10, 30 at 25, 516 at 50). Before stages it was 1 gold per 100 HP.
 
 ### Monster HP
 
-- **Decided:** HP by kind: slime 100, ogre 300, dragon 500 (`MONSTER_HP`), so gold is 1, 3 and 5. **Built.** A monster saved with `maxHp` 100 keeps it until slain.
-- **Decided:** scaling monsters with levels or kills is a later iteration, not built (see Scaling).
-- For now gold only buys customisation for characters: different sprites, colours, hats and so on.
+- Before stages: HP by kind, slime 100, ogre 300, dragon 500. **Replaced** by HP by stage (see Stages).
+- Gold buys customisation (colours, hats, weapons) and, since stages, Attack training.
+
+### Stages, the timer and training (built)
+
+The owner's decisions, verbatim where quoted:
+
+- **Decided:** "I think we add a timer, and the goal is to push stages. Each stage bosses, get stronger and more health, thus we have to keep upgrading classes to keep up (like a traditional idle game). If the team wipes or the time runs out, it just resets the current stage. (the user has the option to switch between all progressed stages to 'farm' up and get stronger as well."
+- **Decided:** "we will have to match the party growth somewhat to the monster growth, but as with traditional idle games it shouldn't be a matching growth factor (the further you progress, the longer it should take naturally)." AFK-style idle games are the model: "stats and hp grow exponentially".
+- **Decided:** stats belong to the class, never to an agent (agents are short-lived).
+- **Decided:** the fight is always against the boss of a stage, numbered from 1; killing it within the time limit clears it; the highest stage reached is remembered. Kinds cycle with the stage (slime, ogre, dragon), so the dragon is every third stage.
+- **Decided:** each attempt has a time limit, on the boss's name plate, running only while the fight is on (raid on, someone attacking, boss alive), so it pauses while nobody works. When it runs out: a short "Time's up!", the same boss back at full HP, the timer restarted. Nothing is lost but the attempt (the experience its blows earned is kept and saved).
+- **Decided:** the player can pick any stage up to the highest reached, with pixel arrows beside "Stage N" on the plate (dead at 1 and at the highest reached); a setting "Advance after a kill" (default on) decides whether a kill moves on or repeats the stage. Changing stage starts a fresh attempt.
+- **Decided:** damage is a class stat, `base × level bonus × training bonus × Power`, for every character on the class, the player included. Class levels derive from total XP exactly as before. Training is a repeatable gold upgrade per class, "Attack", at an exponentially rising price, in a Training section of the skills panel (which the training dummy opens). Power is a percentage per rank. Damage and HP are real numbers, shown rounded and shortened (1,234 as "1.2K", then M, B, T) in the pixel font, which gained K, M, B, T and a point.
+- **Decided:** the 9-second wait between monsters became 3 seconds (`RESPAWN_MS`): the fade takes 1.6s and nothing else depended on it.
+- **Built.** Defaults (constants in `rules.js`, tuned with a simulation):
+  - Boss HP `STAGE_HP × HP_GROWTH^(s-1) × s^HP_POWER` = 50 × 1.175^(s-1) × s^0.75 (50, 99, 157, … 1.2K at 10, 27K at 25, 2.5M at 50). The `s^0.75` factor makes the first stages steeper, so a fresh party has to start growing within a few stages rather than clearing the first seven for free and then hitting a wall; in the long run HP grows 1.175× a stage.
+  - Time limit `STAGE_MS` 30s for every stage (`stageTime` is where a longer one for dragons would go).
+  - `BASE_DAMAGE` 10; level bonus `1 + 0.12 × (level - 1)` (`LEVEL_BONUS`, additive so levels cannot run away); Power `1 + 0.2 × rank`; Attack training `1.12^level` (`TRAINING_BONUS`) at `floor(3 × 1.25^level)` gold (`TRAINING_PRICE`, `TRAINING_PRICE_GROWTH`: 3, 3, 4, 5, 7, … 27 for the 11th, 260 for the 21st).
+  - Gold `floor(2 × 1.12^(s-1))`; kill XP `60 × 1.04^(s-1)`, shared out by damage.
+  - Haste and Crit unchanged. `MAX_STAGE` 1000 and `MAX_TRAINING` 1000 cap what a save is believed to hold.
+- **Simulation** (a headless Node script playing `rules.js` as `main.js` runs a fight: the 250ms clock, per-attacker rhythms, the timer, the 3s respawn; median of 5 seeds; you, a healer, join every party; agents' classes cycle warrior, archer, wizard, healer). Policy: always push; spend gold on Attack training for the classes in use, cheapest first; spend skill points on the rank that raises damage per second most; after a failed attempt, drop back a stage and farm until a training level is bought, then push again. Time of fighting to first clear each stage from a fresh save:
+
+  | Stage | 1 agent | 3 agents | 6 agents | 1 agent alone (you not joining) | 3 agents, never training |
+  |---|---|---|---|---|---|
+  | 1 | 8s | 5s | 3s | 15s | 5s |
+  | 2 | 27s | 18s | 12s | 49s | 18s |
+  | 3 | 53s | 34s | 23s | 2.2m | 34s |
+  | 5 | 2.9m | 1.4m | 54s | 5.7m | 1.4m |
+  | 10 | 19.7m | 16.3m | 4.9m | 19.9m | 38.7m |
+  | 15 | 42.8m | 45.4m | 20.5m | 35.3m | 3.2h |
+  | 20 | 1.3h | 1.4h | 50.1m | 1.2h | 1.0d |
+  | 25 | 2.2h | 2.3h | 1.4h | 2.3h | 7.0d |
+  | 30 | 3.8h | 3.8h | 2.3h | 4.0h | not in 8 days |
+  | 40 | 11.8h | 11.8h | 6.5h | 12.2h | |
+  | 50 | 1.4d | 1.4d | 19.1h | 1.5d | |
+
+  With 3 agents each later stage takes longer than the one before on average (about 15s at stage 2, 5–7 minutes around 10, 15–20 minutes around 25, 3–4 hours around 50), and progress goes on: stage 60 after about 3.9 days, 70 after 10.5, 80 after 28. A party that never trains slows to about a day a stage around 20 and stalls at 25–26 within a week; only levels carry it. Because gold and experience are per class, one agent on one class keeps pace with three agents spread over four classes (it gets all the gold and XP); six agents are about twice as fast late on.
 
 ### Customisation shop
 
@@ -92,7 +126,7 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 
 ### Monsters fighting back
 
-- Not built today. Likely to be introduced as part of this work, but the design is open (see below).
+- **Next iteration**, not built: monsters attacking the party, agent (class) HP bars, knockouts, wipes (a stage can then fail by a wipe as well as by the timer: both restart the attempt) and the healer healing, with a "Health" training next to "Attack". Then weapon stats, elements and potion effects (see Weapon effects).
 
 ## Open questions
 
@@ -109,7 +143,7 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 - Does the healer start healing the party instead of (or as well as) throwing potions at the monster?
 - Does the player take damage, and can they dodge by walking away?
 
-### Weapon effects (the next iteration)
+### Weapon effects (after monsters fighting back)
 
 - **Not decided:** what weapons do. The owner's ideas: elemental damage (and monsters weak or resistant to elements), arrows carrying elements, and the healer's potions as buffs to the raid party or debuffs to the monster. Open: whether a weapon changes damage, speed or crits, how elements meet monsters, how long a buff or debuff lasts and whether it stacks, and how any of it is shown. The catalogue's `element` and `potion` fields are there for it.
 
@@ -122,25 +156,25 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 
 ### Scaling
 
-- Do monsters get more HP as levels or kills go up? Stronger attacks will otherwise shorten every fight, and gold income depends on monster HP. **Decided:** a later iteration; HP is fixed by kind for now.
+- (Answered: HP grows with the stage, not with levels or kills. See Stages.)
 
 ### Display and settings
 
 - **Owner's request:** damage numbers: each blow that lands shows its damage in a pixel font, drifting up and fading, and can be turned off in the settings. **Built** (crits gold and a size bigger; on by default; at most 12 on screen).
 - **Owner's request:** a settings menu behind a pixel gear, the right-most thing in the top-right corner. **Built** as a panel in the codex's style with a pixel on/off switch per setting; `SETTINGS` in `rules.js` is the list, so a setting is one more entry.
 - **Owner's request:** the agents' status counts moved off the sign to the top-right corner, each an icon with its count on a badge in the pixel font, hidden at 0. **Built**; below 640px wide the corner's strip sits under the sign.
-- The pixel font is art: digits, "+" and "!" in white and gold, drawn by `tools/idle-rpg-sprites.py`. More characters or colours are more glyphs there and in `GLYPHS` / `GLYPH_COLOURS`.
+- The pixel font is art: digits, "+", "!", a point and K, M, B, T (for shortened numbers) in white and gold, drawn by `tools/idle-rpg-sprites.py`. More characters or colours are more glyphs there and in `GLYPHS` / `GLYPH_COLOURS`.
 
 ## Technical notes
 
-- **State today** (`idle-rpg.state` in Herdr's shared state, version 5): `version`, `you`, `spots`, `sprites`, `seen`, `battle`, `monster` (with `maxHp`), `slain`, `gold`, `kills` per monster kind, `xp` for `you` and each class (total XP only; levels are derived), `skills`: ranks per class (points left are derived), `looks`: per class and kind of item, the ids owned and the one equipped (`{ armour: { owned, equipped }, weapon: { owned, equipped }, hat: { equipped } }`), `hats`: the hats bought, owned by every class, and `settings` (`{ damageNumbers }`, booleans). Version 1 state loads with every rank at 0; ranks that claim more points than a class has earned reset that class. Version 1 and 2 state loads with every class owning and wearing only its default colourway; versions 1 to 3 load with no hats owned and none on; versions 1 to 4 load with every class owning and holding only its default weapon, whatever they say (version 5 was the bump for weapons, so an older copy of the mod treats a save with weapons as read-only rather than dropping them); unknown or repeated ids are dropped and an equipped id that is not owned falls back to the default. Version 1 to 3 state loads with every setting at its default; unknown settings are dropped and one that is not a boolean gets its default. Each attacker's rhythm is in memory only. `loadState` in `rules.js` reads older state and malformed values without throwing. See `RECIPE.md`.
-- **Saving (decided):** combat progress (monster HP, XP) is saved only when a monster is slain and when the next one spawns, not as damage lands: setting a shared value re-renders every mod in the window, and Power and Haste would make damage-based saves frequent. HP and XP earned since the last kill are lost if the app closes mid-fight. Deliberate actions save at once: spending or resetting points, buying or equipping in the shop, changing a setting, changing a class, the raid toggle, moving yourself or an agent, a newcomer getting a class.
+- **State today** (`idle-rpg.state` in Herdr's shared state, version 6): `version`, `you`, `spots`, `sprites`, `seen`, `battle`, `stage` and `best` (the stage fought and the highest reached), `slain`, `gold`, `kills` per monster kind, `xp` for `you` and each class (total XP only; levels are derived), `skills`: ranks per class (points left are derived), `looks`: per class and kind of item, the ids owned and the one equipped (`{ armour: { owned, equipped }, weapon: { owned, equipped }, hat: { equipped } }`), `hats`: the hats bought, owned by every class, `training`: levels per class (`{ attack }`), and `settings` (`{ damageNumbers, advance }`, booleans). The boss and the attempt's time are not saved: an attempt restarts when the layout loads. Versions 1 to 5 load at stage 1 with no training and everything else kept (their saved monster is replaced by stage 1's boss). Version 1 state loads with every rank at 0; ranks that claim more points than a class has earned reset that class. Version 1 and 2 state loads with every class owning and wearing only its default colourway; versions 1 to 3 load with no hats owned and none on; versions 1 to 4 load with every class owning and holding only its default weapon, whatever they say (version 5 was the bump for weapons, so an older copy of the mod treats a save with weapons as read-only rather than dropping them); unknown or repeated ids are dropped and an equipped id that is not owned falls back to the default. Version 1 to 3 state loads with every setting at its default; unknown settings are dropped and one that is not a boolean gets its default. Each attacker's rhythm is in memory only. `loadState` in `rules.js` reads older state and malformed values without throwing. See `RECIPE.md`.
+- **Saving (decided):** combat progress (XP) is saved only when a boss is slain and when an attempt fails, not as damage lands (nor on a spawn, now that the boss is not saved): setting a shared value re-renders every mod in the window, and Power and Haste would make damage-based saves frequent. XP earned since the last kill or fail is lost if the app closes mid-fight. Deliberate actions save at once: spending or resetting points, buying training, picking a stage, buying or equipping in the shop, changing a setting, changing a class, the raid toggle, moving yourself or an agent, a newcomer getting a class.
 - **State still to add:** alternate sprites, as another kind under `looks`.
 - **Existing kill total** cannot be split by monster kind after the fact. It is kept as the total and the per-kind counts start from zero.
 - **Per-attacker cadence** replaced the single 3-second beat: each attacker keeps its own rhythm on one 250ms clock that runs only while someone is attacking and re-renders only while someone is mid-attack. **Built.**
 - **Stronger attacks:** `fight()` takes a list of blows, each with its own damage.
 - **Customisation art** is the costly part. Every character is drawn in a standing sprite, walk frames, dangling frames and three fighting poses in two directions: twelve pictures. Colours are generated by swapping palette entries in `tools/idle-rpg-sprites.py` (**built**: 3 colourways × 4 classes × 12 pictures, 144 more files, about 98 KB). Hats are drawn as a separate layer over each picture (**built**: 3 hats × 4 classes × 12 pictures, 144 more files, about 54 KB), so they do not multiply with colourways. So are weapons (**built**: 4 weapons × 3 classes × 12 pictures and the healer's 4 potions × 2, 152 files), with 29 more attack pictures.
-- **`main.js` is one class of about 2,100 lines.** A Herdr mod may import other files in its folder (`./rules.js`; Herdr's own `win98` mod does), so the game rules (experience, levels, skill points and what ranks give, attack gaps, the crit roll, monster HP, gold, kill counts, loading state) live in `rules.js` as plain functions, and `main.js` draws and runs the timers.
+- **`main.js` is one class of about 2,600 lines.** A Herdr mod may import other files in its folder (`./rules.js`; Herdr's own `win98` mod does), so the game rules (stages, boss HP, gold, experience, damage, training, levels, skill points and what ranks give, attack gaps, the crit roll, kill counts, loading state) live in `rules.js` as plain functions, and `main.js` draws and runs the timers.
 - **Progress only accrues while the layout is shown**, since the timers live in the mod. Whether that is acceptable for an idle game is worth a decision.
 
 ## Proposed order
@@ -149,7 +183,9 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 2. Experience: player and class experience and levels, shown on the info cards. No unlocks yet. **Built** (levels also on the class picker, and a note over the head on a level-up).
 3. Class unlocks: stronger and faster attacks, then buffs. Needs per-attacker cadence. **Built** as per-class skill points (Power, Haste, Crit), with per-attacker cadence and monster HP by kind; buffs not built.
 4. Customisation shop: colours first (cheap to generate), then hats and alternate sprites. **Colours built** (a shop under the sign, colourways per class), **hats built** (bought once for every class, worn per class) and **weapons built** as looks (per class; their effects are the next iteration, not decided); alternate sprites not built.
-5. Monsters fighting back, once its design questions are answered.
+5. Stages, a timer, exponential scaling and Attack training. **Built.**
+6. Monsters fighting back: agent HP, knockouts, wipes, healer healing, "Health" training. **Next.**
+7. Weapon stats, elements and potion effects (see Weapon effects).
 
 Parked beyond this: what player levels unlock, maps, resources other than gold.
 
