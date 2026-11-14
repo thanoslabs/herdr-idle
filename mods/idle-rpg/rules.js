@@ -77,7 +77,7 @@ export const MAX_TRAINING = 1000; // the most levels believed (a saved number pa
 // simulation (see PLAN.md), to be retuned.
 export const CLASS_HP = { wizard: 100, healer: 100, warrior: 200, archer: 130 };
 export const STAGE_DAMAGE = 4;
-export const DAMAGE_GROWTH = 1.2;
+export const DAMAGE_GROWTH = 1.22;
 export const DAMAGE_POWER = 0.75;
 export const HEAL_SHARE = 0.25;
 

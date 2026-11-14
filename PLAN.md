@@ -1,6 +1,6 @@
 # Idle RPG: plan
 
-Planning notes for growing this layout from a visualizer with a battle mode into an idle RPG. Steps 1 to 3 of the proposed order (bookkeeping, experience, and class skills with per-attacker cadence) are built, the colours, hats and weapons of step 4 (a shop selling colourways, hats and weapons; weapons as looks only, their effects still to decide), and stages with a timer, exponential scaling and training (step 5, the first half of monsters getting tougher); the rest is not. "Decided" items come from the repo owner; "Default" items were chosen while building and are constants in `mods/idle-rpg/rules.js`, easy to retune; "Proposed" items are suggestions that still need a yes.
+Planning notes for growing this layout from a visualizer with a battle mode into an idle RPG. Steps 1 to 3 of the proposed order (bookkeeping, experience, and class skills with per-attacker cadence) are built, the colours, hats and weapons of step 4 (a shop selling colourways, hats and weapons; weapons as looks only, their effects still to decide), stages with a timer, exponential scaling and training (step 5, the first half of monsters getting tougher), and monsters fighting back with HP, knockouts, wipes, healing and Health training (step 6); the rest is not. "Decided" items come from the repo owner; "Default" items were chosen while building and are constants in `mods/idle-rpg/rules.js`, easy to retune; "Proposed" items are suggestions that still need a yes.
 
 ## Principles
 
@@ -139,9 +139,35 @@ The owner's decisions, verbatim where quoted:
 
 - Keep a count of each type of monster slain, not just the total. **Built**: saved, and shown in the codex that opens from the kill count on the sign. Not used for anything else yet.
 
-### Monsters fighting back
+### Monsters fighting back (built)
 
-- **Next iteration**, not built: monsters attacking the party, agent (class) HP bars, knockouts, wipes (a stage can then fail by a wipe as well as by the timer: both restart the attempt) and the healer healing, with a "Health" training next to "Attack". Then weapon stats, elements and potion effects (see Weapon effects).
+The owner's decisions, verbatim where quoted: "each agent has a hp bar, monster attacks can be single-target (random out of the attacking agents) or multi-target (target a random attacking agent, and it will hit surrounding area). If the HP bar reaches zero, the agent stops attacking and needs to rest to heal up (something like a 30s cooldown). Clerics can also heal agents, and maybe a future iteration can include revives to bring agents back." And: "If the team wipes or the time runs out, it just resets the current stage" (since refined: a failed attempt drops back a stage to farm, see Stages; a wipe takes that same path).
+
+- **Built** in `mods/idle-rpg/party.js` (plain functions, no host calls, run from the attack clock's tick: no timer of its own), with the stats in `rules.js`.
+- **Who can be hit:** only characters attacking: working agents in the fight, and you while you fight beside them. Idle, blocked and done agents never are; their status bubbles show as before.
+- **HP** is per character and in memory only (nothing per agent is saved). Default: max HP is a class stat, `CLASS_HP` (wizard 100, healer 100, warrior 200, archer 130: the warrior at the monster's feet the most) × the class level's bonus (`LEVEL_BONUS`, as for damage) × `HEALTH_BONUS`^Health (1.2 a level). An agent that stops working leaves the fight; coming back it starts at full HP.
+- **Health training (decided):** a gold training beside Attack, on the same price curve (each kind's price follows its own level), stored as `training: { <class>: { attack, health } }`. Version 7 of the state; versions 1 to 6 load with Health 0.
+- **The boss's attacks** (defaults in `party.js`): about every 4s (`MONSTER_ATTACK_TICKS` 16 ticks ± 2), the first of an attempt within its first gap (from 1s). One or two single blows (`SINGLES_BETWEEN`, 1–3 evenly) at a random attacker, then an area attack: a red ring marks the floor round a random attacker for 1s (`AREA_WARNING_TICKS`), then everyone standing inside it is hit: 70px either side and half that up and down the floor (`AREA_RADIUS`, `AREA_DEPTH`, drawn the same). Warriors bunched at its feet get hit together. Each kind looks its own: the slime spits a glob (single) or squashes and lobs one that splashes over the ring; the ogre swings its club, a gust flying at the target, or heaves it overhead and slams the ground cracking under the ring; the dragon bites, claw marks opening on the target, or breathes a fireball that bursts into a blaze across the ring.
+- **Damage (default):** one blow is `stageDamage(s)` = `STAGE_DAMAGE × DAMAGE_GROWTH^(s-1) × s^DAMAGE_POWER` (4 × 1.22^(s-1) × s^0.75) on a party of 4 (`PARTY_SIZE`), × (n/4)^1.5 (`SCALE_POWER`) for n standing attackers, so one or two agents are not wiped in one go.
+- **Knockout:** at 0 HP a character stops attacking for 30s (`KO_TICKS`), lying on its back, head away from the monster, with stars circling and a gold bar running down its rest, then gets up at full HP. It never shows the idle "Zz": a knocked-out agent is still working (the corner still counts it as working). Everyone, the knocked out too, is back at full HP for each new attempt: a new boss after a kill, a picked stage, a failed attempt.
+- **Wipe:** a blow that knocks out the last one standing fails the attempt through the same path as the timer (`fail()` → `failStage`): "Wiped! Back to stage 8", saved once.
+- **Healing:** a healer holding the Heal Vial heals instead of attacking whenever an attacker (itself included) is below 60% HP (`HEAL_BELOW`): its potion flies to the one lowest for its max and restores `HEAL_SHARE` (25%) of the healer's own max HP (`healOf`), a green plus rising off it. The other vials never heal. The knocked out cannot be healed; **revives** are a later iteration.
+- **Deviation from the brief, with reason:** heals are a share of the healer's max HP, not of its damage: in the simulation a heal by damage let a party that trained only Attack heal its way through, so Health would not matter.
+- **Simulation** (`rules.js` and `party.js` played headlessly as `main.js` runs them, median of 3 seeds, you joining as a healer, the stages rule for a failed attempt and a player who presses next after every training bought). Time to first clear:
+
+  | Party | 10 | 25 | 50 | wipes / failed attempts |
+  |---|---|---|---|---|
+  | 3 agents, the boss harmless (the stages pace) | 16.5m | 2.4h | 1.39d | 0 / 215 |
+  | 3 agents, training Attack and Health evenly | 24.0m | 3.8h | 2.20d | 0 / 494 |
+  | 3 agents, Health only after a knockout | 23.9m | 3.8h | 2.14d | 0 / 461 |
+  | 3 agents, Attack only | 24.1m | 4.4h | 2.43d | 494 / 547 |
+  | 3 agents with no healer, Attack only | 20.8m | 4.4h | 2.47d | 406 / 438 |
+  | 6 agents, both | 13.2m | 2.8h | 1.46d | 0 / 461 |
+  | 1 agent, both | 26.6m | 3.1h | 2.01d | 0 / 262 |
+  | a lone healer, Attack only | 21.1m | 7.0h | not in a week (46) | 125 / 160 |
+
+  Training both is about 1.5× slower than without a fighting boss (mostly the gold Health takes); knockouts come about once an attempt at the stage being pushed (1.6 at 20, 0.5 at 40 for 3 agents; 2–4 for 6). A party that skips Health wipes on nearly every failed attempt and falls behind by stage 20–30, but only 10–20% by stage 50: once every blow knocks someone out the party still lives about four of the boss's blows into each attempt, so the gap stops growing. With a 30s rest and 30s attempts a knocked-out character practically never gets up within its attempt (26 of 4,636 rests ran out); it is out for the rest of it.
+- **Open (for the owner):** (1) letting knockouts last over a kill into the next boss's attempt makes Health matter far more (Attack only: stage 30 at 14.9h against 7.5h, stage 50 not within a week), but the current rule is that everyone is up for each new attempt; (2) a 15s rest lets a knocked-out character return within its attempt, at no real cost to pace; (3) a lone character is hardly ever knocked out (the boss hits a lone attacker at an eighth of its party damage), so a lone Heal Vial healer that trains Health is never knocked out either.
 
 ## Open questions
 
@@ -154,10 +180,8 @@ The owner's decisions, verbatim where quoted:
 
 ### Monsters fighting back
 
-- What does damage to the party mean when agents are short-lived? Options: a shared party HP bar, HP per class, or knock-outs that sit a character out for a few beats.
-- What happens at zero: the monster heals, the party retreats, or progress on that monster is lost?
-- Does the healer start healing the party instead of (or as well as) throwing potions at the monster?
-- Does the player take damage, and can they dodge by walking away?
+- (Answered: HP per character, knockouts with a rest, a wipe fails the attempt, the Heal Vial heals; see Decided.) You take damage too; walking away takes you out of the fight (you come back at full HP), but you cannot walk while knocked out.
+- Revives, and what the other vials do (see Weapon effects). See the open points under Monsters fighting back (built).
 
 ### Weapon effects (after monsters fighting back)
 
@@ -183,14 +207,15 @@ The owner's decisions, verbatim where quoted:
 
 ## Technical notes
 
-- **State today** (`idle-rpg.state` in Herdr's shared state, version 6): `version`, `you`, `spots`, `sprites`, `seen`, `battle`, `stage`, `best` and `farming` (the stage fought, the highest reached, and whether a failed attempt sent the party back to farm), `slain`, `gold`, `kills` per monster kind, `xp` for `you` and each class (total XP only; levels are derived), `skills`: ranks per class (points left are derived), `looks`: per class and kind of item, the ids owned and the one equipped (`{ armour: { owned, equipped }, weapon: { owned, equipped }, hat: { equipped } }`), `hats`: the hats bought, owned by every class, `training`: levels per class (`{ attack }`), and `settings` (`{ damageNumbers, advance }`, booleans). The boss and the attempt's time are not saved: an attempt restarts when the layout loads. Versions 1 to 5 load at stage 1 with no training and everything else kept (their saved monster is replaced by stage 1's boss). Version 1 state loads with every rank at 0; ranks that claim more points than a class has earned reset that class. Version 1 and 2 state loads with every class owning and wearing only its default colourway; versions 1 to 3 load with no hats owned and none on; versions 1 to 4 load with every class owning and holding only its default weapon, whatever they say (version 5 was the bump for weapons, so an older copy of the mod treats a save with weapons as read-only rather than dropping them); unknown or repeated ids are dropped and an equipped id that is not owned falls back to the default. Version 1 to 3 state loads with every setting at its default; unknown settings are dropped and one that is not a boolean gets its default. Each attacker's rhythm is in memory only. `loadState` in `rules.js` reads older state and malformed values without throwing. See `RECIPE.md`.
+- **State today** (`idle-rpg.state` in Herdr's shared state, version 7): `version`, `you`, `spots`, `sprites`, `seen`, `battle`, `stage`, `best` and `farming` (the stage fought, the highest reached, and whether a failed attempt sent the party back to farm), `slain`, `gold`, `kills` per monster kind, `xp` for `you` and each class (total XP only; levels are derived), `skills`: ranks per class (points left are derived), `looks`: per class and kind of item, the ids owned and the one equipped (`{ armour: { owned, equipped }, weapon: { owned, equipped }, hat: { equipped } }`), `hats`: the hats bought, owned by every class, `training`: levels per class (`{ attack, health }`; versions 1 to 6 load with Health 0), and `settings` (`{ damageNumbers, advance }`, booleans). The boss and the attempt's time are not saved: an attempt restarts when the layout loads. Versions 1 to 5 load at stage 1 with no training and everything else kept (their saved monster is replaced by stage 1's boss). Version 1 state loads with every rank at 0; ranks that claim more points than a class has earned reset that class. Version 1 and 2 state loads with every class owning and wearing only its default colourway; versions 1 to 3 load with no hats owned and none on; versions 1 to 4 load with every class owning and holding only its default weapon, whatever they say (version 5 was the bump for weapons, so an older copy of the mod treats a save with weapons as read-only rather than dropping them); unknown or repeated ids are dropped and an equipped id that is not owned falls back to the default. Version 1 to 3 state loads with every setting at its default; unknown settings are dropped and one that is not a boolean gets its default. Each attacker's rhythm is in memory only. `loadState` in `rules.js` reads older state and malformed values without throwing. See `RECIPE.md`.
 - **Saving (decided):** combat progress (XP) is saved only when a boss is slain and when an attempt fails, not as damage lands (nor on a spawn, now that the boss is not saved): setting a shared value re-renders every mod in the window, and Power and Haste would make damage-based saves frequent. XP earned since the last kill or fail is lost if the app closes mid-fight. Deliberate actions save at once: spending or resetting points, buying training, picking a stage, buying or equipping in the shop, changing a setting, changing a class, the raid toggle, moving yourself or an agent, a newcomer getting a class.
 - **State still to add:** alternate sprites, as another kind under `looks`.
 - **Existing kill total** cannot be split by monster kind after the fact. It is kept as the total and the per-kind counts start from zero.
 - **Per-attacker cadence** replaced the single 3-second beat: each attacker keeps its own rhythm on one 250ms clock that runs only while someone is attacking and re-renders only while someone is mid-attack. **Built.**
 - **Stronger attacks:** `fight()` takes a list of blows, each with its own damage.
 - **Customisation art** is the costly part. Every character is drawn in a standing sprite, walk frames, dangling frames and three fighting poses in two directions: twelve pictures. Colours are generated by swapping palette entries in `tools/idle-rpg-sprites.py` (**built**: 3 colourways × 4 classes × 12 pictures, 144 more files, about 98 KB). Hats are drawn as a separate layer over each picture (**built**: 3 hats × 4 classes × 12 pictures, 144 more files, about 54 KB), so they do not multiply with colourways. So are weapons (**built**: 4 weapons × 3 classes × 12 pictures and the healer's 4 potions × 2, 152 files), with 29 more attack pictures.
-- **`main.js` is one class of about 2,600 lines.** A Herdr mod may import other files in its folder (`./rules.js`; Herdr's own `win98` mod does), so the game rules (stages, boss HP, gold, experience, damage, training, levels, skill points and what ranks give, attack gaps, the crit roll, kill counts, loading state) live in `rules.js` as plain functions, and `main.js` draws and runs the timers.
+- **Monsters fighting back** keep their state in memory only (`party.js`: HP, knockouts, the boss's attack under way); nothing per agent is saved, and a wipe saves once as a failed attempt.
+- **`main.js` is one class of about 2,900 lines.** A Herdr mod may import other files in its folder (`./rules.js`; Herdr's own `win98` mod does), so the game rules (stages, boss HP, gold, experience, damage, training, levels, skill points and what ranks give, attack gaps, the crit roll, kill counts, loading state) live in `rules.js` as plain functions, and `main.js` draws and runs the timers.
 - **Progress only accrues while the layout is shown**, since the timers live in the mod. Whether that is acceptable for an idle game is worth a decision.
 
 ## Proposed order
@@ -200,7 +225,7 @@ The owner's decisions, verbatim where quoted:
 3. Class unlocks: stronger and faster attacks, then buffs. Needs per-attacker cadence. **Built** as per-class skill points (Power, Haste, Crit), with per-attacker cadence and monster HP by kind; buffs not built.
 4. Customisation shop: colours first (cheap to generate), then hats and alternate sprites. **Colours built** (a shop under the sign, colourways per class), **hats built** (bought once for every class, worn per class) and **weapons built** as looks (per class; their effects are the next iteration, not decided); alternate sprites not built.
 5. Stages, a timer, exponential scaling and Attack training. **Built.**
-6. Monsters fighting back: agent HP, knockouts, wipes, healer healing, "Health" training. **Next.**
+6. Monsters fighting back: agent HP, knockouts, wipes, healer healing, "Health" training. **Built** (revives later).
 7. Weapon stats, elements and potion effects (see Weapon effects).
 
 Parked beyond this: what player levels unlock, maps, resources other than gold.

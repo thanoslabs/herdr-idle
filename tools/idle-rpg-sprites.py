@@ -16,8 +16,8 @@
 #   scene/      the backdrop and props: wall, floor, mountains, stars, sun, moon,
 #               cloud-a, cloud-b, banner, torch, barrel
 #   classes/    <class>/<look>/stand, walk/{l,r}, rag/{c,l,r}, and the fighting
-#               poses stance/, windup/, strike/ {l,r}; <look> is "default" or a
-#               colourway's id; drawn without the weapon
+#               poses stance/, windup/, strike/ {l,r}, and down/ {l,r} (knocked
+#               out); <look> is "default" or a colourway's id; drawn without the weapon
 #   weapons/    <class>/<weapon>/ the same pictures as a class (the healer's: only
 #               windup/), to lay over them; <weapon> is "default" or the weapon's id
 #   hats/       <hat>/<class>/ the same pictures as a class, to lay over them
@@ -25,11 +25,14 @@
 #               slash/<variant>/, arrow/<variant>/, spell/<element>/ {l,r};
 #               burst/<element>, potion/<potion>, splash/<potion>, spark/<element>
 #   monsters/   <kind>/ idle (the whole picture), blink, the pieces that move
-#               (top, base, body, tail), and roar/ for the ogre and dragon
+#               (top, base, body, tail), roar/ for the ogre and dragon, and
+#               attack/, its two attacks on the party (see the last section)
+#   foe/        marker (where an area attack lands) and hit (on whoever it reaches)
 #   stations/   <station>/{idle,hot}, and the arrow over the one under the pointer
 #   campfire/   base, flame-1 to flame-4
 #   light/      the night's darkness: candle, torch, fill, fire-0 to fire-23
-#   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark
+#   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark,
+#               dizzy-1, dizzy-2 (knocked out), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
 #               coin, star, armour, hat, gear, the card's wrench, and the
 #               stage arrows on the boss's plate: prev, next
