@@ -40,7 +40,14 @@ Planning notes for growing this layout from a visualizer with a battle mode into
 ### Gold
 
 - Gold on a kill. **Built**, shown on the sign. Awarded only when the boss is slain, not as damage is dealt.
-- **Decided** (stages): gold per kill grows with the stage, slower than boss HP, so training stays affordable. Default: `floor(STAGE_GOLD × GOLD_GROWTH^(stage-1))` = `floor(2 × 1.12^(stage-1))` (2 at stage 1, 5 at 10, 30 at 25, 516 at 50). Before stages it was 1 gold per 100 HP.
+- **Decided** (stages): gold per kill grows with the stage, slower than boss HP, so training stays affordable. Before stages it was 1 gold per 100 HP.
+- **Owner's decision** on whether more agents should mean faster progress: "I would say more agents does lead to faster progress naturally due to more damage sources." Before this, one agent kept pace with three (a kill's gold was fixed while training is per class). **Built** as gold × attackers: a kill pays `floor(ATTACKER_GOLD × attackers × GOLD_GROWTH^(stage-1))` = `floor(0.5 × attackers × 1.12^(stage-1))`, at least 1 (`stageGold(stage, attackers)`). Default: the attackers are everyone attacking on the tick the boss fell (the working agents, and you when you join in), counted before the blows land, at least 1, capped at `MAX_GOLD_ATTACKERS` (20) so a crowd cannot inflate gold; `ATTACKER_GOLD` 0.5 replaces the old flat 2, so the usual party of three agents and you (4) earns exactly what it did (2 at stage 1, 5 at 10, 30 at 25, 516 at 50) and keeps its times. Time to first clear, stages 10 / 25 / 50 (median of 5 seeds; policies as below):
+
+  | Agents | (a) presses next after each training buy | (b) presses next every 10 min of fighting |
+  |---|---|---|
+  | 1 | 26.4m / 3.0h / 2.2d | 23.8m / 2.7h / 2.1d |
+  | 3 | 16.3m / 2.3h / 1.4d | 13.4m / 1.9h / 1.4d |
+  | 6 | 2.8m / 1.1h / 14.2h | 2.8m / 58.2m / 13.7h |
 
 ### Monster HP
 
@@ -57,7 +64,7 @@ The owner's decisions, verbatim where quoted:
 - **Decided:** the fight is always against the boss of a stage, numbered from 1; killing it within the time limit clears it; the highest stage reached is remembered. Kinds cycle with the stage (slime, ogre, dragon), so the dragon is every third stage.
 - **Decided:** each attempt has a time limit, on the boss's name plate, running only while the fight is on (raid on, someone attacking, boss alive), so it pauses while nobody works. Nothing is lost but the attempt (the experience its blows earned is kept and saved, once).
 - **Owner's decision** (replacing "the same boss back at full HP"): "a failed stage maybe sends you back to the previous stage (one that was clear-able), assuming the player will farm up and attempt the latest stage when they are stronger". **Built:** a failed attempt (time out; a party wipe will take the same path, `failStage` in `rules.js`) at stage n > 1 moves the fight to stage n − 1 with a fresh attempt; at stage 1 it restarts stage 1. `best` is unchanged. The party is then farming (`farming`, its own flag, not the setting): kills repeat the stage whatever "Advance after a kill" says, until the player picks a stage (the next arrow, which pulses while farming), which ends it. The note says where the party went ("Time's up! Back to stage 8") and the plate shows a small "farm" tag by the stage number. Default: `farming` is saved with the stage, so reopening the layout does not silently resume pushing into the wall.
-- Simulation with this, median of 5 seeds, time to first clear: (a) a player who presses next after every training level bought; (b) one who trains but presses next only every 10 minutes of fighting; (c) fully hands-off (never trains, never presses next):
+- Simulation with this (made before gold × attackers, below under Gold, which changes the 1- and 6-agent rows), median of 5 seeds, time to first clear: (a) a player who presses next after every training level bought; (b) one who trains but presses next only every 10 minutes of fighting; (c) fully hands-off (never trains, never presses next):
 
   | Policy | Agents | Stage 10 | Stage 25 | Stage 50 | Best after 8 days |
   |---|---|---|---|---|---|
@@ -78,7 +85,7 @@ The owner's decisions, verbatim where quoted:
   - Boss HP `STAGE_HP × HP_GROWTH^(s-1) × s^HP_POWER` = 50 × 1.175^(s-1) × s^0.75 (50, 99, 157, … 1.2K at 10, 27K at 25, 2.5M at 50). The `s^0.75` factor makes the first stages steeper, so a fresh party has to start growing within a few stages rather than clearing the first seven for free and then hitting a wall; in the long run HP grows 1.175× a stage.
   - Time limit `STAGE_MS` 30s for every stage (`stageTime` is where a longer one for dragons would go).
   - `BASE_DAMAGE` 10; level bonus `1 + 0.12 × (level - 1)` (`LEVEL_BONUS`, additive so levels cannot run away); Power `1 + 0.2 × rank`; Attack training `1.12^level` (`TRAINING_BONUS`) at `floor(3 × 1.25^level)` gold (`TRAINING_PRICE`, `TRAINING_PRICE_GROWTH`: 3, 3, 4, 5, 7, … 27 for the 11th, 260 for the 21st).
-  - Gold `floor(2 × 1.12^(s-1))`; kill XP `60 × 1.04^(s-1)`, shared out by damage.
+  - Gold `floor(0.5 × attackers × 1.12^(s-1))` (see the decision below; it was `floor(2 × 1.12^(s-1))` for any party when this table was made, the same for 4 attackers); kill XP `60 × 1.04^(s-1)`, shared out by damage.
   - Haste and Crit unchanged. `MAX_STAGE` 1000 and `MAX_TRAINING` 1000 cap what a save is believed to hold.
 - **Simulation** (a headless Node script playing `rules.js` as `main.js` runs a fight: the 250ms clock, per-attacker rhythms, the timer, the 3s respawn; median of 5 seeds; you, a healer, join every party; agents' classes cycle warrior, archer, wizard, healer). Policy: always push; spend gold on Attack training for the classes in use, cheapest first; spend skill points on the rank that raises damage per second most; after a failed attempt, drop back a stage and farm until a training level is bought, then push again. Time of fighting to first clear each stage from a fresh save:
 
@@ -175,7 +182,7 @@ The owner's decisions, verbatim where quoted: "each agent has a hp bar, monster 
 
 - Class-specific perks, and whether any arrive at particular levels (skills are generic for now).
 - Whether the skill numbers above feel right in play; they are defaults.
-- **Open (with the owner):** one agent progresses as fast as three on different classes, since a kill's gold is fixed and XP is shared by damage while training is per class. Options costed by simulation (stage 10 / 25 / 50, retuned so 3 agents keep ~16m / 2.3h / 1.4d): today 1 agent 19.7m / 2.2h / 1.4d, 6 agents 4.9m / 1.4h / 19.1h; each class taking part earns a whole kill's XP (`STAGE_XP` 15) 1 agent 27.2m / 2.9h / 2.0d, 6 the same as today; gold × classes taking part ÷ 4: 1 agent 26.4m / 3.0h / 2.2d, 6 as today; gold × attackers ÷ 4: 1 agent 26.4m / 3.0h / 2.2d, 6 agents 2.8m / 1.1h / 14.2h.
+- (Answered: more agents mean faster progress, by gold × attackers; see Gold. The other options costed were each class taking part earning a whole kill's XP, 1 agent 27.2m / 2.9h / 2.0d and 6 unchanged, and gold × classes taking part, 1 agent 26.4m / 3.0h / 2.2d and 6 unchanged.)
 - (How experience is earned, per attack or per point, several agents on one class, and the level curve and cap now have defaults; see Decided.)
 
 ### Monsters fighting back
@@ -232,7 +239,8 @@ Parked beyond this: what player levels unlock, maps, resources other than gold.
 
 **Idea from the owner, not started:** seasonal decorations in town: jack-o'-lanterns in October for Halloween, and string lights and a Christmas tree in December. To decide first: whether they follow the calendar, a setting in the gear menu, or both.
 
-**More notes from the owner, not started:**
-- **Many agents at once.** A load test with staged agents (on the stages build): 100 agents in a raid run, but the ranged classes pile up in both corners and the name labels overlap into a strip; 100 in town show about eight characters, since once the default spots run out newcomers are placed exactly on others; 400 (100 a class) fail to render at all ("interrupted" inside `place`, whose search for a free spot costs the square of the agent count). Proposed, to be agreed: assign spots from a grid in one pass, use more rows of the floor and spread evenly when full, and past about 20 agents group them into squads by class with a count instead of drawing and labelling each one.
-- **Biomes:** a different backdrop for different stages, and a map icon in the top-right strip (left of the gear) that opens a stage picker.
-- **More monsters:** more kinds with their own weaknesses, and a monster's info card that shows its weaknesses.
+**Next wave (the owner's decisions, after the stages work merges):**
+- **Many agents at once.** A load test with staged agents (on the stages build): 100 agents in a raid run, but the ranged classes pile up in both corners and the name labels overlap into a strip; 100 in town show about eight characters, since once the default spots run out newcomers are placed exactly on others; 400 (100 a class) fail to render at all ("interrupted" inside `place`, whose search for a free spot costs the square of the agent count).
+  - **Decided:** fix positioning first, without grouping: spots assigned from a grid in one pass, more rows of the floor used, spread evenly when full, and the 400-agent render failure fixed; then look at how it reads.
+  - **Not decided:** grouping agents into squads by class (with a count) past about 20. The owner: "viable, but lets think on it some more, i would like to see how it looks without the grouping".
+- **Biomes (agreed):** a different backdrop per biome, changing every ten stages, and a map icon in the top-right strip (left of the gear) that opens a stage picker. The owner's monsters per biome: "(forest: goblins, lizards, slime), (hills/valleys: orcs, ogre, chief ogre), (caves: wyverns, draconians, dragon), (hell: imps, magma slimes, goblin mages, demon)". So four biomes after or including today's castle rampart; **to settle:** whether the rampart stays as the first biome or becomes the town only. Each kind has its own weakness, shown on a monster info card.
