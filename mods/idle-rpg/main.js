@@ -108,7 +108,7 @@ import {
   weaponArt,
 } from "./rules.js";
 import { KO_TICKS, down, healParty, healTarget, heals, monsterTick, newParty, resetParty, restLeft, rise, standing, syncParty } from "./party.js";
-import { AURAS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, statLines, statsOf, strike, tickStatuses } from "./effects.js";
+import { AURAS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
 
 const ART = "mods/idle-rpg/art";
 // The path image() takes for a picture in art/, given its path in there with
@@ -175,7 +175,7 @@ const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
 // item picked: what a weapon does), 3px apart: 167px, so under the sign (top
 // 54) it ends at 221 in the lowest scene (230px). The kinds down the left are
 // 22 each, with a 13px line under them, shorter than that.
-const SHOP_ROW = { nav: 22, about: 26 };
+const SHOP_ROW = { nav: 22, about: 26, tab: 80 }; // tab: the class picked, its sprite and name ("Warrior" is 33px at 9px)
 // The skills and training panel is built from rows of fixed height, its text
 // on a 13px line, so its height is known: a 1px border and 6px of padding
 // round 16 (title) + 24 (class tabs) + 15 (points) + 15 per skill and per kind
@@ -398,7 +398,7 @@ export default class RaidParty extends View {
     // time they have dealt since it last landed (see tick), in memory only,
     // like the boss: a new boss or a new attempt starts clean.
     this.statuses = newStatuses();
-    this.dots = Object.create(null); // "<class>/<status>": { cls, status, matchup, n }
+    this.dots = Object.create(null); // "<class>/<status>": { cls, status, matchup, n, owed: what of n each share is owed (see shares) }
     this.settings = saved.settings; // { <key>: on } for every one of SETTINGS
     this.cheerSeq = 0;
     // The damage numbers on screen, oldest first, while the setting is on (it
@@ -528,20 +528,27 @@ export default class RaidParty extends View {
     // gold, and you when you join in); at least the one landing the blow
     const attackers = Math.max(1, this.fighters().length);
     let landed = false;
-    for (const { key, damage, crit, seed, cls, matchup = null, chain = false, dot = null } of blows) {
+    for (const { key, damage, crit, seed, cls, matchup = null, chain = false, dot = null, dir = 1, shares: owed = null } of blows) {
       if (m.hp <= 0) break;
       const dealt = Math.min(damage, m.hp);
       m.hp -= dealt;
       landed = true;
       if (this.settings.damageNumbers) {
-        this.damage.push({ key, seed, n: dealt, crit, matchup, chain, dot, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock, monster: m.id });
+        this.damage.push({ key, seed, n: dealt, crit, matchup, chain, dot, dir, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock, monster: m.id });
         if (this.damage.length > MAX_DAMAGE) this.damage.shift();
       } else if (crit) this.crits[key] = { n: damage, seed, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock };
-      // damage over time is credited to the class that put it on
-      for (const up of credit(this.progress, cls ?? this.sprites[key], dealt, m)) {
-        // a class's level-up shows over whoever earned it, yours over you
-        if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
-        else this.cheer(key, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
+      // damage over time is credited to the class that put it on; what the
+      // party's auras added to a blow, to the healer class that gives them
+      // (shares in effects.js): the kill's experience is the same, shared out
+      const by = cls ?? this.sprites[key];
+      const aura = owed ? owed.haste + owed.might + owed.hex : 0;
+      for (const [c, part, over] of [[by, 1 - aura, key], ["healer", aura, this.holder("healer", this.attackers())]]) {
+        if (!(part > 0)) continue;
+        for (const up of credit(this.progress, c, dealt * part, m)) {
+          // a class's level-up shows over whoever earned it, yours over you
+          if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
+          else this.cheer(over, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
+        }
       }
     }
     if (!landed) return false;
@@ -820,6 +827,7 @@ export default class RaidParty extends View {
       if (r.start === null && t >= r.next) {
         r.start = r.seed = t;
         r.factor = pace.factor; // what its blow's damage is multiplied by, for the gap it keeps
+        r.haste = pace.haste; // the share of its blows the haste aura adds (owed to the healer)
         r.next = Math.max(r.next, t - 1) + nextGap(pace.ticks, Math.random());
         r.heal = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, aimed) : null;
         if (r.heal) aimed.push(r.heal);
@@ -831,8 +839,9 @@ export default class RaidParty extends View {
     if (keys.length && this.monster.hp > 0) {
       const before = this.iconKey();
       for (const d of tickStatuses(this.statuses, kind, auras)) {
-        const p = (this.dots[`${d.cls}/${d.status}`] ??= { cls: d.cls, status: d.status, matchup: d.matchup, n: 0 });
+        const p = (this.dots[`${d.cls}/${d.status}`] ??= { cls: d.cls, status: d.status, matchup: d.matchup, n: 0, owed: { attacker: 0, haste: 0, might: 0, hex: 0 } });
         p.n += d.damage;
+        for (const k of Object.keys(p.owed)) p.owed[k] += d.damage * d.shares[k];
       }
       if (this.iconKey() !== before) changed = true; // one wore off
     }
@@ -860,14 +869,16 @@ export default class RaidParty extends View {
       const r = this.rhythm[key];
       const cls = this.sprites[key];
       const out = strike(
-        { cls, weapon: equipped(this.progress, cls, "weapon"), damage: damageOf(this.progress, cls), critChance: critChanceOf(this.progress.skills[cls]), factor: r.factor },
+        { cls, weapon: equipped(this.progress, cls, "weapon"), damage: damageOf(this.progress, cls), critChance: critChanceOf(this.progress.skills[cls]), factor: r.factor, haste: r.haste },
         kind,
         this.statuses,
         auras,
         Math.random,
       );
       r.chainAt = out.hits.length > 1 ? t : null; // the second strike's arc shows
-      for (const h of out.hits) blows.push({ key, cls, seed: r.seed, damage: h.damage, crit: h.crit, matchup: out.matchup, chain: h.chain });
+      // which way the attacker faces the boss: its chain's arc leaps on that way, and its second number at the arc's end
+      const dir = key === YOU ? (this.youDir ?? 1) : (this.at?.[key]?.dir ?? 1);
+      for (const h of out.hits) blows.push({ key, cls, seed: r.seed, damage: h.damage, crit: h.crit, matchup: out.matchup, chain: h.chain, dir, shares: out.shares });
     }
     // what the statuses dealt lands once a second, one sum per class and status:
     // as the attempt's time shown turns to the next second (drawn then anyway),
@@ -875,7 +886,10 @@ export default class RaidParty extends View {
     const turning = keys.length && this.monster.hp > 0 ? Math.ceil((this.left - TICK_STEP) / 1000) !== Math.ceil(this.left / 1000) : t % DOT_TICKS === 0;
     if (turning && this.monster.hp > 0) {
       for (const p of Object.values(this.dots)) {
-        if (p.n > 0) blows.push({ key: this.holder(p.cls, keys), cls: p.cls, seed: t, damage: p.n, crit: false, matchup: p.matchup, dot: p.status });
+        if (p.n > 0) {
+          const owed = Object.fromEntries(Object.entries(p.owed).map(([k, n]) => [k, n / p.n]));
+          blows.push({ key: this.holder(p.cls, keys), cls: p.cls, seed: t, damage: p.n, crit: false, matchup: p.matchup, dot: p.status, shares: owed });
+        }
       }
       this.dots = Object.create(null);
     }
@@ -1794,7 +1808,7 @@ export default class RaidParty extends View {
   damageNote(d, W, kind) {
     const core = { x: Math.round(W / 2 + kind.core.x), y: MONSTER_Y - kind.core.y };
     const hit = d.dot ? { x: core.x + DOT_SPOT[d.dot] * (kind.core.r + 20), y: core.y + 12 } : this.hitOf(d.key, d.seed, W, kind);
-    const at = d.chain ? { x: hit.x + (hit.x < core.x ? -CHAIN_W : CHAIN_W), y: hit.y - 16 } : hit;
+    const at = d.chain ? { x: hit.x + (d.dir < 0 ? -CHAIN_W : CHAIN_W), y: hit.y - 16 } : hit; // the end of its arc (see attack)
     const n = shortNumber(Math.max(1, d.n)); // a blow that took the last fraction of a point still shows 1
     const text = d.crit ? `${n}!` : n;
     const scale = d.crit ? 4 : 3;
@@ -3012,7 +3026,7 @@ export default class RaidParty extends View {
   // panel says under them while hats are shown; each class still has its own
   // on. A kind with nothing for sale yet says so. Under the items, two lines on
   // the one picked (clicking an item picks it; the one on until then): for a
-  // weapon what it does (statLines in effects.js: its pace, its element's
+  // weapon what it does (shopLines in effects.js: its pace, its element's
   // status and the bosses weak to it or resisting it, a vial's aura), the
   // tiles being too narrow for it. Its height is fixed by PANEL and SHOP_ROW
   // (167px), short enough for the scene at its lowest (230px, the sign taking 54).
@@ -3033,7 +3047,7 @@ export default class RaidParty extends View {
     const about = !pick
       ? ["", ""]
       : kind === "weapon"
-        ? ((lines) => [`${pick.name}: ${lines[0]}`, lines.slice(1).join(" · ") || "No element"])(statLines(cls, pick.id))
+        ? shopLines(cls, pick.id)
         : [pick.name, SHOP[kind].shared ? "Looks only, worn by any class" : `Looks only, for every ${capital(cls)}`];
     const nav = (k) =>
       h_flex()
@@ -3056,10 +3070,14 @@ export default class RaidParty extends View {
         })
         .child(image(src(SHOP_ICONS[k] ?? "icons/coin.png")).w(18).h(18))
         .child(div().text_size(10).font_semibold().text_color(CREAM).child(SHOP[k].name));
+    // the class picked is a wider tab with its name beside its sprite; the
+    // others show the sprite alone, their name in a tooltip (four names do not
+    // fit beside four sprites in the 218px column)
     const tab = (id, on, act, ...content) =>
       h_flex()
         .id(id)
-        .flex_1()
+        .when(on, (el) => el.w(SHOP_ROW.tab).flex_none())
+        .when(!on, (el) => el.flex_1())
         .min_w(0)
         .h(PANEL.tab)
         .gap(2)
@@ -3086,7 +3104,6 @@ export default class RaidParty extends View {
         .flex_1()
         .min_w(0)
         .h(SHOP_ITEM_H)
-        .flex_none()
         .items_center()
         .gap(2)
         .py(3)
@@ -3188,8 +3205,8 @@ export default class RaidParty extends View {
                           this.shopPick = null;
                         },
                         this.sprite(c, "stand", 18, 18),
-                        div().min_w(0).truncate().text_size(9).font_semibold().text_color(CREAM).child(capital(c)),
-                      ),
+                        ...(c === cls ? [div().flex_none().text_size(9).font_semibold().text_color(CREAM).child(capital(c))] : []),
+                      ).when(c !== cls, (el) => el.tooltip(capital(c))),
                     ),
                   ),
               )

@@ -22,7 +22,8 @@
 //   aura while it is in the fight (faster attacks, more damage, the monster
 //   taking more damage), and deals half damage itself. Several healers on the
 //   same vial give one aura; different vials all count. The Heal Vial has
-//   none.
+//   none. What an aura adds to a blow is the aura healer's doing, so that
+//   share of the blow's experience goes to the healer class (see Shares).
 //
 // Effects belong to a class, not to an agent (agents are short-lived): every
 // character of a class fights with the weapon the class has equipped.
@@ -165,12 +166,30 @@ const givesAura = (cls, weapon) => AURAS.includes(statsOf(cls, weapon).potion);
 // its blows' damage is multiplied by for it (the weapon's factor, or more where
 // the gap was held at the floor), so its damage per tick is the class
 // default's. The haste aura takes HASTE_AURA_SHARE off the class's gap before
-// the weapon's factor applies.
+// the weapon's factor applies. `haste` is the share of this character's blows
+// the haste aura adds (1 - hasted gap / gap: 0.15, less where the floor holds,
+// 0 without it), for crediting (see Shares).
 export function cadence(baseTicks, cls, weapon, auras) {
   const base = Math.min(positive(baseTicks, ATTACK_TICKS[0]), MAX_GAP_TICKS);
   const hasted = Math.max(MIN_ATTACK_TICKS, base * (aurasOf(auras).haste ? 1 - HASTE_AURA_SHARE : 1));
   const ticks = Math.max(MIN_ATTACK_TICKS, hasted * gapFactor(cls, weapon));
-  return { ticks, factor: ticks / hasted };
+  return { ticks, factor: ticks / hasted, haste: Math.max(0, 1 - hasted / Math.max(base, MIN_ATTACK_TICKS)) };
+}
+
+// ---- Shares ----------------------------------------------------------------
+// Who a blow's damage (and so its experience) is owed to. An aura's healer
+// gets what its aura added: of a blow under the hex, HEX_BONUS / (1 +
+// HEX_BONUS); of what is left under might, MIGHT_BONUS / (1 + MIGHT_BONUS); of
+// what is left of a hasted attacker's, the share of its blows the haste added
+// (cadence's `haste`); the attacker the rest. So a kill's experience is the
+// same, only shared out differently. Returns { attacker, haste, might, hex },
+// shares from 0 to 1 adding up to 1.
+export function shares(auras, haste = 0) {
+  const a = aurasOf(auras);
+  const hex = a.hex ? HEX_BONUS / (1 + HEX_BONUS) : 0;
+  const might = a.might ? (1 - hex) * (MIGHT_BONUS / (1 + MIGHT_BONUS)) : 0;
+  const hasted = a.haste ? (1 - hex - might) * Math.min(1, nonneg(haste)) : 0;
+  return { attacker: 1 - hex - might - hasted, haste: hasted, might, hex };
 }
 
 // The gap before a character's next attack, given its mean `ticks` (from
@@ -186,11 +205,13 @@ export function nextGap(ticks, r) {
 }
 
 // ---- Statuses --------------------------------------------------------------
-// A monster's statuses, none on: { burn: { <class>: { left, ticks } }, chill,
-// venom: [{ cls, left, ticks }] }. `left` is the damage still to deal (before
-// the monster's weakness and the hex, which apply as it ticks), `ticks` how
-// many ticks it lasts; `chill` is the ticks of chill left. Kept with the
-// monster in memory, a fresh one for each monster.
+// A monster's statuses, none on: { burn: { <class>: { left, ticks, haste,
+// might } }, chill, venom: [{ cls, left, ticks, haste, might }] }. `left` is the
+// damage still to deal (before the monster's weakness and the hex, which apply
+// as it ticks), `haste` and `might` how much of it those auras added (owed to
+// the healer: see Shares), `ticks` how many ticks it lasts; `chill` counts down
+// so every blow on the CHILL_TICKS ticks after a frost hit's is chilled. Kept
+// with the monster in memory, a fresh one for each monster.
 export function newStatuses() {
   return { burn: {}, chill: 0, venom: [] };
 }
@@ -199,7 +220,13 @@ export function newStatuses() {
 // in place (anything malformed dropped), else a fresh one.
 function statusesOf(st) {
   if (st === null || typeof st !== "object") return newStatuses();
-  const dot = (d) => d !== null && typeof d === "object" && finite(d.left) && d.left > 0 && Number.isInteger(d.ticks) && d.ticks > 0;
+  const dot = (d) => {
+    if (d === null || typeof d !== "object" || !finite(d.left) || !(d.left > 0) || !Number.isInteger(d.ticks) || !(d.ticks > 0)) return false;
+    // the auras' parts of it: from 0, together never more than all of it
+    d.haste = Math.min(nonneg(d.haste), d.left);
+    d.might = Math.min(nonneg(d.might), d.left - d.haste);
+    return true;
+  };
   if (st.burn === null || typeof st.burn !== "object" || Array.isArray(st.burn)) st.burn = {};
   for (const k of Object.keys(st.burn)) if (!CLASSES.includes(k) || !dot(st.burn[k])) delete st.burn[k];
   st.chill = Number.isInteger(st.chill) && st.chill > 0 ? st.chill : 0;
@@ -214,14 +241,16 @@ function statusesOf(st) {
 // default). `kind` is the monster's kind, `statuses` its statuses (changed in
 // place: this hit's burn, chill or venom is put on), `auras` the party's, and
 // `rand` a random source (rand() from 0 up to 1; two calls at most, crit then
-// chain). Chill, if on, raises the crit chance before the roll.
+// chain). Chill, if on, raises the crit chance before the roll. `blow.haste` is
+// the share of the attacker's blows the haste aura adds (cadence's).
 //
 // Returns { cls, element, matchup, hits: [{ damage, crit, chain }], damage }:
 // one hit, or two when it chains (the second the same as the first, `chain`
 // true), each damage a real number from 0 up with every multiplier in (the
 // weapon, an aura healer's half, might, the crit, the monster's weakness or
-// resistance, the hex); `damage` is their sum. Crediting is to `cls` (null for
-// an unknown class).
+// resistance, the hex); `damage` is their sum; and `shares` (see Shares), how
+// each hit's damage is owed to the attacker's class (`cls`, null for an
+// unknown one) and to the healer class for each aura.
 export function strike(blow, kind, statuses, auras, rand) {
   const b = blow !== null && typeof blow === "object" ? blow : {};
   const st = statusesOf(statuses);
@@ -238,11 +267,15 @@ export function strike(blow, kind, statuses, auras, rand) {
   const hit = { damage: taken(dealt), crit, chain: false };
   const hits = [hit];
   if (w.element === "storm" && random(rand) < CHAIN_CHANCE) hits.push({ ...hit, chain: true });
+  // the damage over time a hit puts on, and the auras' parts of it (the hex applies as it ticks)
+  const owed = shares({ might: a.might, haste: a.haste }, b.haste);
+  const over = (n) => ({ left: n, haste: n * owed.haste, might: n * owed.might });
   if (w.cls && dealt > 0) {
     if (w.element === "fire") {
-      const b0 = st.burn[w.cls];
-      st.burn[w.cls] = { left: (b0 ? b0.left : 0) + dealt * BURN_SHARE, ticks: BURN_TICKS };
-    } else if (w.element === "frost") st.chill = CHILL_TICKS;
+      const b0 = st.burn[w.cls] ?? { left: 0, haste: 0, might: 0 };
+      const add = over(dealt * BURN_SHARE);
+      st.burn[w.cls] = { left: b0.left + add.left, ticks: BURN_TICKS, haste: b0.haste + add.haste, might: b0.might + add.might };
+    } else if (w.element === "frost") st.chill = CHILL_TICKS + 1; // each tick takes one off before its blows: so the next CHILL_TICKS ticks' blows are chilled
     else if (w.element === "poison") {
       if (st.venom.length >= VENOM_STACKS) {
         // the stack with least left to deal goes (the oldest, of equal ones)
@@ -252,39 +285,49 @@ export function strike(blow, kind, statuses, auras, rand) {
         });
         st.venom.splice(least, 1);
       }
-      st.venom.push({ cls: w.cls, left: dealt * VENOM_SHARE, ticks: VENOM_TICKS });
+      st.venom.push({ cls: w.cls, ticks: VENOM_TICKS, ...over(dealt * VENOM_SHARE) });
     }
   }
-  return { cls: w.cls, element: w.element, matchup: matchup(kind, w.element), hits, damage: hits.reduce((s, h) => s + h.damage, 0) };
+  return { cls: w.cls, element: w.element, matchup: matchup(kind, w.element), hits, damage: hits.reduce((s, h) => s + h.damage, 0), shares: shares(a, b.haste) };
 }
 
 // One tick of the monster's statuses (every TICK_STEP while it is being
 // fought): each burn and venom stack deals its share of what it has left
 // (left / ticks, so it is all dealt by its last tick), the chill wears off a
 // tick, and whatever has run out is taken off. `statuses` is changed in place.
-// Returns what landed: [{ cls, status, element, matchup, damage }], one per
-// burning class and per venom stack, damage with the monster's weakness and
-// the hex in, credited to `cls`.
+// Returns what landed: [{ cls, status, element, matchup, damage, shares }],
+// one per burning class and per venom stack, damage with the monster's
+// weakness and the hex in, owed to `cls` and to the healer class as `shares`
+// says (the haste and might that went into it, and the hex now: see Shares).
 export function tickStatuses(statuses, kind, auras) {
   const st = statusesOf(statuses);
-  const hex = aurasOf(auras).hex ? 1 + HEX_BONUS : 1;
+  const hexOn = aurasOf(auras).hex;
+  const hex = hexOn ? 1 + HEX_BONUS : 1;
   const out = [];
   const step = (d) => {
-    const n = d.left / d.ticks;
+    const k = 1 / d.ticks;
+    const n = d.left * k;
+    const parts = { haste: d.haste * k, might: d.might * k };
     d.left -= n;
+    d.haste -= parts.haste;
+    d.might -= parts.might;
     d.ticks -= 1;
-    if (d.ticks === 0) d.left = 0;
-    return n;
+    if (d.ticks === 0) d.left = d.haste = d.might = 0;
+    // the shares of what lands: the hex's added part first, the rest as it was put on
+    const h = hexOn ? HEX_BONUS / (1 + HEX_BONUS) : 0;
+    const haste = n > 0 ? (1 - h) * (parts.haste / n) : 0;
+    const might = n > 0 ? (1 - h) * (parts.might / n) : 0;
+    return { n, shares: { attacker: Math.max(0, 1 - h - haste - might), haste, might, hex: h } };
+  };
+  const land = (cls, status, element, d) => {
+    const { n, shares: owed } = step(d);
+    out.push({ cls, status, element, matchup: matchup(kind, element), damage: n * elementFactor(kind, element) * hex, shares: owed });
   };
   for (const cls of Object.keys(st.burn)) {
-    const n = step(st.burn[cls]);
-    out.push({ cls, status: "burn", element: "fire", matchup: matchup(kind, "fire"), damage: n * elementFactor(kind, "fire") * hex });
+    land(cls, "burn", "fire", st.burn[cls]);
     if (st.burn[cls].ticks === 0) delete st.burn[cls];
   }
-  for (const v of st.venom) {
-    const n = step(v);
-    out.push({ cls: v.cls, status: "venom", element: "poison", matchup: matchup(kind, "poison"), damage: n * elementFactor(kind, "poison") * hex });
-  }
+  for (const v of st.venom) land(v.cls, "venom", "poison", v);
   st.venom = st.venom.filter((v) => v.ticks > 0);
   if (st.chill > 0) st.chill -= 1;
   return out;
@@ -306,10 +349,10 @@ function speedText(factor) {
   return `${NUMBER(speed)}× speed`;
 }
 const STATUS_TEXT = {
-  burn: `Burn: +${percent(BURN_SHARE)} over ${seconds(BURN_TICKS)}`,
+  burn: `Burn: +${percent(BURN_SHARE)} in ${seconds(BURN_TICKS)}`,
   chill: `Chill: +${percent(CHILL_CRIT)} crit for all`,
   chain: `Chain: ${percent(CHAIN_CHANCE)} to strike twice`,
-  venom: `Venom: +${percent(VENOM_SHARE)} over ${seconds(VENOM_TICKS)}, ${VENOM_STACKS} stacks`,
+  venom: `Venom: +${percent(VENOM_SHARE)} in ${seconds(VENOM_TICKS)}, ${VENOM_STACKS} stacks`,
 };
 const AURA_TEXT = {
   haste: `Aura: party gaps -${percent(HASTE_AURA_SHARE)}`,
@@ -318,9 +361,9 @@ const AURA_TEXT = {
 };
 
 // Short lines saying what a weapon does, for the shop: its pace ("2× damage,
-// half speed"), its element's status ("Burn: +25% over 3s"), the kinds weak
+// half speed"), its element's status ("Burn: +20% in 3s"), the kinds weak
 // to and resisting it ("Weak: slime, dragon", "Resist: ogre"), and a vial's
-// aura ("Aura: party +20% damage", "Half damage itself"). Unknown ids are the
+// aura ("Aura: party +30% damage", "Half damage itself"). Unknown ids are the
 // class's default, as in statsOf.
 export function statLines(cls, weapon) {
   const w = statsOf(cls, weapon);
@@ -336,9 +379,23 @@ export function statLines(cls, weapon) {
   return lines;
 }
 
+// The shop's two lines on a weapon (its tiles are too narrow for them): the
+// weapon's name and its first line, then the rest joined by " · ". For a weapon
+// at normal speed with more to say, the first line is its status or aura and
+// "Normal speed" goes to the second, so each line fits the shop's 210px at
+// size 10 ("Fire Blade: Burn: +20% in 3s", "Normal speed · Weak: ogre ·
+// Resist: dragon"). A weapon with nothing more: "No element".
+export function shopLines(cls, weapon) {
+  const w = statsOf(cls, weapon);
+  const name = (CLASSES.includes(cls) ? SHOP.weapon.items[cls].find((it) => it.id === w.id)?.name : null) ?? "Weapon";
+  const lines = statLines(cls, weapon);
+  const first = w.factor === 1 && lines.length > 1 ? 1 : 0;
+  return [`${name}: ${lines[first]}`, lines.filter((_, i) => i !== first).join(" · ") || "No element"];
+}
+
 // ---- Pictures --------------------------------------------------------------
 // The icons for the monster's name plate (statuses on it, and the hex) and for
-// the party's side (the haste and might auras), in art/effects/icons/; the
+// an aura healer, by its HP bar (its vial's: haste, might, hex), in art/effects/icons/; the
 // marks for a damage number that hit a weakness or a resistance, in
 // art/effects/marks/; and the pictures laid over the monster while a status
 // is on it, in art/effects/<status>/ (see tools/idle-rpg-sprites.py).
@@ -378,10 +435,4 @@ export function plateIcons(statuses, auras) {
   if (st.venom.length) out.push({ id: "venom", n: st.venom.length });
   if (aurasOf(auras).hex) out.push({ id: "hex", n: 1 });
   return out;
-}
-
-// The party's auras shown on its side: [{ id }] for haste and might.
-export function partyIcons(auras) {
-  const a = aurasOf(auras);
-  return ["haste", "might"].filter((id) => a[id]).map((id) => ({ id }));
 }

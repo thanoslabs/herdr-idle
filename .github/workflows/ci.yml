@@ -93,7 +93,9 @@ jobs:
             process.exit(1);
           }
           // the font's colours are GLYPH_COLOURS, no more and no fewer, and every
-          // colour main.js sets text in (pixelText(..., "gold"), DOT_COLOURS) is one
+          // colour main.js sets text in is one: each quoted word among a
+          // pixelText call's arguments ("white", or either side of a ternary,
+          // d.crit ? "gold" : "white") and the values of DOT_COLOURS
           const fonts = readdirSync(`${dir}/art/font`).sort();
           if (fonts.join() !== [...GLYPH_COLOURS].sort().join()) {
             console.error(`art/font has ${fonts.join(", ")}; GLYPH_COLOURS is ${GLYPH_COLOURS.join(", ")}`);
@@ -101,7 +103,12 @@ jobs:
           }
           const source = readFileSync(`${dir}/main.js`, "utf8");
           const dots = source.match(/const DOT_COLOURS = \{([^}]*)\}/)?.[1] ?? "";
-          const colours = [...source.matchAll(/pixelText\([^()]*?,\s*"([a-z]+)"/g), ...dots.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+          const calls = [...source.matchAll(/pixelText\(((?:[^()]|\([^()]*\))*)\)/g)].map((m) => m[1]).filter((args) => !args.startsWith("text, colour"));
+          if (calls.length < 3) {
+            console.error(`Expected main.js to set pixel text in several places, found ${calls.length}`);
+            process.exit(1);
+          }
+          const colours = [...calls.flatMap((args) => [...args.matchAll(/"([a-z]+)"/g)]), ...dots.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
           const uncoloured = colours.filter((c) => !GLYPH_COLOURS.includes(c));
           if (!dots || uncoloured.length) {
             console.error(`Text colours the pixel font lacks: ${uncoloured.join(", ") || "(no DOT_COLOURS in main.js)"}`);
