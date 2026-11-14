@@ -2,7 +2,7 @@
 # Draws Idle RPG's pixel art as PNGs (no dependencies): the class sprites
 # (stubby 16x16 adventurers with a one-pixel dark outline, in every colourway
 # the shop sells, and every weapon and hat it sells drawn to lay over them),
-# each weapon's attack, the castle
+# each weapon's attack and effects on the boss, the castle
 # scenery (wall, floor, mountains, clouds, sun, moon, stars, props), the icons,
 # and a small pixel font for numbers.
 #
@@ -12,7 +12,7 @@
 # Everything is drawn at 8 image pixels per art pixel and shown at 4.
 #
 # The pictures go in folders by what they show, then by what it is doing, with
-# short names inside (the paths in mods/idle-rpg/rules.js and main.js follow it):
+# short names inside (the paths in mods/idle-rpg/rules.js, effects.js and main.js follow it):
 #   scene/      the backdrop and props: wall, floor, mountains, stars, sun, moon,
 #               cloud-a, cloud-b, banner, torch, barrel
 #   classes/    <class>/<look>/stand, walk/{l,r}, rag/{c,l,r}, and the fighting
@@ -36,7 +36,10 @@
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
 #               coin, star, armour, hat, gear, the card's wrench, and the
 #               stage arrows on the boss's plate: prev, next
-#   font/       <colour>/<character>, the pixel font
+#   effects/    weapon effects (effects.js): icons/ (burn, chill, venom, hex, haste,
+#               might), marks/ (weak, resist), and on the boss burn/flame-1, -2,
+#               chill/crystal, glint, chain/arc/{l,r}, venom/drip-1, -2
+#   font/       <colour>/<character>, the pixel font: white, gold, ember, venom
 import math, os, struct, sys, zlib
 if len(sys.argv) != 2 or sys.argv[1].startswith("-"):  # no options: "--help" is not a folder to fill
     sys.exit("usage: idle-rpg-sprites.py <output folder>")
@@ -1290,7 +1293,8 @@ FONT = {
     "t": ["###", ".#.", ".#.", ".#.", ".#."],
     "e": ["###", "#..", "##.", "#..", "###"],      # a power of ten, past 1,000T
 }
-GLYPH_COLOURS = {"white": "#ffffff", "gold": "#ffd166"}  # a plain hit and a badge; a critical blow
+GLYPH_COLOURS = {"white": "#ffffff", "gold": "#ffd166",  # a plain hit and a badge; a critical blow;
+                 "ember": "#ff9d3c", "venom": "#a8eb6a"}  # damage over time: burn, venom (effects.js)
 
 def glyph(name, rows, colour):
     h, w = len(rows) + 2, len(rows[0]) + 2

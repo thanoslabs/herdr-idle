@@ -91,8 +91,8 @@ export const VENOM_STACKS = 5;
 // The auras a healer's vial gives the whole party (and the healer) while it is
 // fighting, by potion (POTIONS in rules.js; the Heal Vial gives none).
 export const AURAS = ["haste", "might", "hex"];
-export const HASTE_AURA_TICKS = 1; // haste: every gap this many ticks shorter (one rank of Haste)
-export const MIGHT_BONUS = 0.2; // might: every blow deals this much more (a share)
+export const HASTE_AURA_SHARE = 0.15; // haste: every party member's gap this much shorter (a share; MIN_ATTACK_TICKS still the floor)
+export const MIGHT_BONUS = 0.3; // might: every blow deals this much more (a share)
 export const HEX_BONUS = 0.15; // hex: the monster takes this much more from everything (a share)
 export const AURA_HEALER_DAMAGE = 0.5; // a healer giving an aura deals this share of its damage
 
@@ -164,11 +164,11 @@ const givesAura = (cls, weapon) => AURAS.includes(statsOf(cls, weapon).potion);
 // the mean gap in ticks (a real number, never under MIN_ATTACK_TICKS) and what
 // its blows' damage is multiplied by for it (the weapon's factor, or more where
 // the gap was held at the floor), so its damage per tick is the class
-// default's. The haste aura takes HASTE_AURA_TICKS off the class's gap before
+// default's. The haste aura takes HASTE_AURA_SHARE off the class's gap before
 // the weapon's factor applies.
 export function cadence(baseTicks, cls, weapon, auras) {
   const base = Math.min(positive(baseTicks, ATTACK_TICKS[0]), MAX_GAP_TICKS);
-  const hasted = Math.max(MIN_ATTACK_TICKS, base - (aurasOf(auras).haste ? HASTE_AURA_TICKS : 0));
+  const hasted = Math.max(MIN_ATTACK_TICKS, base * (aurasOf(auras).haste ? 1 - HASTE_AURA_SHARE : 1));
   const ticks = Math.max(MIN_ATTACK_TICKS, hasted * gapFactor(cls, weapon));
   return { ticks, factor: ticks / hasted };
 }
@@ -312,7 +312,7 @@ const STATUS_TEXT = {
   venom: `Venom: +${percent(VENOM_SHARE)} over ${seconds(VENOM_TICKS)}, ${VENOM_STACKS} stacks`,
 };
 const AURA_TEXT = {
-  haste: "Aura: party attacks faster",
+  haste: `Aura: party gaps -${percent(HASTE_AURA_SHARE)}`,
   might: `Aura: party +${percent(MIGHT_BONUS)} damage`,
   hex: `Aura: foe takes +${percent(HEX_BONUS)}`,
 };
