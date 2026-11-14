@@ -11,9 +11,12 @@
 // and shown on the floor before it lands, that hits everyone attacking within
 // a ring around that spot (AREA_RADIUS, AREA_DEPTH). A character at 0 HP is
 // knocked out: it stops attacking (though it is still working) and rests
-// KO_TICKS, then comes back at full HP. If a blow knocks out the last one standing, the party is wiped
-// and the attempt fails. A healer with the Heal Vial heals the most hurt
-// attacker instead of attacking while anyone is under HEAL_BELOW of their HP.
+// KO_TICKS, then comes back at full HP. If a blow knocks out the last one
+// standing, the party is wiped and the attempt fails. A healer with the Heal
+// Vial heals the most hurt attacker instead of attacking while anyone is under
+// HEAL_BELOW of their HP. Max HP, the boss's damage at a stage and what a heal
+// restores are stats, in rules.js (maxHpOf, stageDamage, healOf); HP is a real
+// number, like damage.
 //
 // Time is counted in the attack clock's ticks (TICK_STEP, 250ms), so main.js
 // calls monsterTick from its own tick and needs no timer of its own. Anything
@@ -40,7 +43,7 @@
 // started); the tick it started (its wind-up, or the marker on the floor) and
 // the tick it lands.
 
-import { CLASSES, TICK_STEP } from "./rules.js";
+import { TICK_STEP } from "./rules.js";
 
 // Defaults chosen to be retuned; nothing else depends on their values.
 const SECOND = 1000 / TICK_STEP; // ticks
@@ -49,6 +52,7 @@ export const MONSTER_ATTACK_JITTER = 2; // each gap is that many ticks either wa
 export const SINGLE_WINDUP_TICKS = 2; // a single blow lands this long after it starts (its lunge or swing)
 export const AREA_WARNING_TICKS = SECOND; // an area attack's marker shows on the floor this long before it lands
 export const MIN_MONSTER_TICKS = AREA_WARNING_TICKS + 2; // so one attack has landed and faded before the next starts
+export const FIRST_ATTACK_TICKS = 4; // the soonest the first attack of a fight starts (see firstGap)
 // Single blows between two area attacks: one of these at random, evenly, so
 // about every third attack hits an area.
 export const SINGLES_BETWEEN = [1, 2, 3];
@@ -65,18 +69,11 @@ export const KO_TICKS = 30 * SECOND; // a knocked-out character rests this long,
 // may have a healer.
 export const PARTY_SIZE = 4;
 export const SCALE_POWER = 1.5;
-// Max HP: each class's base (the warrior, who fights at the monster's feet,
-// the most; the healer and wizard the least), times (1 + HP_PER_LEVEL per
-// class level past 1), times HEALTH_GROWTH per rank of Health training.
-export const CLASS_HP = { wizard: 100, healer: 100, warrior: 200, archer: 130 };
-export const HP_PER_LEVEL = 0.1;
-export const HEALTH_GROWTH = 1.5;
 // Healing: a healer holding a potion of HEAL_POTION heals instead of attacking
 // while any attacker (itself included) is below HEAL_BELOW of its max HP, the
-// one with the least HP for its max, by HEAL_PER_DAMAGE times its own damage.
+// one with the least HP for its max (by healOf in rules.js).
 export const HEAL_POTION = "heal";
 export const HEAL_BELOW = 0.6;
-export const HEAL_PER_DAMAGE = 3;
 
 const finite = (v) => typeof v === "number" && Number.isFinite(v);
 const positive = (v) => (finite(v) && v > 0 ? v : 0);
@@ -91,24 +88,15 @@ export function newParty() {
   return { members: Object.create(null), foe: { next: null, singles: SINGLES_BETWEEN[0], pending: null, last: null, seq: 0 } };
 }
 
-// A character's max HP from its class, its class's level and the class's
-// ranks of Health training (anything odd counts as level 1 and rank 0; an
-// unknown class gets the lowest base).
-export function maxHpOf(cls, level = 1, health = 0) {
-  const base = Object.prototype.hasOwnProperty.call(CLASS_HP, cls) ? CLASS_HP[cls] : Math.min(...CLASSES.map((c) => CLASS_HP[c]));
-  const lv = finite(level) && level > 1 ? Math.floor(level) : 1;
-  const rank = finite(health) && health > 0 ? Math.floor(health) : 0;
-  return Math.round(base * (1 + HP_PER_LEVEL * (lv - 1)) * HEALTH_GROWTH ** rank);
-}
-
 // What one of the monster's blows does to each character it hits, when
-// `attackers` are attacking (see SCALE_POWER), as a whole number, at least 1
-// for any damage at all.
+// `attackers` are attacking (see SCALE_POWER): a real number, 0 for anything
+// that is not damage.
 export function hitDamage(damage, attackers) {
   const d = positive(damage);
   if (!d) return 0;
   const n = finite(attackers) && attackers > 0 ? Math.floor(attackers) : 1;
-  return Math.max(1, Math.round(d * (n / PARTY_SIZE) ** SCALE_POWER));
+  const hit = d * (n / PARTY_SIZE) ** SCALE_POWER;
+  return Number.isFinite(hit) ? hit : Number.MAX_VALUE;
 }
 
 // The gap before the monster's next attack: MONSTER_ATTACK_TICKS give or take
@@ -116,6 +104,13 @@ export function hitDamage(damage, attackers) {
 export function monsterGap(random) {
   const j = MONSTER_ATTACK_JITTER;
   return Math.max(MIN_MONSTER_TICKS, MONSTER_ATTACK_TICKS - j + pick(random, 2 * j + 1));
+}
+
+// The wait before the monster's first attack on a party that has just formed
+// (or a fresh attempt, or a new boss): anywhere from FIRST_ATTACK_TICKS to a
+// whole gap, evenly, so a fight is not a free few seconds at the start.
+export function firstGap(random) {
+  return FIRST_ATTACK_TICKS + pick(random, MONSTER_ATTACK_TICKS - FIRST_ATTACK_TICKS + 1);
 }
 
 // Whether `key` is in the fight and on its feet (so attacks, and can be hit and healed).
@@ -140,15 +135,15 @@ export function down(party) {
 // { key, maxHp, x, y }. Newcomers join at full HP; anyone not in the list
 // leaves, and if they come back they start afresh. Positions are updated, and
 // a change of max HP keeps the HP lost: a rise adds to it, a fall cuts it to
-// the new max. Once someone is there, the monster's first attack is set a
-// gap from now. Returns the keys that joined and left.
+// the new max. Once someone is there, the monster's first attack is set within
+// a gap from now (firstGap). Returns the keys that joined and left.
 export function syncParty(party, fighters, tick, random) {
   const seen = new Set();
   const joined = [];
   for (const f of Array.isArray(fighters) ? fighters : []) {
     if (!f || typeof f.key !== "string" || seen.has(f.key)) continue;
     seen.add(f.key);
-    const maxHp = Math.max(1, Math.round(positive(f.maxHp)) || 1);
+    const maxHp = Math.min(positive(f.maxHp) || 1, Number.MAX_VALUE);
     const m = Object.prototype.hasOwnProperty.call(party.members, f.key) ? party.members[f.key] : null;
     if (!m) {
       party.members[f.key] = { hp: maxHp, maxHp, x: f.x, y: f.y, down: null, hitAt: null, healedAt: null };
@@ -156,7 +151,7 @@ export function syncParty(party, fighters, tick, random) {
       continue;
     }
     if (maxHp !== m.maxHp) {
-      if (m.down === null) m.hp = Math.min(maxHp, Math.max(1, m.hp + Math.max(0, maxHp - m.maxHp)));
+      if (m.down === null) m.hp = Math.min(maxHp, Math.max(Number.MIN_VALUE, m.hp + Math.max(0, maxHp - m.maxHp)));
       m.maxHp = maxHp;
     }
     m.x = f.x;
@@ -165,13 +160,13 @@ export function syncParty(party, fighters, tick, random) {
   const left = Object.keys(party.members).filter((key) => !seen.has(key));
   for (const key of left) delete party.members[key];
   if (!Object.keys(party.members).length) party.foe.next = null;
-  else if (party.foe.next === null) party.foe.next = tick + monsterGap(random);
+  else if (party.foe.next === null) party.foe.next = tick + firstGap(random);
   return { joined, left };
 }
 
 // Starts afresh, as at a new attempt at the stage (after a wipe or when the
 // time runs out): everyone up at full HP, no attack under way, and the
-// monster's next attack a gap from `tick`.
+// monster's first attack within a gap of `tick` (firstGap).
 export function resetParty(party, tick, random) {
   for (const m of Object.values(party.members)) {
     m.hp = m.maxHp;
@@ -179,7 +174,31 @@ export function resetParty(party, tick, random) {
   }
   party.foe.pending = party.foe.last = null;
   party.foe.singles = SINGLES_BETWEEN[pick(random, SINGLES_BETWEEN.length)];
-  party.foe.next = Object.keys(party.members).length ? tick + monsterGap(random) : null;
+  party.foe.next = Object.keys(party.members).length ? tick + firstGap(random) : null;
+}
+
+// The monster's attacks start afresh from `tick`, as a new boss turns up: none
+// under way, the first within a gap (firstGap). Who is hurt or knocked out
+// stays so (a kill does not heal the party; a failed attempt does, see
+// resetParty).
+export function calm(party, tick, random) {
+  party.foe.pending = party.foe.last = null;
+  party.foe.next = Object.keys(party.members).length ? tick + firstGap(random) : null;
+}
+
+// Anyone whose rest is over gets up at full HP, on tick `tick`. Returns their
+// keys. monsterTick does this first; call it on its own on ticks with no boss
+// to fight (between a kill and the next), so rests run on.
+export function rise(party, tick) {
+  const back = [];
+  for (const [key, m] of Object.entries(party.members)) {
+    if (m.down !== null && tick >= m.down) {
+      m.down = null;
+      m.hp = m.maxHp;
+      back.push(key);
+    }
+  }
+  return back;
 }
 
 // Who is inside the ring an area attack aimed at x, y covers (AREA_RADIUS
@@ -209,14 +228,7 @@ export function inArea(party, x, y) {
 // main.js resets the stage and calls resetParty.
 export function monsterTick(party, tick, damage, random) {
   const foe = party.foe;
-  const out = { back: [], landed: null, hits: [], started: null, wiped: false };
-  for (const [key, m] of Object.entries(party.members)) {
-    if (m.down !== null && tick >= m.down) {
-      m.down = null;
-      m.hp = m.maxHp;
-      out.back.push(key);
-    }
-  }
+  const out = { back: rise(party, tick), landed: null, hits: [], started: null, wiped: false };
   const a = foe.pending;
   if (a && tick >= a.lands) {
     foe.pending = null;
@@ -226,7 +238,7 @@ export function monsterTick(party, tick, damage, random) {
     const dealt = hitDamage(damage, up(party).length);
     for (const key of struck) {
       const m = party.members[key];
-      m.hp = Math.max(0, m.hp - dealt);
+      m.hp = m.hp - dealt > 0 ? m.hp - dealt : 0;
       m.hitAt = tick;
       const ko = m.hp === 0;
       if (ko) m.down = tick + KO_TICKS;
@@ -264,7 +276,7 @@ export const heals = (cls, potion) => cls === "healer" && potion === HEAL_POTION
 // the standing attacker (itself included) with the least HP for its max, if
 // that is under HEAL_BELOW of it; the first to join on a tie. Never someone
 // knocked out, and nobody while the healer itself is down. main.js asks as
-// the healer's attack starts and heals with healParty at its impact.
+// the healer's attack starts and heals with healParty (healOf) at its impact.
 export function healTarget(party, key) {
   if (!standing(party, key)) return null;
   let best = null;
@@ -280,17 +292,12 @@ export function healTarget(party, key) {
   return best;
 }
 
-// How much a healer whose blows deal `damage` restores with one potion.
-export function healAmount(damage) {
-  return Math.round(positive(damage) * HEAL_PER_DAMAGE);
-}
-
 // Heals `key` by `amount` on tick `tick`, up to its max HP; nothing if it has
 // left or been knocked out. Returns the HP it got back.
 export function healParty(party, key, amount, tick) {
   if (!standing(party, key)) return 0;
   const m = party.members[key];
-  const got = Math.min(m.maxHp - m.hp, Math.round(positive(amount)));
+  const got = Math.min(m.maxHp - m.hp, positive(amount));
   if (got <= 0) return 0;
   m.hp += got;
   m.healedAt = tick;
