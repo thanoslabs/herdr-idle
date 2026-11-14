@@ -58,7 +58,10 @@ export const FIRST_ATTACK_TICKS = 4; // the soonest the first attack of a fight 
 export const SINGLES_BETWEEN = [1, 2, 3];
 export const AREA_RADIUS = 70; // px either side of the spot an area attack is aimed at
 export const AREA_DEPTH = 0.5; // and this much of it up and down the floor, which is seen at a slant (foe/marker is drawn so)
-export const KO_TICKS = 30 * SECOND; // a knocked-out character rests this long, then gets up at full HP
+// A knocked-out character rests this long, then gets up at full HP. The owner
+// said "something like a 30s cooldown"; a third of an attempt (STAGE_MS, 30s)
+// is the default, so one knocked out does come back mid-fight.
+export const KO_TICKS = 10 * SECOND;
 // The monster's damage is the stage's (an input: see hitDamage), which is
 // what one blow does to a party of PARTY_SIZE attackers. With n attackers a
 // blow does (n / PARTY_SIZE) ** SCALE_POWER of it: softer for fewer, so one or
@@ -85,7 +88,8 @@ const pick = (random, n) => {
 
 export function newParty() {
   // no prototype, so no key (an agent's address) can reach one
-  return { members: Object.create(null), foe: { next: null, singles: SINGLES_BETWEEN[0], pending: null, last: null, seq: 0 } };
+  // `singles` is drawn as the first attack is set (syncParty, resetParty)
+  return { members: Object.create(null), foe: { next: null, singles: 0, pending: null, last: null, seq: 0 } };
 }
 
 // What one of the monster's blows does to each character it hits, when
@@ -136,7 +140,10 @@ export function down(party) {
 // leaves, and if they come back they start afresh. Positions are updated, and
 // a change of max HP keeps the HP lost: a rise adds to it, a fall cuts it to
 // the new max. Once someone is there, the monster's first attack is set within
-// a gap from now (firstGap). Returns the keys that joined and left.
+// a gap from now (firstGap), and how many single blows come before the
+// first area attack drawn. Once nobody is left, the boss's attack under way
+// and the last one that landed are dropped (they never land or show). Returns
+// the keys that joined and left.
 export function syncParty(party, fighters, tick, random) {
   const seen = new Set();
   const joined = [];
@@ -159,8 +166,13 @@ export function syncParty(party, fighters, tick, random) {
   }
   const left = Object.keys(party.members).filter((key) => !seen.has(key));
   for (const key of left) delete party.members[key];
-  if (!Object.keys(party.members).length) party.foe.next = null;
-  else if (party.foe.next === null) party.foe.next = tick + firstGap(random);
+  if (!Object.keys(party.members).length) {
+    // nobody left to fight: the boss's attack under way, and what last landed, go with them
+    party.foe.next = party.foe.pending = party.foe.last = null;
+  } else if (party.foe.next === null) {
+    party.foe.next = tick + firstGap(random);
+    party.foe.singles = SINGLES_BETWEEN[pick(random, SINGLES_BETWEEN.length)];
+  }
   return { joined, left };
 }
 
@@ -267,20 +279,27 @@ export const heals = (cls, potion) => cls === "healer" && potion === HEAL_POTION
 // the standing attacker (itself included) with the least HP for its max, if
 // that is under HEAL_BELOW of it; the first to join on a tie. Never someone
 // knocked out, and nobody while the healer itself is down. main.js asks as
-// the healer's attack starts and heals with healParty (healOf) at its impact.
-export function healTarget(party, key) {
+// the healer's attack starts, and again at its impact (whoever it aimed at may
+// have left, fallen or been topped up), then heals with healParty (healOf).
+// `taken`: allies another healer is already healing this tick, passed over
+// while anyone else qualifies.
+export function healTarget(party, key, taken = []) {
   if (!standing(party, key)) return null;
-  let best = null;
-  let low = HEAL_BELOW;
-  for (const k of up(party)) {
-    const m = party.members[k];
-    const share = m.hp / m.maxHp;
-    if (share < low) {
-      best = k;
-      low = share;
+  const lowest = (skip) => {
+    let best = null;
+    let low = HEAL_BELOW;
+    for (const k of up(party)) {
+      if (skip.includes(k)) continue;
+      const m = party.members[k];
+      const share = m.hp / m.maxHp;
+      if (share < low) {
+        best = k;
+        low = share;
+      }
     }
-  }
-  return best;
+    return best;
+  };
+  return lowest(Array.isArray(taken) ? taken : []) ?? lowest([]);
 }
 
 // Heals `key` by `amount` on tick `tick`, up to its max HP; nothing if it has
