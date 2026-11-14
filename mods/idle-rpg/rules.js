@@ -233,10 +233,11 @@ export const SETTINGS = [
 
 // The pixel font (main.js lays numbers out with it): the characters it has,
 // each drawn in every one of GLYPH_COLOURS by tools/idle-rpg-sprites.py.
-// Digits, a sign or two, and what shortNumber writes: a point and K, M, B, T.
-export const GLYPHS = "0123456789+!.KMBT";
+// Digits, a sign or two, and what shortNumber writes: a point, K, M, B, T,
+// and E for a power of ten.
+export const GLYPHS = "0123456789+!.KMBTE";
 export const GLYPH_COLOURS = ["white", "gold"];
-const GLYPH_NAMES = { "+": "plus", "!": "bang", ".": "point", K: "k", M: "m", B: "b", T: "t" };
+const GLYPH_NAMES = { "+": "plus", "!": "bang", ".": "point", K: "k", M: "m", B: "b", T: "t", E: "e" };
 // How many art px wide each character is without its outline (3 unless named
 // here); main.js sets them one art px apart, sharing an outline column.
 const GLYPH_WIDTHS = { ".": 1 };
@@ -244,8 +245,9 @@ export const glyphWidth = (ch) => GLYPH_WIDTHS[ch] ?? 3;
 
 // A number as the game shows it (damage, HP): rounded to a whole number, and
 // from 1,000 up shortened with K, M, B or T, one decimal while under 10 of
-// them ("1.2K", "12K", "345M"), and past that in T ("12000T"). Anything that
-// is not a number from 0 up is "0".
+// them ("1.2K", "12K", "345M"). From 1,000T up it is a power of ten
+// ("1.2E18"), so the text never grows long. Anything that is not a number
+// from 0 up is "0".
 const UNITS = ["", "K", "M", "B", "T"];
 export function shortNumber(n) {
   if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return "0";
@@ -253,8 +255,16 @@ export function shortNumber(n) {
   for (let i = 1; ; i++) {
     const x = n / 1000 ** i;
     const r = x < 9.95 ? Math.round(x * 10) / 10 : Math.round(x);
-    if (r < 1000 || i === UNITS.length - 1) return `${r}${UNITS[i]}`;
+    if (r < 1000) return `${r}${UNITS[i]}`;
+    if (i === UNITS.length - 1) break;
   }
+  let e = Math.floor(Math.log10(n));
+  let m = Math.round((n / 10 ** e) * 10) / 10;
+  if (m >= 10) {
+    m = 1;
+    e += 1;
+  }
+  return `${m}E${e}`;
 }
 
 // The path in art/ of one character of the pixel font in `colour`

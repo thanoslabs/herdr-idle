@@ -163,7 +163,7 @@ The owner's decisions, verbatim where quoted:
 - **Owner's request:** damage numbers: each blow that lands shows its damage in a pixel font, drifting up and fading, and can be turned off in the settings. **Built** (crits gold and a size bigger; on by default; at most 12 on screen).
 - **Owner's request:** a settings menu behind a pixel gear, the right-most thing in the top-right corner. **Built** as a panel in the codex's style with a pixel on/off switch per setting; `SETTINGS` in `rules.js` is the list, so a setting is one more entry.
 - **Owner's request:** the agents' status counts moved off the sign to the top-right corner, each an icon with its count on a badge in the pixel font, hidden at 0. **Built**; below 640px wide the corner's strip sits under the sign.
-- The pixel font is art: digits, "+", "!", a point and K, M, B, T (for shortened numbers) in white and gold, drawn by `tools/idle-rpg-sprites.py`. More characters or colours are more glyphs there and in `GLYPHS` / `GLYPH_COLOURS`.
+- The pixel font is art: digits, "+", "!", a point and K, M, B, T, E (for shortened numbers; E for a power of ten past 1,000T) in white and gold, drawn by `tools/idle-rpg-sprites.py`. More characters or colours are more glyphs there and in `GLYPHS` / `GLYPH_COLOURS`.
 
 ## Technical notes
 

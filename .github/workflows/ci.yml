@@ -84,7 +84,7 @@ jobs:
           // every character a number can be written with (damage, HP: shortNumber,
           // and "!" and "+" after or before one) is in the pixel font
           const written = new Set("!+");
-          for (let n = 0; n < 1e19; n = n * 1.37 + 1) for (const ch of shortNumber(n)) written.add(ch);
+          for (let n = 0; n < 1e80; n = n * 1.37 + 1) for (const ch of shortNumber(n)) written.add(ch);
           const unwritable = [...written].filter((ch) => !GLYPHS.includes(ch));
           if (unwritable.length) {
             console.error(`Characters numbers are written with that the pixel font lacks: ${unwritable.join(" ")}`);

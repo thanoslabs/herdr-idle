@@ -243,7 +243,7 @@ function tally(list) {
 }
 
 // Text in the pixel font (GLYPHS in rules.js: digits, "+", "!", and the point
-// and K, M, B, T of shortNumber), as a row of glyph pictures `scale` screen px
+// and K, M, B, T, E of shortNumber), as a row of glyph pictures `scale` screen px
 // per art px, in one of GLYPH_COLOURS. Each glyph is its width (glyphWidth: 3
 // art px, the point 1) plus a px of outline each side, 7 high, and each is set
 // its width plus 1 after the last, so neighbours share an outline column.
