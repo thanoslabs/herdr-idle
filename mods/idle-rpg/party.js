@@ -177,15 +177,6 @@ export function resetParty(party, tick, random) {
   party.foe.next = Object.keys(party.members).length ? tick + firstGap(random) : null;
 }
 
-// The monster's attacks start afresh from `tick`, as a new boss turns up: none
-// under way, the first within a gap (firstGap). Who is hurt or knocked out
-// stays so (a kill does not heal the party; a failed attempt does, see
-// resetParty).
-export function calm(party, tick, random) {
-  party.foe.pending = party.foe.last = null;
-  party.foe.next = Object.keys(party.members).length ? tick + firstGap(random) : null;
-}
-
 // Anyone whose rest is over gets up at full HP, on tick `tick`. Returns their
 // keys. monsterTick does this first; call it on its own on ticks with no boss
 // to fight (between a kill and the next), so rests run on.
