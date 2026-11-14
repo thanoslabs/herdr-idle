@@ -1457,3 +1457,153 @@ for hat, by_class in HATS.items():
         over = pictures(rows, lambda tag: [r.ljust(22, ".") for r in mine])
         for (frame, b), (_, g) in zip(body, over):
             save(f"hats/{hat}/{cls}/{frame}.png", overlay(g, b))
+
+# ---- Weapon effects (effects/): what weapons' elements and the healer's vials
+# do in a fight, shown on the monster and its name plate (mods/idle-rpg/effects.js
+# names every picture here: EFFECT_ICONS, EFFECT_MARKS, EFFECT_OVERLAYS).
+#   effects/icons/   7x7 icons, outlined like the sign's and shown at the same
+#                    size: the statuses on the monster's plate (burn, chill,
+#                    venom, with its stack count set beside it in the pixel
+#                    font, and the hex aura) and the party's auras (haste, might)
+#   effects/marks/   weak, resist: an arrow up or down, glyph-high (5x5 inside the
+#                    outline, so 7 tall like a glyph), set after a damage number
+#                    that hit the monster's weakness or resistance
+#   effects/<status>/ small pictures laid over the monster while a status is
+#                    on it, a few at a time around its bulk, so they suit every
+#                    monster: burn/flame-1, -2 (flames licking up, to flicker
+#                    between), chill/crystal and glint (frost crystals and a
+#                    sparkle), chain/arc/{l,r} (the second strike's arc), and
+#                    venom/drip-1, -2 (green drips, short and long)
+# Colours are the attacks' own: fire, frost and venom as their spells, the vials'
+# as their potions.
+EMBER = {"r": "#e2552f", "o": "#ff9d3c", "y": "#ffe27a", "W": "#fff3b0"}
+ICE = {"b": "#4f86c6", "i": "#9fd0f5", "I": "#dff3ff", "W": "#ffffff"}
+VENOM = {"x": "#2f7a22", "v": "#6fcf3f", "V": "#a8eb6a", "L": "#e4ffc4"}
+EFFECT_ICONS = {
+    "burn": ([                                                  # a flame
+        "...r...",
+        "..ro.r.",
+        ".rooro.",
+        ".royor.",
+        "royyyor",
+        "royWyor",
+        ".ryWyr.",
+    ], EMBER),
+    "chill": ([                                                 # a snowflake
+        "...i...",
+        ".i.I.i.",
+        "..iWi..",
+        "iIWWWIi",
+        "..iWi..",
+        ".i.I.i.",
+        "...i...",
+    ], ICE),
+    "venom": ([                                                 # a drop of venom
+        "...v...",
+        "..vVv..",
+        "..vVv..",
+        ".vVLVv.",
+        ".vVVVv.",
+        ".xvVvx.",
+        "..xxx..",
+    ], VENOM),
+    "hex": ([                                                   # an evil eye, in the Hex Vial's purple
+        ".......",
+        "..ppp..",
+        ".pPPPp.",
+        "pPPkPPp",
+        ".pPPPp.",
+        "..ppp..",
+        ".......",
+    ], {"p": "#7a3fb8", "P": "#d8b4ff", "k": "#2a1640"}),
+    "haste": ([                                                 # fast forward, in the Haste Vial's yellow
+        "g..g...",
+        "Gg.Gg..",
+        ".Gg.Gg.",
+        "..Gg.Gg",
+        ".Gg.Gg.",
+        "Gg.Gg..",
+        "g..g...",
+    ], {"g": "#e8b030", "G": "#fff0b0"}),
+    "might": ([                                                 # a fist, in the Might Vial's red
+        ".r.r.r.",
+        "rRrRrRr",
+        "rRrRrRr",
+        "rrrrrrr",
+        "rDDDDrr",
+        "rrrrrr.",
+        ".rrrr..",
+    ], {"r": "#d63a3a", "R": "#ff9a8a", "D": "#8f2626"}),
+}
+for name, (rows, pal) in EFFECT_ICONS.items():
+    assert len(rows) == 7 and all(len(r) == 7 for r in rows), name
+    icon(f"effects/icons/{name}.png", rows, pal)
+for name, rows, pal in (
+    ("weak", ["..w..", ".wWw.", "wwwww", ".....", "....."], {"w": "#ff8a3c", "W": "#ffd0a0"}),   # it hurts more: up, warm
+    ("resist", [".....", ".....", "wwwww", ".wWw.", "..w.."], {"w": "#8a95a6", "W": "#c3cad2"}),  # it hurts less: down, steel
+):
+    assert len(rows) == 5 and all(len(r) == 5 for r in rows), name
+    icon(f"effects/marks/{name}.png", rows, pal)
+# On the monster. Each picture is small enough to sit on the slime's dome (its
+# bulk is about 9 art px across) and is laid out a few times over a bigger one.
+for name, rows in (
+    ("flame-1", [                                               # flames licking up, two shapes to flicker between
+        "..r...",
+        "..or.r",
+        ".royor",
+        ".ryyo.",
+        "royWyr",
+        "royWor",
+        ".ryyr.",
+    ]),
+    ("flame-2", [
+        "....r.",
+        "r..ro.",
+        "or.ror",
+        "oyroyr",
+        "ryWyor",
+        "ryWWyr",
+        ".ryyr.",
+    ]),
+):
+    assert len(rows) == 7 and all(len(r) == 6 for r in rows), name
+    icon(f"effects/burn/{name}.png", rows, EMBER)
+icon("effects/chill/crystal.png", [                             # frost crystals growing on it
+    "...I.....",
+    "..IiI..W.",
+    "..bib.Ii.",
+    ".b.ibIib.",
+    "...bibb..",
+    ".Ibbibi..",
+    "Iiiiiiib.",
+], ICE)
+icon("effects/chill/glint.png", [".W.", "WIW", ".W."], ICE)     # a sparkle of frost
+ARC = [                                                         # the second strike's arc, out to the right ("r") or left
+    "........yW..",
+    "...yW..yW.Wy",
+    "..yWyWyW....",
+    ".yW..yW.....",
+    "yW..........",
+]
+icon("effects/chain/arc/r.png", ARC, {"y": "#ffe27a", "W": "#ffffff"})
+icon("effects/chain/arc/l.png", [r[::-1] for r in ARC], {"y": "#ffe27a", "W": "#ffffff"})
+for name, rows in (
+    ("drip-1", [                                                # venom welling up on it into a bead,
+        "vvVvv",
+        ".vvv.",
+        "..v..",
+        ".vVv.",
+        ".xvx.",
+    ]),
+    ("drip-2", [                                                # then the bead falling from it
+        "vvVvv",
+        ".vvv.",
+        "..x..",
+        ".....",
+        ".....",
+        ".vVv.",
+        ".vLv.",
+        ".xvx.",
+    ]),
+):
+    icon(f"effects/venom/{name}.png", rows, VENOM)
