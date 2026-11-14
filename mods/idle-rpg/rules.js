@@ -283,10 +283,11 @@ export const SETTINGS = [
 
 // The pixel font (main.js lays numbers out with it): the characters it has,
 // each drawn in every one of GLYPH_COLOURS by tools/idle-rpg-sprites.py.
-// Digits, a sign or two, and what shortNumber writes: a point and K, M, B, T.
-export const GLYPHS = "0123456789+!.KMBT";
+// Digits, a sign or two, and what shortNumber writes: a point, K, M, B, T,
+// and E for a power of ten.
+export const GLYPHS = "0123456789+!.KMBTE";
 export const GLYPH_COLOURS = ["white", "gold"];
-const GLYPH_NAMES = { "+": "plus", "!": "bang", ".": "point", K: "k", M: "m", B: "b", T: "t" };
+const GLYPH_NAMES = { "+": "plus", "!": "bang", ".": "point", K: "k", M: "m", B: "b", T: "t", E: "e" };
 // How many art px wide each character is without its outline (3 unless named
 // here); main.js sets them one art px apart, sharing an outline column.
 const GLYPH_WIDTHS = { ".": 1 };
@@ -294,8 +295,9 @@ export const glyphWidth = (ch) => GLYPH_WIDTHS[ch] ?? 3;
 
 // A number as the game shows it (damage, HP): rounded to a whole number, and
 // from 1,000 up shortened with K, M, B or T, one decimal while under 10 of
-// them ("1.2K", "12K", "345M"), and past that in T ("12000T"). Anything that
-// is not a number from 0 up is "0".
+// them ("1.2K", "12K", "345M"). From 1,000T up it is a power of ten
+// ("1.2E18"), so the text never grows long. Anything that is not a number
+// from 0 up is "0".
 const UNITS = ["", "K", "M", "B", "T"];
 export function shortNumber(n) {
   if (typeof n !== "number" || !Number.isFinite(n) || n <= 0) return "0";
@@ -303,8 +305,16 @@ export function shortNumber(n) {
   for (let i = 1; ; i++) {
     const x = n / 1000 ** i;
     const r = x < 9.95 ? Math.round(x * 10) / 10 : Math.round(x);
-    if (r < 1000 || i === UNITS.length - 1) return `${r}${UNITS[i]}`;
+    if (r < 1000) return `${r}${UNITS[i]}`;
+    if (i === UNITS.length - 1) break;
   }
+  let e = Math.floor(Math.log10(n));
+  let m = Math.round((n / 10 ** e) * 10) / 10;
+  if (m >= 10) {
+    m = 1;
+    e += 1;
+  }
+  return `${m}E${e}`;
 }
 
 // The path in art/ of one character of the pixel font in `colour`
@@ -429,6 +439,7 @@ export function newProgress() {
   return {
     stage: 1, // the stage being fought
     best: 1, // the highest stage reached: every one up to it can be picked
+    farming: false, // sent back by a failed attempt: kills repeat the stage until one is picked
     slain: 0,
     gold: 0,
     kills: Object.fromEntries(KINDS.map((k) => [k, 0])),
@@ -560,11 +571,30 @@ export function train(progress, cls, key = "attack") {
 }
 
 // Moves the fight to stage `s` if it is one the party has reached (1 to
-// `best`) and not the one it is on. Returns whether it changed.
+// `best`) and not the one it is on. Choosing a stage ends farming (see
+// failStage): kills advance again as the setting says. Returns whether it
+// changed.
 export function selectStage(progress, s) {
   if (typeof s !== "number" || !Number.isInteger(s) || s < 1 || s > progress.best || s === progress.stage) return false;
   progress.stage = s;
+  progress.farming = false;
   return true;
+}
+
+// An attempt failed (its time ran out; a party wiped will be the same). At a
+// stage past 1 the fight goes back to the stage before, one the party has
+// cleared, and the party farms it: kills there repeat it, whatever the
+// "Advance after a kill" setting says, until the player picks a stage (the
+// plate's next arrow), assuming they will come back stronger. `best` is
+// unchanged, so the failed stage stays within reach. At stage 1 it is simply
+// tried again. Returns the stage the fight is now at.
+export function failStage(progress) {
+  const stage = stageOf(progress.stage);
+  if (stage > 1) {
+    progress.stage = stage - 1;
+    progress.farming = true;
+  }
+  return progress.stage;
 }
 
 // How many ticks after one attack starts the next one does, given a random
@@ -615,8 +645,9 @@ export function credit(progress, cls, hp, monster) {
 
 // Books a kill of `monster` ({ kind, stage }): the total, the count for its
 // kind and its stage's gold, and the stage cleared: the next one is reached
-// (`best`), and with `advance` (the setting) the fight moves on to it, else
-// it stays to farm this one.
+// (`best`), and with `advance` (the setting) the fight moves on to it, unless
+// the party is farming after a failed attempt (see failStage); else it stays
+// on this one.
 export function slay(progress, monster, advance = true) {
   const stage = stageOf(monster.stage);
   progress.slain = Math.min(count(progress.slain) + 1, MAX);
@@ -624,7 +655,7 @@ export function slay(progress, monster, advance = true) {
   progress.gold = Math.min(count(progress.gold) + stageGold(stage), MAX);
   const next = Math.min(stage + 1, MAX_STAGE);
   if (next > progress.best) progress.best = next;
-  if (advance && progress.stage === stage) progress.stage = next;
+  if (advance && !progress.farming && progress.stage === stage) progress.stage = next;
 }
 
 // What the shop sells of `kind` for class `cls`: [{ id, name, price }], the
@@ -841,6 +872,8 @@ export function loadState(saved) {
     // the stage being fought is one reached, else the highest reached
     stage: staged && stageOf(s.stage) === s.stage && s.stage <= best ? s.stage : best,
     best,
+    // farming after a failed attempt (version 6 on); a boolean, else false
+    farming: staged && s.farming === true,
     // `slain` predates the counts by kind, which start from zero
     slain: count(s.slain),
     gold: count(s.gold),

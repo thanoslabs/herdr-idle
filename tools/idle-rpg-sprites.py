@@ -1285,6 +1285,7 @@ FONT = {
     "m": ["#.#", "###", "###", "#.#", "#.#"],
     "b": ["##.", "#.#", "##.", "#.#", "##."],
     "t": ["###", ".#.", ".#.", ".#.", ".#."],
+    "e": ["###", "#..", "##.", "#..", "###"],      # a power of ten, past 1,000T
 }
 GLYPH_COLOURS = {"white": "#ffffff", "gold": "#ffd166"}  # a plain hit and a badge; a critical blow
 

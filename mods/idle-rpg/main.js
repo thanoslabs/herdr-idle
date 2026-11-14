@@ -76,6 +76,7 @@ import {
   damageOf,
   equip,
   equipped,
+  failStage,
   firstAttack,
   glyphArt,
   glyphWidth,
@@ -116,7 +117,7 @@ const ART = "mods/idle-rpg/art";
 // attackArt, monsterArt, glyphArt), and the rest are named where they are drawn.
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
-//   seen, battle, stage, best, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
+//   seen, battle, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
 //   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack, health } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
 //   hats: [<id>], settings: { damageNumbers, advance } }
@@ -167,6 +168,13 @@ const FIRE_LIGHT_W = 320;
 const CARD_W = 232;
 const SHOP_NAV_W = 78; // the kinds of item down the shop's left side
 const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
+// The skills and training panel is built from rows of fixed height, its text
+// on a 13px line, so its height is known: a 1px border and 6px of padding
+// round 16 (title) + 24 (class tabs) + 15 (points) + 15 per skill and per kind
+// of training, 3px apart. With 3 skills and n kinds of training that is
+// 129 + 18n: 147 with Attack alone, 165 with a second kind, so under the sign
+// (top 54) it ends at 219 in the lowest scene (230px) with two.
+const PANEL = { line: "13px", pad: 6, gap: 3, title: 16, tab: 24, row: 15 };
 const SHOP_ICONS = { armour: "icons/armour.png", weapon: "status/sword-l.png", hat: "icons/hat.png" };
 // Battle mode. Sizes are on-screen px (art px x 4, plus the outline). A new
 // kind also needs to be in KINDS in rules.js, the order the stages cycle
@@ -270,7 +278,7 @@ function tally(list) {
 }
 
 // Text in the pixel font (GLYPHS in rules.js: digits, "+", "!", and the point
-// and K, M, B, T of shortNumber), as a row of glyph pictures `scale` screen px
+// and K, M, B, T, E of shortNumber), as a row of glyph pictures `scale` screen px
 // per art px, in one of GLYPH_COLOURS. Each glyph is its width (glyphWidth: 3
 // art px, the point 1) plus a px of outline each side, 7 high, and each is set
 // its width plus 1 after the last, so neighbours share an outline column.
@@ -331,6 +339,7 @@ export default class RaidParty extends View {
     this.progress = {
       stage: saved.stage,
       best: saved.best,
+      farming: saved.farming, // sent back a stage by a failed attempt (see failStage)
       slain: saved.slain,
       gold: saved.gold,
       kills: saved.kills,
@@ -477,9 +486,9 @@ export default class RaidParty extends View {
       m.hp -= dealt;
       landed = true;
       if (this.settings.damageNumbers) {
-        this.damage.push({ key, seed, n: dealt, crit, id: (this.cheerSeq += 1), at: Date.now(), monster: m.id });
+        this.damage.push({ key, seed, n: dealt, crit, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock, monster: m.id });
         if (this.damage.length > MAX_DAMAGE) this.damage.shift();
-      } else if (crit) this.crits[key] = { n: damage, seed, id: (this.cheerSeq += 1), at: Date.now() };
+      } else if (crit) this.crits[key] = { n: damage, seed, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock };
       for (const up of credit(this.progress, this.sprites[key], dealt, m)) {
         // a class's level-up shows over whoever earned it, yours over you
         if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
@@ -508,18 +517,23 @@ export default class RaidParty extends View {
     calm(this.party, this.clock, Math.random);
   }
 
-  // The attempt failed: it ran out of time (`why` "time") or the party was
-  // wiped ("wipe"). The same boss is back at full HP with the full time limit,
-  // everyone is up at full HP, and "Time's up!" or "Wiped!" shows over its
-  // plate. Nothing is lost but the attempt; the experience its blows earned is
-  // saved.
-  fail(why = "time") {
-    const m = this.monster;
-    m.hp = m.maxHp;
-    this.left = stageTime(m.stage);
-    this.damage = [];
-    this.timesUp = { at: Date.now(), id: (this.cheerSeq += 1), text: why === "wipe" ? "Wiped!" : "Time's up!" };
-    resetParty(this.party, this.clock, Math.random);
+  // The attempt failed: its time ran out, or the party was wiped (`why`
+  // "Wiped!", see tick): past stage 1 the fight goes back a stage, to farm it (failStage in
+  // rules.js), with a fresh attempt there; at stage 1 the same boss is back
+  // at full HP with the full time. A note over the plate says which ("Time's
+  // up! Back to stage 8"). Nothing is lost but the attempt; the experience
+  // its blows earned is saved, once.
+  fail(why = "Time's up!") {
+    const from = this.monster.stage;
+    const to = failStage(this.progress);
+    if (to !== from) this.newBoss();
+    else {
+      this.monster.hp = this.monster.maxHp;
+      this.left = stageTime(this.monster.stage);
+      this.damage = [];
+    }
+    this.timesUp = { at: Date.now(), id: (this.cheerSeq += 1), text: to !== from ? `${why} Back to stage ${to}` : why };
+    resetParty(this.party, this.clock, Math.random); // a fresh attempt: everyone up at full HP
     this.save();
   }
 
@@ -537,8 +551,8 @@ export default class RaidParty extends View {
   // same blow share one note.
   cheer(key, line) {
     const c = this.cheers[key];
-    if (c && Date.now() - c.at < TICK_STEP / 2) c.lines.push(line);
-    else this.cheers[key] = { lines: [line], id: (this.cheerSeq += 1), at: Date.now() };
+    if (c && c.tick === this.clock) c.lines.push(line);
+    else this.cheers[key] = { lines: [line], id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock };
   }
 
   // Whether you join in when the party attacks: the ranged classes from
@@ -677,7 +691,7 @@ export default class RaidParty extends View {
     if (foe.pending && t === foe.pending.start + 1) changed = true; // what flies sets off
     if (foe.last && t - foe.last.lands >= 1 && t - foe.last.lands <= 2) changed = true; // the pose ends, impacts fade
     if (e.wiped) {
-      this.fail("wipe");
+      this.fail("Wiped!");
       cx.notify();
       return true;
     }
@@ -933,7 +947,9 @@ export default class RaidParty extends View {
 
   // The boss's name plate, over its head (kept inside the scene when the wall
   // is low): the stage, with an arrow either side to pick another one reached
-  // (dimmed and dead at stage 1 and at the highest reached), and the seconds
+  // (dimmed and dead at stage 1 and at the highest reached; while farming
+  // after a failed attempt a small green "farm" by the number, and the next
+  // arrow pulsing), and the seconds
   // left of the attempt, dim while its time stands still (nobody attacking);
   // the boss's name and HP; its health bar; and a thin bar of the time left.
   // The bars glide between renders, which come at least once a second while
@@ -944,6 +960,7 @@ export default class RaidParty extends View {
     const tone = m.hp > m.maxHp / 2 ? "#4cd47b" : m.hp > m.maxHp / 5 ? "#ffd166" : "#ff5d5d";
     const limit = stageTime(m.stage);
     const running = !dead && this.attackers().length > 0;
+    const farming = Boolean(this.progress.farming);
     const arrow = (dir, to) => {
       const live = to >= 1 && to <= best && to !== stage;
       return div()
@@ -953,6 +970,8 @@ export default class RaidParty extends View {
         .py(1)
         .rounded(3)
         .opacity(live ? 1 : 0.3)
+        // while farming, the way forward pulses (a native loop: no renders)
+        .when(live && farming && dir === "next", (el) => el.loop("opacity", { from: 0.45, to: 1, period: 900 }))
         .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // not a click on the floor
         .when(live, (el) =>
           el
@@ -983,6 +1002,21 @@ export default class RaidParty extends View {
           .text_color(GOLD)
           .child(arrow("prev", stage - 1))
           .child(div().child(`Stage ${stage}`))
+          // farming after a failed attempt: kills repeat this stage until the next arrow is pressed
+          .when(farming, (el) =>
+            el.child(
+              div()
+                .id("idle-rpg-stage-farm")
+                .flex_none()
+                .px(2)
+                .rounded(3)
+                .bg("#4cd47b40")
+                .text_size(8)
+                .text_color("#9ff0bd")
+                .tooltip("Farming: kills repeat this stage. The arrow tries the next again.")
+                .child("farm"),
+            ),
+          )
           .child(arrow("next", stage + 1))
           .child(div().flex_1())
           .child(div().text_color(running ? CREAM : "#8ea3bb").child(dead ? "" : `${Math.max(0, Math.ceil(this.left / 1000))}s`)),
@@ -994,7 +1028,8 @@ export default class RaidParty extends View {
           .font_semibold()
           .text_color(CREAM)
           .child(div().child(dead ? `${kind.name} slain!` : kind.name))
-          .child(div().child(dead ? "" : `${shortNumber(Math.ceil(m.hp))}/${shortNumber(m.maxHp)}`)),
+          // both rounded up, so a boss at full HP never reads more than its maximum
+          .child(div().child(dead ? "" : `${shortNumber(Math.ceil(m.hp))}/${shortNumber(Math.ceil(m.maxHp))}`)),
       )
       .child(
         div()
@@ -1093,18 +1128,18 @@ export default class RaidParty extends View {
   }
 
   // "Time's up!" over the plate, after an attempt ran out of time: it pops
-  // in, then on a render after TIMES_UP_FRESH (see tick) fades natively. Gone
-  // after TIMES_UP_MS.
+  // in, then on the render tick() asks for once it has shown TIMES_UP_FRESH
+  // (marking it `fading`) fades natively. Gone after TIMES_UP_MS.
   timesUpNote(x, top) {
     const t = this.timesUp;
     if (!t || Date.now() - t.at > TIMES_UP_MS) return null;
-    const fresh = Date.now() - t.at < TIMES_UP_FRESH;
+    const fresh = !t.fading;
     return h_flex()
       .id(`idle-rpg-timesup-${t.id}`)
       .absolute()
-      .left(x - 50)
+      .left(x - 90)
       .top(top - 20 >= 4 - this.wallH ? top - 20 : top + PLATE_H + 4) // under the plate when there is no room over it
-      .w(100)
+      .w(180)
       .justify_center()
       .opacity(fresh ? 1 : 0)
       .transition("opacity", { duration: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-in" })
@@ -1440,11 +1475,19 @@ export default class RaidParty extends View {
     return out;
   }
 
+  // Whether a note made on attack-clock tick `tick` still shows as it popped
+  // in: while the clock is on that tick. The first render after the clock
+  // moves on starts its rise and fade, however late either comes, so a note
+  // is never first drawn already faded.
+  fresh(tick) {
+    return tick === this.clock;
+  }
+
   // A level-up note over someone whose feet are at x, y: it pops in, then on
-  // the next render (the next tick of the attack clock) rises and fades natively.
+  // the next render after a tick of the attack clock rises and fades natively.
   cheerNote(key, x, y) {
     const c = this.cheers[key];
-    const fresh = Date.now() - c.at < TICK_STEP * 0.8;
+    const fresh = this.fresh(c.tick);
     return v_flex()
       .id(`idle-rpg-cheer-${key}-${c.id}`)
       .absolute()
@@ -1466,7 +1509,7 @@ export default class RaidParty extends View {
   critNote(key, W, kind) {
     const c = this.crits[key];
     const at = this.hitOf(key, c.seed, W, kind);
-    const fresh = Date.now() - c.at < TICK_STEP * 0.8;
+    const fresh = this.fresh(c.tick);
     return h_flex()
       .id(`idle-rpg-crit-${key}-${c.id}`)
       .absolute()
@@ -1477,7 +1520,7 @@ export default class RaidParty extends View {
       .opacity(fresh ? 1 : 0)
       .transition("top", { duration: CRIT_MS, easing: "ease-out" })
       .transition("opacity", { duration: CRIT_MS, easing: "ease-in" })
-      .child(div().px(4).rounded(5).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`${shortNumber(c.n)}!`));
+      .child(div().px(4).rounded(5).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`${shortNumber(Math.max(1, c.n))}!`));
   }
 
   // One damage number in the pixel font, over the point where its blow landed:
@@ -1488,11 +1531,12 @@ export default class RaidParty extends View {
   // blows that land together do not cover each other exactly.
   damageNote(d, W, kind) {
     const at = this.hitOf(d.key, d.seed, W, kind);
-    const text = d.crit ? `${shortNumber(d.n)}!` : shortNumber(d.n);
+    const n = shortNumber(Math.max(1, d.n)); // a blow that took the last fraction of a point still shows 1
+    const text = d.crit ? `${n}!` : n;
     const scale = d.crit ? 4 : 3;
     const w = textW(text, scale);
     const h = GLYPH_H * scale;
-    const fresh = Date.now() - d.at < TICK_STEP * 0.8;
+    const fresh = this.fresh(d.tick);
     const top = at.y - h / 2 - 8 - (fresh ? 0 : DAMAGE_RISE);
     return div()
       .id(`idle-rpg-damage-${d.id}`)
@@ -1701,7 +1745,7 @@ export default class RaidParty extends View {
           .bg("#0b1626")
           .child(div().h(5).rounded(2).w(`${Math.floor((lv.into / lv.need) * 100)}%`).bg(GOLD)),
       )
-      .child(div().flex_none().text_color("#8ea3bb").child(`${lv.into}/${lv.need}`))
+      .child(div().flex_none().text_color("#8ea3bb").child(`${shortNumber(lv.into)}/${shortNumber(lv.need)}`))
       .when(spare > 0, (el) =>
         el.child(
           h_flex()
@@ -1969,7 +2013,7 @@ export default class RaidParty extends View {
         .gap(3)
         .items_center()
         .child(image(src(art)).w(w).h(h))
-        .child(div().child(String(n)));
+        .child(div().child(shortNumber(n)));
     const scenery = this.scenery(W); // also works out how dark it is
     const boards = Array.from({ length: Math.ceil(W / 128) }, (_, i) =>
       div().absolute().left(i * 128).top(0).child(image(src("scene/floor.png")).w(128).h(FLOOR_H)),
@@ -2366,10 +2410,9 @@ export default class RaidParty extends View {
   // Between raids the rampart has three stations, each opening one of the
   // panels the sign's chips open during one: the book on the table is the
   // codex, the merchant's stall the shop, and the training dummy the skills
-  // and training (labelled with the skill points waiting to be spent, if any). Returns elements for the
+  // and training (the skill points waiting to be spent are on the sign's star). Returns elements for the
   // floor; they stand at the back, between the banners and torches.
   stations() {
-    const spare = CLASSES.reduce((sum, c) => sum + pointsLeft(this.progress, c), 0);
     // Under the pointer a station shows it can be used, plainly enough for
     // broad daylight and in the scene's own style: its picture gains a white
     // pixel outline (each station's "hot" picture) and hops up a pixel of art, a white
@@ -2460,7 +2503,7 @@ export default class RaidParty extends View {
         -52,
         48,
         72,
-        spare > 0 ? `Training +${spare}` : "Training",
+        "Training", // the skill points waiting are on the sign's star
         () => this.openSkills(this.skillsOpen ? null : (CLASSES.find((c) => pointsLeft(this.progress, c) > 0) ?? this.sprites[YOU])),
         (hot) => [art("dummy", hot, 48, 72)],
       ),
@@ -2490,7 +2533,7 @@ export default class RaidParty extends View {
         .items_center()
         .child(div().w(32).h(24).flex_none().flex().items_center().justify_center().child(picture))
         .child(div().flex_1().truncate().text_color("#dbe7f3").child(name))
-        .child(div().font_semibold().text_color(CREAM).child(String(n)));
+        .child(div().font_semibold().text_color(CREAM).child(shortNumber(n)));
     return v_flex()
       .id("idle-rpg-codex")
       .absolute()
@@ -2567,23 +2610,31 @@ export default class RaidParty extends View {
   // from, each with its level and any points it has to spend; then for the
   // one picked, its points, a Reset that gives them all back, and a line per
   // skill with its rank, what it gives now, and a + that spends a point on it;
-  // then its Training, bought with gold: a line per kind (TRAINING in
-  // rules.js: Attack, Health) with its level, the damage or HP it multiplies by, and Buy at the next
-  // level's price, dimmed and dead while the gold is short. Buying saves at
-  // once. Short enough for the scene at its lowest (230px, the sign taking 54)
-  // give or take a few px (see RECIPE.md).
+  // then its training, bought with the gold shown in the title: a line per
+  // kind (TRAINING in rules.js: Attack, Health) with its level, the damage or HP it multiplies by,
+  // and Buy at the next level's price, dimmed and dead while the gold is
+  // short. Buying saves at once. Its height is fixed by PANEL (147px, 165 with
+  // a second kind of training), short enough for the scene at its lowest
+  // (230px, the sign taking 54).
   skillsCard(left) {
     const cls = this.skillsOpen;
     const ranks = this.progress.skills[cls];
     const spare = pointsLeft(this.progress, cls);
     const spent = pointsSpent(ranks) > 0;
+    // one line of the panel: PANEL.row high, its parts in a row
+    const line = (id) => h_flex().id(id).h(PANEL.row).flex_none().gap(6).items_center();
     const tab = (c) => {
       const n = pointsLeft(this.progress, c);
-      return v_flex()
+      return h_flex()
         .id(`idle-rpg-skills-${c}`)
         .flex_1()
+        .min_w(0)
+        .h(PANEL.tab)
+        .gap(2)
+        .px(2)
         .items_center()
-        .py(2)
+        .justify_center()
+        .overflow_hidden()
         .rounded(6)
         .border(1)
         .border_color(c === cls ? "#5cc8ff" : n > 0 ? "#ffd16660" : "#00000000")
@@ -2594,55 +2645,53 @@ export default class RaidParty extends View {
           this.skillsOpen = c;
           cx.notify();
         })
-        .child(this.sprite(c, "stand", 24, 24))
-        .child(
-          h_flex()
-            .gap(3)
-            .text_size(9)
-            .font_semibold()
-            .child(div().text_color(CREAM).child(`Lv ${classLevel(this.progress.xp[c]).level}`))
-            .when(n > 0, (el) => el.child(div().text_color(GOLD).child(`+${n}`))),
-        );
+        .child(this.sprite(c, "stand", 18, 18))
+        .child(div().flex_none().text_size(9).font_semibold().text_color(CREAM).child(`Lv ${classLevel(this.progress.xp[c]).level}`))
+        .when(n > 0, (el) => el.child(div().flex_none().text_size(9).font_semibold().text_color(GOLD).child(`+${n}`)));
     };
-    // one kind of training (TRAINING in rules.js: Attack, Health): its level, what it gives now, and Buy at its price
+    const skill = (k) =>
+      line(`idle-rpg-skill-row-${k}`)
+        .child(div().w(38).flex_none().text_color("#dbe7f3").child(capital(k)))
+        .child(div().w(30).flex_none().font_semibold().text_color(GOLD).child(`${ranks[k]}/${MAX_RANK}`))
+        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(SKILL_TEXT[k]?.(this.progress, cls, ranks) ?? ""))
+        .child(this.button(`idle-rpg-skill-${k}`, "+", canRaise(this.progress, cls, k), () => raise(this.progress, cls, k)));
+    // one kind of training (TRAINING in rules.js: Attack, Health), bought with
+    // the gold in the title: its level, what it multiplies damage or HP by
+    // now, and Buy at its price
     const drill = ({ key, name }) => {
       const level = trainingOf(this.progress, cls, key);
-      return h_flex()
-        .gap(6)
-        .items_center()
+      return line(`idle-rpg-train-row-${key}`)
+        .tooltip(`${name} training: bought with gold, for every ${capital(cls)}`)
         .child(div().w(38).flex_none().text_color("#dbe7f3").child(name))
         .child(div().w(30).flex_none().font_semibold().text_color(GOLD).child(`Lv ${level}`))
         .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(key === "health" ? `${times(healthBonus(level))} HP` : `${times(trainingBonus(level))} damage`))
-        .child(this.button(`idle-rpg-train-${key}`, `Buy ${trainingPrice(level)}`, canTrain(this.progress, cls, key), () => train(this.progress, cls, key)));
+        .child(this.button(`idle-rpg-train-${key}`, `Buy ${shortNumber(trainingPrice(level))}`, canTrain(this.progress, cls, key), () => train(this.progress, cls, key)));
     };
-    const skill = (k) =>
-      h_flex()
-        .gap(6)
-        .items_center()
-        .child(div().w(38).flex_none().text_color("#dbe7f3").child(capital(k)))
-        .child(div().w(22).flex_none().font_semibold().text_color(GOLD).child(`${ranks[k]}/${MAX_RANK}`))
-        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(SKILL_TEXT[k]?.(this.progress, cls, ranks) ?? ""))
-        .child(this.button(`idle-rpg-skill-${k}`, "+", canRaise(this.progress, cls, k), () => raise(this.progress, cls, k)));
     return v_flex()
       .id("idle-rpg-skills")
       .absolute()
       .left(left)
       .top(54)
       .w(CARD_W)
-      .p(8)
-      .gap(3)
+      .p(PANEL.pad)
+      .gap(PANEL.gap)
       .rounded(8)
       .bg("#101a2cf0")
       .border(1)
       .border_color("#ffffff24")
       .text_size(11)
+      .line_height(PANEL.line)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(
         h_flex()
+          .id("idle-rpg-skills-title")
+          .h(PANEL.title)
+          .flex_none()
           .gap(6)
           .items_center()
-          .child(image(src("icons/star.png")).w(18).h(18))
+          .child(image(src("icons/star.png")).w(16).h(16))
           .child(div().flex_1().text_size(12).font_semibold().text_color("#ffffff").child("Skills & Training"))
+          .child(div().font_semibold().text_color(GOLD).child(`${shortNumber(this.progress.gold)} gold`))
           .child(
             div()
               .id("idle-rpg-skills-x")
@@ -2658,11 +2707,9 @@ export default class RaidParty extends View {
               .child("×"),
           ),
       )
-      .child(h_flex().gap(4).children(CLASSES.map(tab)))
+      .child(h_flex().id("idle-rpg-skills-tabs").h(PANEL.tab).flex_none().gap(4).children(CLASSES.map(tab)))
       .child(
-        h_flex()
-          .gap(6)
-          .items_center()
+        line("idle-rpg-skills-points")
           .child(
             div()
               .flex_1()
@@ -2673,16 +2720,6 @@ export default class RaidParty extends View {
           .child(this.button("idle-rpg-skills-reset", "Reset", spent, () => resetSkills(this.progress, cls))),
       )
       .children((CLASS_SKILLS[cls] ?? []).map(skill))
-      // Training: gold buys the class a level at a time, each dearer than the last
-      .child(div().h(1).bg("#ffffff1c"))
-      .child(
-        h_flex()
-          .gap(6)
-          .items_center()
-          .text_size(10)
-          .child(div().flex_1().font_semibold().text_color("#dbe7f3").child("Training"))
-          .child(div().font_semibold().text_color(GOLD).child(`${this.progress.gold} gold`)),
-      )
       .children(TRAINING.map(drill));
   }
 
@@ -2768,7 +2805,7 @@ export default class RaidParty extends View {
             ? div().text_size(9).font_semibold().text_color("#5cc8ff").child("Equipped")
             : owns(this.progress, cls, kind, it.id)
               ? this.button(`idle-rpg-shop-equip-${it.id}`, "Equip", true, () => equip(this.progress, cls, kind, it.id))
-              : this.button(`idle-rpg-shop-buy-${it.id}`, `Buy ${it.price}`, canBuy(this.progress, cls, kind, it.id), () => {
+              : this.button(`idle-rpg-shop-buy-${it.id}`, `Buy ${shortNumber(it.price)}`, canBuy(this.progress, cls, kind, it.id), () => {
                   if (!buy(this.progress, cls, kind, it.id)) return false;
                   equip(this.progress, cls, kind, it.id);
                   return true;
@@ -2795,7 +2832,7 @@ export default class RaidParty extends View {
           .items_center()
           .child(image(src("icons/coin.png")).w(18).h(18))
           .child(div().flex_1().text_size(12).font_semibold().text_color("#ffffff").child("Shop"))
-          .child(div().font_semibold().text_color(GOLD).child(`${this.progress.gold} gold`))
+          .child(div().font_semibold().text_color(GOLD).child(`${shortNumber(this.progress.gold)} gold`))
           .child(
             div()
               .id("idle-rpg-shop-x")
