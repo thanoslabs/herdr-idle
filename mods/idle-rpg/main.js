@@ -18,11 +18,11 @@
 // and everyone else at range. Every working agent attacks in its own way (a
 // swing, an arrow or bolt, a spell, a thrown potion, each looking like the
 // weapon its class holds) on its own rhythm, every 3 seconds or less. Each
-// attempt has a time limit, shown on the name plate, that runs only while
+// attempt has a time limit, shown in the stage section, that runs only while
 // someone attacks (10 minutes, shown as "9:42"): a kill in time clears the
 // stage (and, with the "Advance after a kill" setting, moves on to the next);
 // time running out, or the party being wiped, sends it back a stage to farm.
-// Arrows on the plate pick any stage reached. Turning battle mode off sends
+// Arrows in the stage section (top centre) pick any stage reached. Turning battle mode off sends
 // everyone back to their spots.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
@@ -46,6 +46,8 @@
 // In the top-right corner, how many agents are in each status (an icon with a
 // count on its corner, hidden at none), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
+// The sign (top left), the stage section (top centre, in a raid) and that
+// corner are pixel frames with their words in a pixel lettering (see hudLayout).
 // Layout props: { inset } = left edge of the sign (84 leaves room for macOS buttons).
 
 import { View, div, image } from "gpui-kit";
@@ -205,9 +207,9 @@ const MONSTERS = {
 const WATCH_MS = 1000; // how often to look for a monster due, or someone ready to attack
 const RESPAWN_MS = 3000; // how long a fallen boss lies there before the next (its fade takes 1.6s)
 // after the kill that first clears a stage and moves on to a new one, the wait
-// is longer, with "Moving to stage N in 3" counting it down over the plate
+// is longer, with "Moving to stage N in 3" counting it down under the stage section
 const ADVANCE_MS = 5000;
-const TIMES_UP_FRESH = 1000; // the "Time's up!" note over the plate shows this long,
+const TIMES_UP_FRESH = 1000; // the "Time's up!" note under the stage section shows this long,
 const TIMES_UP_MS = 2600; // then fades out until this long after the attempt ran out
 // Monsters fighting back (party.js runs it). Where what each kind's attack
 // sends flying sets off (its mouth or club, px from its picture's top-left, in
@@ -236,7 +238,7 @@ const BAR_W = 136;
 const PLATE_H = 28; // the boss's name plate: the name and HP, and the health bar (the stage and the time are in the stage section)
 const PLATE_ICON_H = 18; // and under them, while the boss has a status or the party's hex on it, a row of icons (2 screen px an art px)
 // Weapon effects (effects.js). Damage over time is gathered tick by tick and
-// lands once a second (as the attempt's time shown turns, when the plate is
+// lands once a second (as the attempt's time shown turns, when the stage section is
 // drawn anyway; every DOT_TICKS ticks while it stands still), one sum per
 // class and status (plus the render on the next tick that starts its number's
 // fade, as for any blow); burn in ember, venom in green.
@@ -315,7 +317,7 @@ const SKILL_TEXT = {
   haste: (_p, _c, ranks) => `attacks every ${(attackTicksOf(ranks) * TICK_STEP) / 1000}s`,
   crit: (_p, _c, ranks) => `${Math.round(critChanceOf(ranks) * 100)}% crit`,
 };
-// The left and right arrows beside "Stage N" on the boss's name plate.
+// The left and right arrows beside "Stage N" in the stage section.
 const STAGE_ARROWS = { prev: "icons/prev.png", next: "icons/next.png" };
 // A multiplier as the training line shows it: "x1.12", "x24.5", "x1.2K".
 const times = (x) => `x${x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : shortNumber(x)}`;
@@ -675,7 +677,7 @@ export default class RaidParty extends View {
       const best = this.progress.best;
       slay(this.progress, m, this.settings.advance, attackers);
       // a first clear that moves the fight on to a stage never fought before:
-      // the wait is ADVANCE_MS, counted down over the plate. Not while farming,
+      // the wait is ADVANCE_MS, counted down under the stage section. Not while farming,
       // with "Advance after a kill" off, or replaying a stage below the best.
       if (this.progress.best > best && this.progress.stage === this.progress.best && this.progress.stage !== m.stage) m.advancing = this.progress.stage;
       this.save();
@@ -740,7 +742,7 @@ export default class RaidParty extends View {
   // The attempt failed: its time ran out, or the party was wiped (`why`
   // "Wiped!", see tick): past stage 1 the fight goes back a stage, to farm it
   // (failStage in rules.js), with a fresh attempt there; at stage 1 the same boss is back
-  // at full HP with the full time. A note over the plate says which ("Time's
+  // at full HP with the full time. A note under the stage section says which ("Time's
   // up! Back to stage 8"). Nothing is lost but the attempt; the experience
   // its blows earned is saved, once.
   fail(why = LABELS.timesUp) {
@@ -758,7 +760,7 @@ export default class RaidParty extends View {
     this.save();
   }
 
-  // Moves the fight to stage `s` (an arrow on the plate), if it is one
+  // Moves the fight to stage `s` (an arrow in the stage section), if it is one
   // reached: a fresh attempt at its boss, saved at once.
   toStage(s, cx) {
     if (!selectStage(this.progress, s)) return;
@@ -888,7 +890,7 @@ export default class RaidParty extends View {
   // falls into step). An attack runs ATTACK_PHASES ticks, then one of rest;
   // its blow lands on the last phase. Whoever stops attacking (stops working,
   // walks out of reach, the monster falls) loses their rhythm. Re-renders only
-  // while someone is mid-attack, the seconds shown change (the plate's, and
+  // while someone is mid-attack, the seconds shown change (the stage section's, and
   // the knocked out's countdowns, which turn on the same beat), or something
   // else changed. Returns whether to keep ticking: not once nobody is
   // attacking.
@@ -1013,8 +1015,8 @@ export default class RaidParty extends View {
     if (blows.length && this.fight(blows)) changed = true;
     // the knocked out's countdowns turn on that same beat, all at once (at most
     // once a second however many are resting), so they cost no render of their own
-    // while the plate's seconds turn; between beats each shows its seconds as of the last
-    // (a turn of the plate's seconds is always a beat, so a countdown never skips a
+    // while the stage section's seconds turn; between beats each shows its seconds as of the last
+    // (a turn of the stage section's seconds is always a beat, so a countdown never skips a
     // number when the time resumes; the every-4-ticks beat while it stands still
     // keeps a second from the last)
     const plateTurn = keys.length > 0 && this.monster.hp > 0 && turning;
@@ -1026,7 +1028,7 @@ export default class RaidParty extends View {
     // (an attacker's rest draws it; damage over time can land with nobody mid-attack)
     if (this.damage.some((d) => d.tick === t - 1)) changed = true;
     // the attempt's time runs while the boss is alive and someone attacks it;
-    // the plate shows whole seconds, so it is drawn again as each one passes
+    // the stage section shows whole seconds, so it is drawn again as each one passes
     if (keys.length && this.monster.hp > 0) {
       const shown = Math.ceil(this.left / 1000);
       this.left -= TICK_STEP;
@@ -1209,9 +1211,9 @@ export default class RaidParty extends View {
         .left(0)
         .top(0)
         .child(image(src(monsterArt(m.kind, part))).w(kind.w).h(kind.h));
-    // the plate over its head, kept inside the scene when the wall is low; a
-    // row taller while it shows status icons
-    // and clear of the HUD's frames above it (the stage section and its note, and on a narrow scene the sign or the strip)
+    // the plate over its head, a row taller while it shows status icons, kept
+    // inside the scene when the wall is low and clear of the HUD's frames above
+    // it (the stage section and its note, and on a narrow scene the sign or the strip)
     const icons = dead ? [] : plateIcons(this.statuses, this.auras());
     const plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
     const mid = left + Math.round(kind.w / 2);
@@ -2697,6 +2699,7 @@ export default class RaidParty extends View {
     kids.push(
       div().id("idle-rpg-stage-clock").absolute().left(b.w - x0 - letterW(clock)).top(y0 + 4).child(letterText(clock, running ? "white" : "grey")),
       div()
+        .id("idle-rpg-stage-time")
         .absolute()
         .left(x0)
         .top(y0 + CHIP_H + 4)
