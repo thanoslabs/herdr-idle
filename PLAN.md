@@ -1,6 +1,6 @@
 # Idle RPG: plan
 
-Planning notes for growing this layout from a visualizer with a battle mode into an idle RPG. Steps 1 to 3 of the proposed order (bookkeeping, experience, and class skills with per-attacker cadence) are built, the colours, hats and weapons of step 4 (a shop selling colourways, hats and weapons; weapons as looks only, their effects still to decide), stages with a timer, exponential scaling and training (step 5, the first half of monsters getting tougher), and monsters fighting back with HP, knockouts, wipes, healing and Health training (step 6); the rest is not. "Decided" items come from the repo owner; "Default" items were chosen while building and are constants in `mods/idle-rpg/rules.js`, easy to retune; "Proposed" items are suggestions that still need a yes.
+Planning notes for growing this layout from a visualizer with a battle mode into an idle RPG. Steps 1 to 3 of the proposed order (bookkeeping, experience, and class skills with per-attacker cadence) are built, the colours, hats and weapons of step 4 (a shop selling colourways, hats and weapons), stages with a timer, exponential scaling and training (step 5, the first half of monsters getting tougher), monsters fighting back with HP, knockouts, wipes, healing and Health training (step 6), and weapon effects: each weapon's pace, elements with weaknesses and statuses, and the healer's auras (step 7); the rest is not. "Decided" items come from the repo owner; "Default" items were chosen while building and are constants in `mods/idle-rpg/rules.js`, easy to retune; "Proposed" items are suggestions that still need a yes.
 
 ## Principles
 
@@ -107,7 +107,7 @@ The owner's decisions, verbatim where quoted:
 
 ### Customisation shop
 
-- **Decided:** colours first, then hats and alternate sprites. **Colours built**, sold as "Armours": a shop opened from the gold on the sign, with the kinds of item down its left side (Armours, Weapons, Hats, and room for more). **Owner's decision:** the shop is laid out by category this way because much more is planned for it. **Hats built** (below). **Weapons built** as looks (below): bought, worn and seen, with no effect on the fight yet. Alternate sprites are **not built**.
+- **Decided:** colours first, then hats and alternate sprites. **Colours built**, sold as "Armours": a shop opened from the gold on the sign, with the kinds of item down its left side (Armours, Weapons, Hats, and room for more). **Owner's decision:** the shop is laid out by category this way because much more is planned for it. **Hats built** (below). **Weapons built** (below): bought, worn and seen, and since step 7 each fights its own way (see Weapon effects). Alternate sprites are **not built**.
 - Default: a look belongs to a class, not to an agent (agents are short-lived and forgotten after a week). Every character with that class on, agents and the player alike, wears the colourway the class has equipped.
 - Default: each class has its default colourway (free, always owned) and three more to buy, priced 5, 10 and 20 gold (`COLOUR_PRICES`). Buying is permanent; an owned colourway can be equipped and swapped freely at no cost. No refunds, no selling.
 - Default: buying a colourway also puts it on (one click; the default or any other owned one is a free click away).
@@ -129,7 +129,7 @@ The owner's decisions, verbatim where quoted:
 #### Weapons
 
 - **Owner's request:** variety in the weapons the shop sells: for warriors different swords, hammers and axes; for mages wands and staffs of different elements; for archers bows and crossbows, maybe arrows carrying different elements; for clerics (the healer) different potions, as buffs to the raid party or debuffs to the boss.
-- **Decided:** weapons first, in two iterations: this one makes weapons you can buy, wear and see, with no gameplay effect; elemental damage, weaknesses, buffs and debuffs come in the next, once the owner has decided how they should work. **This iteration built.**
+- **Decided:** weapons first, in two iterations: the first made weapons you can buy, wear and see, with no gameplay effect; the second (step 7, Weapon effects below) their stats, elements, weaknesses, statuses and the vials' auras. **Both built.**
 - Default: weapons are each class's own, like armours: owned and held per class (`looks.<class>.weapon`), and ids repeat across classes (the warrior's `flame` is not the archer's). Every character with a class on holds the weapon the class has equipped. Buying also puts it on; the others are a free click away.
 - Default: each class's first weapon is the one it always had (free, always owned, drawn exactly as before), and three more cost 15, 30 and 50 gold (`WEAPON_PRICES`).
 - Default catalogue (`WEAPON_NAMES` in `rules.js`), chosen while building; names are cut to fit the shop's 51px tiles:
@@ -137,10 +137,45 @@ The owner's decisions, verbatim where quoted:
   - Wizard: Fire Staff (`default`, fire: its staff and fireball), Ice Wand (`frost`, frost), Bolt Staff (`storm`, storm), Toxic Rod (`venom`, poison).
   - Archer: Longbow (`default`), Crossbow (`crossbow`), Fire Bow (`flame`, fire arrows), Ice Bow (`frost`, frost arrows).
   - Healer: its "weapon" is the potion it throws (it keeps its staff): Heal Vial (`default`, potion `heal`, green), Haste Vial (`haste`, yellow), Might Vial (`might`, red), Hex Vial (`hex`, purple).
-- Default: every weapon carries `{ id, name, price, element }`, `element` one of `null`, `fire`, `frost`, `storm`, `poison` (`ELEMENTS`), and the healer's a `potion` tag (`POTIONS`: heal, haste, might, hex), for the next iteration's effects to hang on. They do nothing yet, and the shop says nothing about effects.
+- Default: every weapon carries `{ id, name, price, element }`, `element` one of `null`, `fire`, `frost`, `storm`, `poison` (`ELEMENTS`), and the healer's a `potion` tag (`POTIONS`: heal, haste, might, hex), which `effects.js` reads (see Weapon effects).
 - Default: a weapon is a layer of its own, like a hat: for each class, weapon and picture a see-through PNG the size of the picture it lies on (`weapons/<class>/<weapon>/<frame>.png`), drawn over the body and under the hat; the body pictures are drawn without the weapon. The healer's layer is the potion it holds up as it winds up, so it has only those two pictures. The outline is split so the default weapon over the body is the old picture pixel for pixel. A weapon keeps its own colours whatever the armour (before, the warrior's blade and the wizard's orb took the armour's colours).
 - Default: each weapon's attack looks like it (`attackArt`): the wizard's spell and its burst by element (fireball, ice shard, lightning bolt, venom glob), fire and frost arrows and a crossbow bolt, each potion and its splash in its colour, and the warrior's slash broad for the axe, a crunch for the hammer and orange for the Fire Blade.
 - Default: the shop's Weapons tab shows the class winding up with each weapon (where every weapon, and the healer's potion, shows best), in the armour and hat it has on; the armour and hat previews hold the class's weapon.
+
+### Weapon effects (built)
+
+The owner's decisions: weapons "can have their own stats tied to them, and some can have elemental bonuses or have status effects"; "small tradeoffs, i would say keep the DPS the same, but trade off each others damage/attack speed so there is variation between the weapons"; the Heal Vial stays as it is; and "Each class can have its stats computed based on what is equipped (since agents are ephemeral, it doesn't make sense to make it granular to the agents themselves)": effects belong to the class's equipped weapon and stack with its skills. The proposal below was shown and not objected to; the aura numbers were then set by the owner (Might +30%, Haste 15% off the gap) after the first party simulation. Every number is a constant in `mods/idle-rpg/effects.js` (plain functions, no host calls, imports only `rules.js`).
+
+- **Weapon stats (built):** a weapon multiplies both the damage of a blow and the gap between attacks by its factor (`WEAPON_FACTORS`), so damage per second is the class default's. Gaps are real numbers of ticks and the fractions carry (the next attack is due a gap after the last was *due*), so long-run damage is exactly equal; a fast weapon whose gap would go under `MIN_ATTACK_TICKS` is held there and its damage raised to match. Each gap is its mean ± up to 2 ticks (`GAP_JITTER`), evenly.
+
+  | Class | ×1 | other |
+  |---|---|---|
+  | Warrior | Sword, Fire Blade (a sword) | War Axe ×1.5, Hammer ×2 |
+  | Wizard | Fire Staff, Bolt Staff (a staff) | Ice Wand ×0.75, Toxic Rod ×0.75 (wands) |
+  | Archer | Longbow, Fire Bow, Ice Bow (longbows) | Crossbow ×2 |
+  | Healer | every vial (a throw is a throw) | |
+
+- **Elements (built):** each boss kind is weak to one element (×1.5, `WEAK_FACTOR`) and resists one (×0.75, `RESIST_FACTOR`): slime weak to frost, resists poison; ogre weak to fire, resists storm; dragon weak to frost, resists fire (`WEAKNESS`; **decided** to stay until the new monster kinds reshape it). Each element puts a status on the boss: fire **Burn** (`BURN_SHARE` 20% of the blow over 3s, `BURN_TICKS`; each class's own; another fire hit adds its share to what is left and restarts the 3s), frost **Chill** (everyone's crit chance +10%, `CHILL_CRIT`, on the 16 ticks after the hit's, 4s, `CHILL_TICKS`; refreshed by each frost hit), storm **Chain** (20%, `CHAIN_CHANCE`, that the blow strikes twice, the second the same as the first), poison **Venom** (20% of the blow over 6s, `VENOM_SHARE`, `VENOM_TICKS`; at most 5 stacks from anyone, `VENOM_STACKS`, a sixth replacing the one with least left). Burn and venom are shares of the blow that applied them (crit and Might in; the weakness and Hex apply as they tick), so they grow with damage, and they are credited to the class that put them on, even after its characters have left. Every damaging element is +20% on a boss neutral to it (Burn and Venom were 25% in a first draft, which made the Bolt Staff strictly worse than the free Fire Staff).
+- **Statuses** live in memory with the boss (nothing is saved, no version bump): every new boss, failed attempt, kill and the raid's end clears them. **Decided:** they tick only while the attack clock runs with someone attacking a live boss, like the attempt's time, and freeze otherwise.
+- **Potions (built):** a healer on the Haste, Might or Hex Vial gives the party an aura while it is standing in the fight (a knocked-out healer gives none): **Haste**, every gap 15% shorter (`HASTE_AURA_SHARE`, the floor still applying); **Might**, +30% to every blow (`MIGHT_BONUS`); **Hex**, the boss takes +15% from everything, damage over time included (`HEX_BONUS`). The healer giving it deals half damage itself (`AURA_HEALER_DAMAGE`) and never heals. **Experience (decided after review):** what an aura adds is the healer's doing, so that share of each blow's and each burn and venom tick's experience goes to the healer class (`shares` in `effects.js`): Hex's added share first (0.15/1.15), then Might's of what is left (0.3/1.3), then of a hasted attacker's the share of its blows Haste adds (15%, less where the floor holds); the attacker keeps the rest and the healer's own half-damage blows are its own. A kill's total experience is unchanged. Without it the healer class fell far behind the others once weapons were in (see Pacing). Several healers on one vial give its aura once; different vials all count. The Heal Vial gives none.
+- **Shown:** a damage number on the boss's weakness has an orange arrow up after it, one it resists a grey arrow down (`effects/marks/`); burn and venom land once a second (as the attempt's seconds turn, drawn then anyway, with one more render on the next tick to start the number's fade), one summed number per class and status, in ember and green (two more font colours); a chained blow's second number sits at the end of a second arc of lightning (`effects/chain/arc/`). Under the boss's plate a row of icons (burn, chill, venom with its stacks, hex) appears while any applies; on the boss itself, a few small pictures around its bulk, more on a bigger boss: flames flickering, frost crystals and a twinkle, green drips, one per venom stack (native loops only). An aura healer shows its vial's icon by its HP bar. The shop's Weapons tab shows two lines on the weapon clicked (the one on until then), `shopLines`: its name and pace, or at normal speed its status or aura ("Fire Bow: Burn: +20% in 3s"), then the rest ("Normal speed · Weak: ogre · Resist: dragon"), every one of the 16 tested to fit the 210px column at size 10 in Geist. The shop panel is built from fixed rows like the skills panel (167px); its class tabs show the sprite, the class picked 80px wide with its name, the others' names in tooltips (four names beside four sprites were cut short).
+- **Balance** (`effects.js` headless, 400k ticks a cell; damage per second against the class's default, plain ×1 weapon in brackets for the wizard, whose default is the Fire Staff): plain weapons 1.00 everywhere; Fire Blade and Fire Bow 1.20 / 1.80 / 0.90 on slime / ogre / dragon; Ice Bow 1.65 / 1.10 / 1.65; Ice Wand 1.37 (1.65) / 0.61 (1.10) / 1.83 (1.65); Bolt Staff 1.00 (1.20) / 0.50 (0.90) / 1.33 (1.20); Toxic Rod 0.75 (0.90) / 0.67 (1.20) / 1.33 (1.20). Nothing passes 2×. In a party of three attackers (Fire Staff, Sword, Longbow) and the healer, the whole party's damage with the healer's vial against the Heal Vial (healing not counted): Might 1.13–1.16, Haste 1.02–1.05, Hex 1.00–1.03 (slime, ogre, dragon); two healers on Might and Hex 1.19–1.24.
+- **Pacing** (the monster-attacks simulation with effects, `effects-work/sim3.mjs`: 3 agents, warrior, archer and wizard, and you as the healer, 3 seeds, the stages constants not retuned; time to first clear, then class levels at stage 51, warrior / archer / wizard / healer, and knockouts over the run):
+
+  | Setup | 10 | 25 | 50 | levels at 51 | healer vs the others | knockouts |
+  |---|---|---|---|---|---|---|
+  | no weapon effects | 24.0m | 3.6h | 2.14d | 108 / 103 / 99 / 89 | −14% | 1,267 |
+  | default weapons (the Fire Staff burns) | 21.6m | 3.4h | 1.79d | 91 / 86 / 119 / 71 | −28% | 2,117 |
+  | one loadout (Fire Blade, Ice Bow, Fire Staff) | 14.4m | 2.8h | 1.45d | 109 / 75 / 97 / 46 | −51% | 5,245 |
+  | the best weapon for each kind, Heal Vial | 13.1m | 2.6h | 1.39d | 90 / 93 / 88 / 35 | −61% | 6,887 |
+  | best weapons, you on the Might Vial | 10.1m | 2.6h | 1.28d | 79 / 77 / 72 / 80 | +5% | 6,091 |
+  | best weapons, Haste Vial | 11.6m | 2.5h | 1.32d | 84 / 84 / 78 / 64 | −22% | 6,217 |
+  | best weapons, Hex Vial | 13.4m | 2.6h | 1.33d | 85 / 85 / 78 / 62 | −25% | 6,269 |
+  | best weapons, Might, auras' experience all to the attacker (before the fix) | 9.7m | 2.3h | 1.24d | 89 / 90 / 82 / 19 | −78% | 7,707 |
+
+  Weapons make the push up to about 1.7× faster to stage 50. Crediting the auras' share to the healer brings an aura healer back near the others (Might +5%, Haste and Hex about −22% and −25%, which raising those two auras would close). Knockouts rise 4–6× with weapons, and not only from the healer's level (they stay high with the healer on Might at the others' level, and Health training is the same, 40–43 everywhere): the whole party reaches each stage sooner, with fewer kills behind it, so at lower class levels (about 80 against about 100 at stage 51), and max HP grows with the class level. Wipes stay at 0.
+- **The Heal Vial healer still lags** with weapons on (−51% to −61%, −28% even with default weapons), since it earns by its heals and its own blows, both sized by its own damage, while the others' blows grow with their weapons, elements, burn and chill. Heals are unchanged as asked. What I would change: size a heal's experience by the party's average blow rather than the healer's own, or credit a Heal Vial healer a share of the experience of the blows dealt by those it kept standing.
+- **Open (for the owner):** (1) Hex (+15%) and Haste (15%) are barely worth the healer's lost damage in a party of three attackers and the healer (+0–5%); about +25% would make Hex worth carrying there. (2) No boss resists frost, and nothing is weak to storm or poison. (3) The wizard has no plain weapon, so its bought weapons can be worse than its free Fire Staff on some bosses (the Bolt Staff on the ogre is 0.50×). (4) Weapons are switched by hand; a player who re-equips for each boss kind gains about 10% more than one fixed loadout.
 
 ### Kill counts
 
@@ -192,11 +227,11 @@ The owner's decisions, verbatim where quoted: "each agent has a hp bar, monster 
 ### Monsters fighting back
 
 - (Answered: HP per character, knockouts with a rest, a wipe fails the attempt, the Heal Vial heals; see Decided.) You take damage too; walking away takes you out of the fight (you come back at full HP), but you cannot walk while knocked out.
-- Revives, and what the other vials do (see Weapon effects). See the open points under Monsters fighting back (built).
+- Revives (the other vials give auras now: see Weapon effects). See the open points under Monsters fighting back (built).
 
-### Weapon effects (after monsters fighting back)
+### Weapon effects
 
-- **Not decided:** what weapons do. The owner's ideas: elemental damage (and monsters weak or resistant to elements), arrows carrying elements, and the healer's potions as buffs to the raid party or debuffs to the monster. Open: whether a weapon changes damage, speed or crits, how elements meet monsters, how long a buff or debuff lasts and whether it stacks, and how any of it is shown. The catalogue's `element` and `potion` fields are there for it.
+- (Answered and built: see Weapon effects under Decided, and its open points.)
 
 ### Gold and customisation
 
@@ -214,7 +249,7 @@ The owner's decisions, verbatim where quoted: "each agent has a hp bar, monster 
 - **Owner's request:** damage numbers: each blow that lands shows its damage in a pixel font, drifting up and fading, and can be turned off in the settings. **Built** (crits gold and a size bigger; on by default; at most 12 on screen).
 - **Owner's request:** a settings menu behind a pixel gear, the right-most thing in the top-right corner. **Built** as a panel in the codex's style with a pixel on/off switch per setting; `SETTINGS` in `rules.js` is the list, so a setting is one more entry.
 - **Owner's request:** the agents' status counts moved off the sign to the top-right corner, each an icon with its count on a badge in the pixel font, hidden at 0. **Built**; below 640px wide the corner's strip sits under the sign.
-- The pixel font is art: digits, "+", "!", a point and K, M, B, T, E (for shortened numbers; E for a power of ten past 1,000T) in white and gold, drawn by `tools/idle-rpg-sprites.py`. More characters or colours are more glyphs there and in `GLYPHS` / `GLYPH_COLOURS`.
+- The pixel font is art: digits, "+", "!", a point and K, M, B, T, E (for shortened numbers; E for a power of ten past 1,000T) in white, gold, ember (burn) and venom (green), drawn by `tools/idle-rpg-sprites.py`. More characters or colours are more glyphs there and in `GLYPHS` / `GLYPH_COLOURS`.
 
 ## Technical notes
 
@@ -225,8 +260,9 @@ The owner's decisions, verbatim where quoted: "each agent has a hp bar, monster 
 - **Per-attacker cadence** replaced the single 3-second beat: each attacker keeps its own rhythm on one 250ms clock that runs only while someone is attacking and re-renders only while someone is mid-attack. **Built.**
 - **Stronger attacks:** `fight()` takes a list of blows, each with its own damage.
 - **Customisation art** is the costly part. Every character is drawn in a standing sprite, walk frames, dangling frames and three fighting poses in two directions: twelve pictures. Colours are generated by swapping palette entries in `tools/idle-rpg-sprites.py` (**built**: 3 colourways × 4 classes × 12 pictures, 144 more files, about 98 KB). Hats are drawn as a separate layer over each picture (**built**: 3 hats × 4 classes × 12 pictures, 144 more files, about 54 KB), so they do not multiply with colourways. So are weapons (**built**: 4 weapons × 3 classes × 12 pictures and the healer's 4 potions × 2, 152 files), with 29 more attack pictures.
+- **Weapon effects** keep the boss's statuses and the party's auras in memory only (`effects.js`; the auras are worked out from who is attacking on every tick); nothing new is saved.
 - **Monsters fighting back** keep their state in memory only (`party.js`: HP, knockouts, the boss's attack under way); nothing per agent is saved, and a wipe saves once as a failed attempt.
-- **`main.js` is one class of about 2,900 lines.** A Herdr mod may import other files in its folder (`./rules.js`; Herdr's own `win98` mod does), so the game rules (stages, boss HP, gold, experience, damage, training, levels, skill points and what ranks give, attack gaps, the crit roll, kill counts, loading state) live in `rules.js` as plain functions, and `main.js` draws and runs the timers.
+- **`main.js` is one class of about 2,900 lines.** A Herdr mod may import other files in its folder (`./rules.js`; Herdr's own `win98` mod does), so the game rules (stages, boss HP, gold, experience, damage, training, levels, skill points and what ranks give, attack gaps, the crit roll, kill counts, loading state) live in `rules.js` as plain functions, the boss fighting back in `party.js` and what weapons do in `effects.js`, and `main.js` draws and runs the timers.
 - **Progress only accrues while the layout is shown**, since the timers live in the mod. Whether that is acceptable for an idle game is worth a decision.
 
 ## Proposed order
@@ -234,10 +270,10 @@ The owner's decisions, verbatim where quoted: "each agent has a hp bar, monster 
 1. State and bookkeeping: versioned state, kills per monster kind, gold on a kill, shown on the sign. **Built.**
 2. Experience: player and class experience and levels, shown on the info cards. No unlocks yet. **Built** (levels also on the class picker, and a note over the head on a level-up).
 3. Class unlocks: stronger and faster attacks, then buffs. Needs per-attacker cadence. **Built** as per-class skill points (Power, Haste, Crit), with per-attacker cadence and monster HP by kind; buffs not built.
-4. Customisation shop: colours first (cheap to generate), then hats and alternate sprites. **Colours built** (a shop under the sign, colourways per class), **hats built** (bought once for every class, worn per class) and **weapons built** as looks (per class; their effects are the next iteration, not decided); alternate sprites not built.
+4. Customisation shop: colours first (cheap to generate), then hats and alternate sprites. **Colours built** (a shop under the sign, colourways per class), **hats built** (bought once for every class, worn per class) and **weapons built** (per class; their effects in step 7); alternate sprites not built.
 5. Stages, a timer, exponential scaling and Attack training. **Built.**
 6. Monsters fighting back: agent HP, knockouts, wipes, healer healing, "Health" training. **Built** (revives later).
-7. Weapon stats, elements and potion effects (see Weapon effects).
+7. Weapon stats, elements and potion effects. **Built** (see Weapon effects).
 
 Parked beyond this: what player levels unlock, maps, resources other than gold.
 

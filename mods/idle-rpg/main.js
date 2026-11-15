@@ -38,7 +38,10 @@
 // Gold buys colourways, weapons and hats for a class in the shop (the coin on
 // the sign); everyone with that class on wears what it has equipped. A hat is
 // bought once for every class, and each class picks its own. A weapon changes
-// how the class and its attacks look, not (yet) what they do.
+// how the class and its attacks look and how it fights (effects.js): its pace
+// and weight, an element the boss may be weak to or resist with a status it
+// leaves (burn, chill, chain, venom), or for the healer's vials an aura over
+// the party (haste, might, hex).
 // In the top-right corner, how many agents are in each status (an icon with a
 // count on its corner, hidden at none), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
@@ -60,10 +63,8 @@ import {
   TRAINING,
   YOU,
   attackArt,
-  attackGap,
   attackPart,
   attackTicksOf,
-  blow,
   bossOf,
   buy,
   canBuy,
@@ -77,7 +78,6 @@ import {
   equip,
   equipped,
   failStage,
-  firstAttack,
   glyphArt,
   glyphWidth,
   hatArt,
@@ -108,6 +108,7 @@ import {
   weaponArt,
 } from "./rules.js";
 import { KO_TICKS, down, healParty, healTarget, heals, monsterTick, newParty, resetParty, restLeft, rise, standing, syncParty } from "./party.js";
+import { AURAS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
 
 const ART = "mods/idle-rpg/art";
 // The path image() takes for a picture in art/, given its path in there with
@@ -168,6 +169,13 @@ const FIRE_LIGHT_W = 320;
 const CARD_W = 232;
 const SHOP_NAV_W = 78; // the kinds of item down the shop's left side
 const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
+// The shop is built from rows of fixed height like the skills panel (PANEL):
+// a 1px border and 6px of padding round 16 (title), then beside the kinds of
+// item down the left, 24 (class tabs) + 78 (the items) + 26 (two lines on the
+// item picked: what a weapon does), 3px apart: 167px, so under the sign (top
+// 54) it ends at 221 in the lowest scene (230px). The kinds down the left are
+// 22 each, with a 13px line under them, shorter than that.
+const SHOP_ROW = { nav: 22, about: 26, tab: 80 }; // tab: the class picked, its sprite and name ("Warrior" is 33px at 9px)
 // The skills and training panel is built from rows of fixed height, its text
 // on a 13px line, so its height is known: a 1px border and 6px of padding
 // round 16 (title) + 24 (class tabs) + 15 (points) + 15 per skill and per kind
@@ -220,6 +228,22 @@ const sizeOf = (part) => ATTACK_SIZE[part.replace(/\/[lr]$/, "")] ?? [40, 40];
 const MONSTER_Y = 108; // where its feet are on the floor
 const BAR_W = 120;
 const PLATE_H = 50; // the boss's name plate: the stage line, the name and HP, the health bar, the time bar
+const PLATE_ICON_H = 18; // and under them, while the boss has a status or the party's hex on it, a row of icons (2 screen px an art px)
+// Weapon effects (effects.js). Damage over time is gathered tick by tick and
+// lands once a second (as the attempt's time shown turns, when the plate is
+// drawn anyway; every DOT_TICKS ticks while it stands still), one sum per
+// class and status (plus the render on the next tick that starts its number's
+// fade, as for any blow); burn in ember, venom in green.
+const DOT_TICKS = 4;
+const DOT_COLOURS = { burn: "ember", venom: "venom" };
+const DOT_SPOT = { burn: -1, venom: 1 }; // its number shows left or right of the boss's middle
+// Where a status's pictures sit on the boss, px from the middle of its bulk
+// (its core), the first `n` of them by kind: one picture small enough for the
+// slime, more of them over a bigger boss.
+const EFFECT_SPOTS = [[-1, -0.5], [0.85, -1], [0, 0.5], [-0.5, -1.4]];
+const EFFECT_COUNT = { slime: 2, ogre: 3, dragon: 4 };
+const CHAIN_W = 56; // the chain's second arc, out past the first blow (14x7 art px)
+const CHAIN_H = 28;
 const MELEE = 90; // how close to the monster's bulk a warrior must be to reach it
 const SWORD = 44; // how far outside the bulk a warrior stands, so the swing lands on it
 const RANGE = 360; // how far the ranged classes stand from the monster: five characters
@@ -370,6 +394,11 @@ export default class RaidParty extends View {
     // under way), in memory only: see party.js. Kept in step on every tick of
     // the attack clock and by the watch.
     this.party = newParty();
+    // The boss's statuses (burn, chill, venom: effects.js) and the damage over
+    // time they have dealt since it last landed (see tick), in memory only,
+    // like the boss: a new boss or a new attempt starts clean.
+    this.statuses = newStatuses();
+    this.dots = Object.create(null); // "<class>/<status>": { cls, status, matchup, n, owed: what of n each share is owed (see shares) }
     this.settings = saved.settings; // { <key>: on } for every one of SETTINGS
     this.cheerSeq = 0;
     // The damage numbers on screen, oldest first, while the setting is on (it
@@ -436,6 +465,7 @@ export default class RaidParty extends View {
     this.skillsOpen = null; // the class the skills panel under the sign shows, while it is open
     this.shopOpen = null; // the class the shop under the sign shows, while it is open
     this.shopKind = SHOP_KINDS[0]; // the kind of item it shows: the one picked down its left side
+    this.shopPick = null; // the item whose lines show under the items (see shopCard)
     this.settingsOpen = false; // the settings menu under the gear is open
     this.picking = false; // the open card is showing the class choices
     this.walking = false;
@@ -474,7 +504,10 @@ export default class RaidParty extends View {
   }
 
   // Brings in the next boss if one is due, otherwise lands `blows` on the one
-  // there, in order: each { key, damage, crit, seed } (see blow in rules.js).
+  // there, in order: each { key, damage, crit, seed } and, from tick, the
+  // class that dealt it (`cls`, else `key`'s), how it met the boss's
+  // weakness (`matchup`), whether it is a chained second strike (`chain`) or
+  // damage over time (`dot`: "burn" or "venom").
   // Only damage that lands earns experience: a boss with 3 HP left takes 3
   // of a 4-point blow, and nothing of the blows after it. Returns whether
   // anything changed. Progress is saved on a kill, not on hits: saving
@@ -495,25 +528,34 @@ export default class RaidParty extends View {
     // gold, and you when you join in); at least the one landing the blow
     const attackers = Math.max(1, this.fighters().length);
     let landed = false;
-    for (const { key, damage, crit, seed } of blows) {
+    for (const { key, damage, crit, seed, cls, matchup = null, chain = false, dot = null, dir = 1, shares: owed = null } of blows) {
       if (m.hp <= 0) break;
       const dealt = Math.min(damage, m.hp);
       m.hp -= dealt;
       landed = true;
       if (this.settings.damageNumbers) {
-        this.damage.push({ key, seed, n: dealt, crit, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock, monster: m.id });
+        this.damage.push({ key, seed, n: dealt, crit, matchup, chain, dot, dir, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock, monster: m.id });
         if (this.damage.length > MAX_DAMAGE) this.damage.shift();
       } else if (crit) this.crits[key] = { n: damage, seed, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock };
-      for (const up of credit(this.progress, this.sprites[key], dealt, m)) {
-        // a class's level-up shows over whoever earned it, yours over you
-        if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
-        else this.cheer(key, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
+      // damage over time is credited to the class that put it on; what the
+      // party's auras added to a blow, to the healer class that gives them
+      // (shares in effects.js): the kill's experience is the same, shared out
+      const by = cls ?? this.sprites[key];
+      const aura = owed ? owed.haste + owed.might + owed.hex : 0;
+      for (const [c, part, over] of [[by, 1 - aura, key], ["healer", aura, this.holder("healer", this.attackers())]]) {
+        if (!(part > 0)) continue;
+        for (const up of credit(this.progress, c, dealt * part, m)) {
+          // a class's level-up shows over whoever earned it, yours over you
+          if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
+          else this.cheer(over, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
+        }
       }
     }
     if (!landed) return false;
     if (m.hp <= 0) {
       m.hp = 0;
       m.slainAt = Date.now();
+      this.clearEffects(); // its statuses fall with it
       // the stage is cleared: gold, and the next stage reached (and fought, if advancing)
       const best = this.progress.best;
       slay(this.progress, m, this.settings.advance, attackers);
@@ -551,8 +593,33 @@ export default class RaidParty extends View {
     this.left = stageTime(this.monster.stage);
     this.damage = [];
     this.timesUp = null;
+    this.clearEffects();
     // a fresh attempt: everyone up at full HP (the knocked out too), its attacks afresh
     resetParty(this.party, this.clock, Math.random);
+  }
+
+  // Takes every status off the boss and drops the damage over time not yet
+  // landed: a new boss, a new attempt, a kill, or the raid ended.
+  clearEffects() {
+    this.statuses = newStatuses();
+    this.dots = Object.create(null);
+  }
+
+  // The party's auras (effects.js) from who attacks now: a healer on the
+  // Haste, Might or Hex Vial gives its aura only while it stands.
+  auras() {
+    return partyAuras(this.attackers().map((key) => ({ cls: this.sprites[key], weapon: equipped(this.progress, this.sprites[key], "weapon") })));
+  }
+
+  // Who of `keys` a class's damage over time is shown for (a level-up note
+  // goes over them): the first with that class on, else you.
+  holder(cls, keys) {
+    return keys.find((key) => this.sprites[key] === cls) ?? YOU;
+  }
+
+  // What the boss's name plate's icons say, so a status coming or going is drawn.
+  iconKey() {
+    return plateIcons(this.statuses, null).map((ic) => `${ic.id}${ic.n}`).join();
   }
 
   // The attempt failed: its time ran out, or the party was wiped (`why`
@@ -569,6 +636,7 @@ export default class RaidParty extends View {
       this.monster.hp = this.monster.maxHp;
       this.left = stageTime(this.monster.stage);
       this.damage = [];
+      this.clearEffects();
       resetParty(this.party, this.clock, Math.random); // a fresh attempt: everyone up at full HP (newBoss does it too)
     }
     this.timesUp = { at: Date.now(), id: (this.cheerSeq += 1), text: to !== from ? `${why} Back to stage ${to}` : why };
@@ -701,7 +769,7 @@ export default class RaidParty extends View {
   // One tick of the attack clock, which also runs the attempt's time down.
   // Each attacker keeps its own rhythm: someone who joins starts somewhere in
   // their first gap, and each attack starts the next one's countdown
-  // (attackGap: their class's Haste, give or take a tick or two, so nobody
+  // (nextGap of their pace: Haste, weapon and aura, give or take, so nobody
   // falls into step). An attack runs ATTACK_PHASES ticks, then one of rest;
   // its blow lands on the last phase. Whoever stops attacking (stops working,
   // walks out of reach, the monster falls) loses their rhythm. Re-renders only
@@ -717,6 +785,14 @@ export default class RaidParty extends View {
   // It renders as an attack starts, a tick later (so what flies can glide),
   // as it lands and for two ticks after (impacts fade), and on any hit, heal or
   // knockout.
+  //
+  // Weapons (effects.js): each attacker's pace is its class's Haste gap times
+  // its weapon's factor (and the haste aura's), carried in fractions of a tick
+  // (the next attack is due a gap after the last was due, not after it
+  // started); its blow is struck with the weapon, the boss's weakness, its
+  // statuses and the party's auras, and may chain. The statuses tick only
+  // while someone attacks a live boss (they freeze with the attempt's time),
+  // their damage gathered and landing once every DOT_TICKS ticks.
   tick(cx) {
     const t = (this.clock += 1);
     let changed = false;
@@ -733,6 +809,7 @@ export default class RaidParty extends View {
       return true;
     }
     const keys = this.attackers();
+    const auras = this.auras();
     for (const key of Object.keys(this.rhythm)) {
       if (keys.includes(key)) continue;
       if (this.rhythm[key].start !== null) changed = true; // cut off mid-attack: draw them at rest
@@ -742,21 +819,37 @@ export default class RaidParty extends View {
     // party.js), two healers on one tick picking different allies while they can
     const aimed = [];
     for (const key of keys) {
-      const ranks = this.ranksOf(key);
-      const r = (this.rhythm[key] ??= { start: null, next: t + firstAttack(ranks, Math.random()), seed: 0 });
+      const cls = this.sprites[key];
+      const pace = cadence(attackTicksOf(this.ranksOf(key)), cls, equipped(this.progress, cls, "weapon"), auras);
+      // someone who joins starts anywhere in their first gap
+      const r = (this.rhythm[key] ??= { start: null, next: t + 1 + Math.random() * Math.max(0, pace.ticks - 1), seed: 0, factor: 1 });
       if (r.start !== null && t - r.start > ATTACK_PHASES) r.start = null; // its rest has been drawn
       if (r.start === null && t >= r.next) {
         r.start = r.seed = t;
-        r.next = t + attackGap(ranks, Math.random());
-        const cls = this.sprites[key];
+        r.factor = pace.factor; // what its blow's damage is multiplied by, for the gap it keeps
+        r.haste = pace.haste; // the share of its blows the haste aura adds (owed to the healer)
+        r.next = Math.max(r.next, t - 1) + nextGap(pace.ticks, Math.random());
         r.heal = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, aimed) : null;
         if (r.heal) aimed.push(r.heal);
       }
     }
+    // the boss's statuses tick, while anyone attacks it alive (never while it is
+    // down, nor in the countdown to the next stage); their damage is gathered (see DOT_TICKS)
+    const kind = this.monster.kind;
+    if (keys.length && this.monster.hp > 0) {
+      const before = this.iconKey();
+      for (const d of tickStatuses(this.statuses, kind, auras)) {
+        const p = (this.dots[`${d.cls}/${d.status}`] ??= { cls: d.cls, status: d.status, matchup: d.matchup, n: 0, owed: { attacker: 0, haste: 0, might: 0, hex: 0 } });
+        p.n += d.damage;
+        for (const k of Object.keys(p.owed)) p.owed[k] += d.damage * d.shares[k];
+      }
+      if (this.iconKey() !== before) changed = true; // one wore off
+    }
     // At the impact a healing throw heals whoever is lowest now (the one it
     // was aimed at may have left, fallen or been topped up), if anyone still
     // qualifies and the healer still holds the Heal Vial; else it is an
-    // ordinary blow. A heal earns its class experience (see healXp).
+    // ordinary blow (with an aura vial, an aura healer's half). A heal earns its
+    // class experience (see healXp).
     const landing = keys.filter((key) => this.phaseOf(key) === ATTACK_PHASES);
     const healed = [];
     for (const key of landing.filter((k) => this.rhythm[k].heal)) {
@@ -771,10 +864,39 @@ export default class RaidParty extends View {
         this.healXp(key, got);
       }
     }
-    const blows = landing
-      .filter((key) => !this.rhythm[key].heal)
-      .map((key) => ({ key, seed: this.rhythm[key].seed, ...blow(this.progress, this.sprites[key], Math.random()) }));
+    const blows = [];
+    for (const key of landing.filter((k) => !this.rhythm[k].heal)) {
+      const r = this.rhythm[key];
+      const cls = this.sprites[key];
+      const out = strike(
+        { cls, weapon: equipped(this.progress, cls, "weapon"), damage: damageOf(this.progress, cls), critChance: critChanceOf(this.progress.skills[cls]), factor: r.factor, haste: r.haste },
+        kind,
+        this.statuses,
+        auras,
+        Math.random,
+      );
+      r.chainAt = out.hits.length > 1 ? t : null; // the second strike's arc shows
+      // which way the attacker faces the boss: its chain's arc leaps on that way, and its second number at the arc's end
+      const dir = key === YOU ? (this.youDir ?? 1) : (this.at?.[key]?.dir ?? 1);
+      for (const h of out.hits) blows.push({ key, cls, seed: r.seed, damage: h.damage, crit: h.crit, matchup: out.matchup, chain: h.chain, dir, shares: out.shares });
+    }
+    // what the statuses dealt lands once a second, one sum per class and status:
+    // as the attempt's time shown turns to the next second (drawn then anyway),
+    // or every DOT_TICKS while it stands still
+    const turning = keys.length && this.monster.hp > 0 ? Math.ceil((this.left - TICK_STEP) / 1000) !== Math.ceil(this.left / 1000) : t % DOT_TICKS === 0;
+    if (turning && this.monster.hp > 0) {
+      for (const p of Object.values(this.dots)) {
+        if (p.n > 0) {
+          const owed = Object.fromEntries(Object.entries(p.owed).map(([k, n]) => [k, n / p.n]));
+          blows.push({ key: this.holder(p.cls, keys), cls: p.cls, seed: t, damage: p.n, crit: false, matchup: p.matchup, dot: p.status, shares: owed });
+        }
+      }
+      this.dots = Object.create(null);
+    }
     if (blows.length && this.fight(blows)) changed = true;
+    // a number that popped in on the last tick starts its rise and fade on this one
+    // (an attacker's rest draws it; damage over time can land with nobody mid-attack)
+    if (this.damage.some((d) => d.tick === t - 1)) changed = true;
     // the attempt's time runs while the boss is alive and someone attacks it;
     // the plate shows whole seconds, so it is drawn again as each one passes
     if (keys.length && this.monster.hp > 0) {
@@ -893,7 +1015,14 @@ export default class RaidParty extends View {
     // the warrior swings its own weapon; only the slash is extra
     if (c === "warrior") return [pop("slash", part("shot"), 32, 44, from(62, 24), phase === 2)];
     if (c === "archer") return [shot(part("shot"), 44, 20, from(40, 22)), pop("hit", part("hit"), 20, 20, hit, phase === 4)];
-    if (c === "wizard") return [shot(part("shot"), 40, 32, from(46, 26)), pop("hit", part("hit"), 44, 44, hit, phase === 4)];
+    if (c === "wizard") {
+      // a chained blow (the Bolt Staff): a second arc leaps on past the first, the way the spell flew
+      const chained = this.rhythm[who.key]?.chainAt;
+      const arcOn = chained != null && chained === this.clock;
+      const arcAt = { x: hit.x + (d > 0 ? CHAIN_W / 2 : -CHAIN_W / 2), y: hit.y - 12 };
+      const arc = chained != null && this.clock - chained <= 2 ? [pop("chain", overlayArt("chain", d > 0 ? "arc/r" : "arc/l"), CHAIN_W, CHAIN_H, arcAt, arcOn)] : [];
+      return [shot(part("shot"), 40, 32, from(46, 26)), pop("hit", part("hit"), 44, 44, hit, phase === 4), ...arc];
+    }
     // healer: the potion is lobbed, rising for the first half and falling for the second
     const lob = (el) =>
       el
@@ -952,9 +1081,12 @@ export default class RaidParty extends View {
         .left(0)
         .top(0)
         .child(image(src(monsterArt(m.kind, part))).w(kind.w).h(kind.h));
-    // the plate over its head, kept inside the scene when the wall is low
-    const plateTop = Math.max(top - PLATE_H - 4, 4 - this.wallH);
-    const plate = this.plate(m, kind, left + Math.round(kind.w / 2), plateTop);
+    // the plate over its head, kept inside the scene when the wall is low; a
+    // row taller while it shows status icons
+    const icons = dead ? [] : plateIcons(this.statuses, this.auras());
+    this.plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
+    const plateTop = Math.max(top - this.plateH - 4, 4 - this.wallH);
+    const plate = this.plate(m, kind, left + Math.round(kind.w / 2), plateTop, icons);
     const note = this.timesUpNote(left + Math.round(kind.w / 2), plateTop) ?? this.advanceNote(m, left + Math.round(kind.w / 2), plateTop);
     return [
       div()
@@ -993,11 +1125,48 @@ export default class RaidParty extends View {
                   .loop("top", m.kind === "slime" ? { from: 0, to: 8, period: 1700 } : { from: 0, to: -3, period: m.kind === "dragon" ? 3200 : 2600 })
                   .when(lids, (top) => top.child(layer("blink"))),
               ),
-            ),
+            )
+            .when(!dead, (el) => el.children(this.marks(m.kind, kind))),
         ),
       plate,
       ...(note ? [note] : []),
     ];
+  }
+
+  // The pictures of the statuses on the boss (effects/<status>/), laid over
+  // its body around the middle of its bulk, a few more on a bigger boss
+  // (EFFECT_COUNT): flames licking up while it burns, two shapes crossfading;
+  // frost crystals and a twinkle while it is chilled; venom welling up and
+  // dripping, a drip per stack. All native loops, nothing re-rendered.
+  marks(name, kind) {
+    const st = this.statuses;
+    const n = EFFECT_COUNT[name] ?? 2;
+    const cx = kind.w / 2 + kind.core.x;
+    const cy = kind.h - 4 - kind.core.y;
+    const spot = (i) => ({ x: Math.round(cx + EFFECT_SPOTS[i][0] * kind.core.r), y: Math.round(cy + EFFECT_SPOTS[i][1] * kind.core.r) });
+    const pic = (part, w, h, at, fade) =>
+      div()
+        .absolute()
+        .left(at.x - w / 2)
+        .top(at.y - h)
+        .when(Boolean(fade), (el) => el.loop("opacity", fade))
+        .child(image(src(overlayArt(...part))).w(w).h(h));
+    const out = [];
+    if (Object.keys(st.burn).length)
+      for (let i = 0; i < n; i++) {
+        const period = 480 + i * 110;
+        out.push(pic(["burn", "flame-1"], 32, 36, spot(i), { from: 1, to: 0, period, easing: "linear" }), pic(["burn", "flame-2"], 32, 36, spot(i), { from: 0, to: 1, period, easing: "linear" }));
+      }
+    if (st.chill > 0) {
+      for (let i = 0; i < n - 1; i++) out.push(pic(["chill", "crystal"], 44, 36, spot(i), null));
+      out.push(pic(["chill", "glint"], 20, 20, spot(n - 1), { from: 0, to: 1, period: 900 }));
+    }
+    for (let i = 0; i < Math.min(n, st.venom.length); i++) {
+      const at = spot((i + 1) % n);
+      const period = 1300 + i * 170;
+      out.push(pic(["venom", "drip-1"], 28, 28, at, { from: 1, to: 0, period }), pic(["venom", "drip-2"], 28, 40, { x: at.x, y: at.y + 12 }, { from: 0, to: 1, period }));
+    }
+    return out;
   }
 
   // The boss's name plate, over its head (kept inside the scene when the wall
@@ -1009,7 +1178,9 @@ export default class RaidParty extends View {
   // the boss's name and HP; its health bar; and a thin bar of the time left.
   // The bars glide between renders, which come at least once a second while
   // the time runs (see tick), so nothing renders just to move them.
-  plate(m, kind, x, top) {
+  // `icons` (plateIcons in effects.js): a last row of icons for the statuses
+  // on it (burn, chill, venom with its stacks) and the party's hex.
+  plate(m, kind, x, top, icons = []) {
     const dead = m.hp <= 0;
     const { stage, best } = this.progress;
     const tone = m.hp > m.maxHp / 2 ? "#4cd47b" : m.hp > m.maxHp / 5 ? "#ffd166" : "#ff5d5d";
@@ -1106,6 +1277,27 @@ export default class RaidParty extends View {
               .bg(running ? "#5cc8ff" : "#5d7088")
               .transition("width", { duration: TICK_STEP, easing: "linear" }),
           ),
+      )
+      .when(icons.length > 0, (el) =>
+        el.child(
+          h_flex()
+            .id("idle-rpg-plate-icons")
+            .h(PLATE_ICON_H)
+            .flex_none()
+            .gap(3)
+            .items_center()
+            .children(
+              icons.map((ic) =>
+                h_flex()
+                  .id(`idle-rpg-plate-${ic.id}`)
+                  .flex_none()
+                  .gap(1)
+                  .items_center()
+                  .child(image(src(effectIconArt(ic.id))).w(18).h(18))
+                  .when(ic.id === "venom", (row) => row.child(pixelText(String(ic.n), "white", 2))),
+              ),
+            ),
+        ),
       );
   }
 
@@ -1194,7 +1386,7 @@ export default class RaidParty extends View {
       .id(`idle-rpg-advance-${m.id}`)
       .absolute()
       .left(x - 90)
-      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + PLATE_H + 4) // under the plate when there is no room over it
+      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + (this.plateH ?? PLATE_H) + 4) // under the plate when there is no room over it
       .w(180)
       .justify_center()
       .child(div().px(5).rounded(6).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`Moving to stage ${m.advancing} in ${secs}`));
@@ -1211,7 +1403,7 @@ export default class RaidParty extends View {
       .id(`idle-rpg-timesup-${t.id}`)
       .absolute()
       .left(x - 90)
-      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + PLATE_H + 4) // under the plate when there is no room over it
+      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + (this.plateH ?? PLATE_H) + 4) // under the plate when there is no room over it
       .w(180)
       .justify_center()
       .opacity(fresh ? 1 : 0)
@@ -1518,6 +1710,11 @@ export default class RaidParty extends View {
       const share = m.hp / m.maxHp;
       const tone = share > 0.5 ? "#4cd47b" : share > 0.25 ? "#ffd166" : "#ff5d5d";
       out.push(bar(div().id(`idle-rpg-hp-${key}`).h(5).w(Math.round(HP_W * share)).bg(tone).transition("width", { duration: 150, easing: "ease-out" })));
+      // a healer giving the party an aura (its vial's) shows its icon by its bar
+      // while the boss stands, in the box that glides with it
+      const potion = statsOf(this.sprites[key], equipped(this.progress, this.sprites[key], "weapon")).potion;
+      if (AURAS.includes(potion) && this.monster?.hp > 0)
+        out.push(div().id(`idle-rpg-aura-${key}`).absolute().left(HP_W / 2 + 3).top(-84).child(image(src(effectIconArt(potion))).w(18).h(18)));
     }
     if (m.hitAt !== null && t - m.hitAt <= 2) {
       const fresh = t === m.hitAt;
@@ -1599,17 +1796,25 @@ export default class RaidParty extends View {
   }
 
   // One damage number in the pixel font, over the point where its blow landed:
-  // white, or for a critical blow gold, a size up and with a "!". It pops in,
+  // white, or for a critical blow gold, a size up and with a "!"; a chained
+  // second strike's at the end of its arc; damage over time (summed over a
+  // second) beside the boss's middle, in ember for burn and green for venom.
+  // A blow that hit the boss's weakness has an orange arrow up after it, one
+  // it resists a grey arrow down (effects/marks). It pops in,
   // then on the next render (the next tick of the attack clock, which runs on
   // through the attacker's rest) rises and fades natively, like a level-up
   // note. Each is nudged a little left, right or not at all by its number, so
   // blows that land together do not cover each other exactly.
   damageNote(d, W, kind) {
-    const at = this.hitOf(d.key, d.seed, W, kind);
+    const core = { x: Math.round(W / 2 + kind.core.x), y: MONSTER_Y - kind.core.y };
+    const hit = d.dot ? { x: core.x + DOT_SPOT[d.dot] * (kind.core.r + 20), y: core.y + 12 } : this.hitOf(d.key, d.seed, W, kind);
+    const at = d.chain ? { x: hit.x + (d.dir < 0 ? -CHAIN_W : CHAIN_W), y: hit.y - 16 } : hit; // the end of its arc (see attack)
     const n = shortNumber(Math.max(1, d.n)); // a blow that took the last fraction of a point still shows 1
     const text = d.crit ? `${n}!` : n;
     const scale = d.crit ? 4 : 3;
-    const w = textW(text, scale);
+    const mark = markArt(d.matchup);
+    const textWidth = textW(text, scale);
+    const w = textWidth + (mark ? 6 * scale : 0); // the mark shares the last glyph's outline column
     const h = GLYPH_H * scale;
     const fresh = this.fresh(d.tick);
     const top = at.y - h / 2 - 8 - (fresh ? 0 : DAMAGE_RISE);
@@ -1621,7 +1826,14 @@ export default class RaidParty extends View {
       .opacity(fresh ? 1 : 0)
       .transition("top", { duration: DAMAGE_MS, easing: "ease-out" })
       .transition("opacity", { duration: DAMAGE_MS, easing: "ease-in" })
-      .child(pixelText(text, d.crit ? "gold" : "white", scale));
+      .child(
+        div()
+          .relative()
+          .w(w)
+          .h(h)
+          .child(pixelText(text, d.dot ? DOT_COLOURS[d.dot] : d.crit ? "gold" : "white", scale))
+          .when(Boolean(mark), (el) => el.child(div().absolute().left(textWidth - scale).top(0).child(image(src(mark)).w(7 * scale).h(GLYPH_H * scale)))),
+      );
   }
 
   // Where the campfire stands between raids: the middle of its picture, or
@@ -2303,6 +2515,7 @@ export default class RaidParty extends View {
               .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
               .on_click((_e, cx) => {
                 this.battle = !this.battle;
+                this.clearEffects(); // statuses stay with the fight they were put on
                 // the panels open from different places in a raid and out of one
                 this.codex = this.settingsOpen = false;
                 this.skillsOpen = this.shopOpen = null;
@@ -2591,6 +2804,7 @@ export default class RaidParty extends View {
   // skills panel and any card.
   openShop(cls) {
     this.shopOpen = cls;
+    this.shopPick = null; // the item whose lines show: the one on, until another is clicked
     if (!cls) return;
     this.codex = this.settingsOpen = false;
     this.skillsOpen = this.card = null;
@@ -2810,8 +3024,12 @@ export default class RaidParty extends View {
   // winds up to attack, where every weapon shows best (the healer's potion
   // only shows then). A hat is bought once for every class, which the
   // panel says under them while hats are shown; each class still has its own
-  // on. A kind with nothing for sale yet says so. Short enough for the scene
-  // at its lowest (230px, the sign taking 54).
+  // on. A kind with nothing for sale yet says so. Under the items, two lines on
+  // the one picked (clicking an item picks it; the one on until then): for a
+  // weapon what it does (shopLines in effects.js: its pace, its element's
+  // status and the bosses weak to it or resisting it, a vial's aura), the
+  // tiles being too narrow for it. Its height is fixed by PANEL and SHOP_ROW
+  // (167px), short enough for the scene at its lowest (230px, the sign taking 54).
   shopCard(left) {
     const cls = this.shopOpen;
     const kind = SHOP_KINDS.includes(this.shopKind) ? this.shopKind : SHOP_KINDS[0];
@@ -2824,13 +3042,21 @@ export default class RaidParty extends View {
       weapon: (it) => this.sprite(cls, "windup/r", 48, 36, undefined, undefined, it.id),
       hat: (it) => this.sprite(cls, "stand", 36, 36, undefined, it.id),
     };
+    // the item whose lines show under the items: the one picked, else the one on
+    const pick = items.find((it) => it.id === this.shopPick) ?? items.find((it) => it.id === equipped(this.progress, cls, kind)) ?? items[0];
+    const about = !pick
+      ? ["", ""]
+      : kind === "weapon"
+        ? shopLines(cls, pick.id)
+        : [pick.name, SHOP[kind].shared ? "Looks only, worn by any class" : `Looks only, for every ${capital(cls)}`];
     const nav = (k) =>
       h_flex()
         .id(`idle-rpg-shop-kind-${k}`)
+        .h(SHOP_ROW.nav)
+        .flex_none()
         .gap(5)
         .items_center()
         .px(4)
-        .py(3)
         .rounded(6)
         .border(1)
         .border_color(k === kind ? "#5cc8ff" : "#00000000")
@@ -2839,16 +3065,26 @@ export default class RaidParty extends View {
         .hover((st) => st.bg("#ffffff1c"))
         .on_click((_e, cx) => {
           this.shopKind = k;
+          this.shopPick = null;
           cx.notify();
         })
         .child(image(src(SHOP_ICONS[k] ?? "icons/coin.png")).w(18).h(18))
         .child(div().text_size(10).font_semibold().text_color(CREAM).child(SHOP[k].name));
+    // the class picked is a wider tab with its name beside its sprite; the
+    // others show the sprite alone, their name in a tooltip (four names do not
+    // fit beside four sprites in the 218px column)
     const tab = (id, on, act, ...content) =>
-      v_flex()
+      h_flex()
         .id(id)
-        .flex_1()
+        .when(on, (el) => el.w(SHOP_ROW.tab).flex_none())
+        .when(!on, (el) => el.flex_1())
+        .min_w(0)
+        .h(PANEL.tab)
+        .gap(2)
+        .px(2)
         .items_center()
-        .py(2)
+        .justify_center()
+        .overflow_hidden()
         .rounded(6)
         .border(1)
         .border_color(on ? "#5cc8ff" : "#00000000")
@@ -2862,6 +3098,7 @@ export default class RaidParty extends View {
         .children(content);
     const item = (it) => {
       const on = equipped(this.progress, cls, kind) === it.id;
+      const picked = it === pick;
       return v_flex()
         .id(`idle-rpg-shop-item-${it.id}`)
         .flex_1()
@@ -2872,8 +3109,13 @@ export default class RaidParty extends View {
         .py(3)
         .rounded(6)
         .border(1)
-        .border_color(on ? "#5cc8ff" : "#00000000")
+        .border_color(on ? "#5cc8ff" : picked ? "#5cc8ff70" : "#00000000")
         .bg(on ? "#5cc8ff22" : "#ffffff0a")
+        .cursor_pointer()
+        .on_click((_e, cx) => {
+          this.shopPick = it.id;
+          cx.notify();
+        })
         .child(preview[kind]?.(it) ?? div().h(36))
         .child(div().max_w_full().truncate().text_size(10).text_color("#dbe7f3").child(it.name))
         .child(
@@ -2894,19 +3136,23 @@ export default class RaidParty extends View {
       .left(left)
       .top(54)
       .w(SHOP_NAV_W + 8 + CARD_W)
-      .p(8)
-      .gap(6)
+      .p(PANEL.pad)
+      .gap(PANEL.gap)
       .rounded(8)
       .bg("#101a2cf0")
       .border(1)
       .border_color("#ffffff24")
       .text_size(11)
+      .line_height(PANEL.line)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(
         h_flex()
+          .id("idle-rpg-shop-title")
+          .h(PANEL.title)
+          .flex_none()
           .gap(6)
           .items_center()
-          .child(image(src("icons/coin.png")).w(18).h(18))
+          .child(image(src("icons/coin.png")).w(16).h(16))
           .child(div().flex_1().text_size(12).font_semibold().text_color("#ffffff").child("Shop"))
           .child(div().font_semibold().text_color(GOLD).child(`${shortNumber(this.progress.gold)} gold`))
           .child(
@@ -2933,7 +3179,7 @@ export default class RaidParty extends View {
             v_flex()
               .w(SHOP_NAV_W)
               .flex_none()
-              .gap(3)
+              .gap(PANEL.gap)
               .children(SHOP_KINDS.map(nav))
               // under the hats, in place of "More soon": what one costs buys it for everyone
               .child(div().px(4).pt(2).text_size(9).text_color(SHOP[kind].shared ? GOLD : "#8ea3bb").child(SHOP[kind].shared ? "Bought once, for every class" : "More soon")),
@@ -2942,25 +3188,31 @@ export default class RaidParty extends View {
             v_flex()
               .flex_1()
               .min_w(0)
-              .gap(3)
+              .gap(PANEL.gap)
               .child(
                 h_flex()
+                  .id("idle-rpg-shop-tabs")
+                  .h(PANEL.tab)
+                  .flex_none()
                   .gap(4)
                   .children(
                     CLASSES.map((c) =>
                       tab(
                         `idle-rpg-shop-${c}`,
                         c === cls,
-                        () => (this.shopOpen = c),
-                        this.sprite(c, "stand", 24, 24),
-                        div().text_size(9).font_semibold().text_color(CREAM).child(capital(c)),
-                      ),
+                        () => {
+                          this.shopOpen = c;
+                          this.shopPick = null;
+                        },
+                        this.sprite(c, "stand", 18, 18),
+                        ...(c === cls ? [div().flex_none().text_size(9).font_semibold().text_color(CREAM).child(capital(c))] : []),
+                      ).when(c !== cls, (el) => el.tooltip(capital(c))),
                     ),
                   ),
               )
               .child(
                 items.length
-                  ? h_flex().gap(4).children(items.map(item))
+                  ? h_flex().h(SHOP_ITEM_H).flex_none().gap(4).children(items.map(item))
                   : // the same height as a row of items, so the panel does not jump between kinds
                     v_flex()
                       .h(SHOP_ITEM_H)
@@ -2970,6 +3222,18 @@ export default class RaidParty extends View {
                       .bg("#ffffff0a")
                       .text_color("#8ea3bb")
                       .child(`No ${SHOP[kind].name.toLowerCase()} for sale yet`),
+              )
+              // two lines on the item picked: for a weapon, what it does
+              .child(
+                v_flex()
+                  .id("idle-rpg-shop-about")
+                  .h(SHOP_ROW.about)
+                  .flex_none()
+                  .px(4)
+                  .text_size(10)
+                  .tooltip(about.filter(Boolean).join(" · ") || " ")
+                  .child(div().id("idle-rpg-shop-about-1").truncate().font_semibold().text_color("#dbe7f3").child(about[0]))
+                  .child(div().id("idle-rpg-shop-about-2").truncate().text_color("#8ea3bb").child(about[1])),
               ),
           ),
       );

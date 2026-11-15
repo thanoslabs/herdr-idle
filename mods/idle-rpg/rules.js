@@ -124,7 +124,8 @@ export const ATTACK_JITTER = 2;
 // by all four, kept once in the state under the kind's `shared` key, though
 // each class still puts on its own. Weapons are each class's own, like
 // armours: what it fights with, and what its attacks look like (see
-// attackArt); for now every weapon deals the same damage. The first item of
+// attackArt), and how it fights: its pace and weight, its element or its
+// vial's aura (see effects.js, which reads these). The first item of
 // every catalogue is the class's default look: free, always owned. Buying is
 // for good (no refunds), and changing between owned items is free.
 export const DEFAULT_LOOK = "default";
@@ -144,8 +145,8 @@ const COLOUR_NAMES = {
 // tools/idle-rpg-sprites.py, which draws each over every class.
 const HAT_NAMES = [[DEFAULT_LOOK, "No hat"], ["party", "Party Hat"], ["santa", "Santa Hat"], ["pumpkin", "Pumpkin"]];
 const HATS = HAT_NAMES.map(([id, name], i) => ({ id, name, price: i ? HAT_PRICES[i - 1] : 0 }));
-// What a weapon's attacks will one day carry (they do nothing yet): an
-// element, or null for none, and for the healer's potions, which potion it is.
+// What a weapon's attacks carry (effects.js says what each does): an element,
+// or null for none, and for the healer's potions, which potion it is.
 export const ELEMENTS = ["fire", "frost", "storm", "poison"];
 export const POTIONS = ["heal", "haste", "might", "hex"];
 // Each class's weapons as [id, name, element] and, for the healer, whose
@@ -292,7 +293,9 @@ export const SETTINGS = [
 // Digits, a sign or two, and what shortNumber writes: a point, K, M, B, T,
 // and E for a power of ten.
 export const GLYPHS = "0123456789+!.KMBTE";
-export const GLYPH_COLOURS = ["white", "gold"];
+// white for a plain blow and the badges, gold for a critical blow, and the
+// colours of damage over time (effects.js): ember for burn, venom for venom.
+export const GLYPH_COLOURS = ["white", "gold", "ember", "venom"];
 const GLYPH_NAMES = { "+": "plus", "!": "bang", ".": "point", K: "k", M: "m", B: "b", T: "t", E: "e" };
 // How many art px wide each character is without its outline (3 unless named
 // here); main.js sets them one art px apart, sharing an outline column.
