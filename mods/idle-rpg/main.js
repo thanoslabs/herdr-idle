@@ -659,7 +659,7 @@ export default class RaidParty extends View {
       const aura = owed ? owed.haste + owed.might + owed.hex : 0;
       for (const [c, part, over] of [[by, 1 - aura, key], ["healer", aura, this.holder("healer", this.attackers())]]) {
         if (!(part > 0)) continue;
-        for (const up of credit(this.progress, c, dealt * part, m)) {
+        for (const up of credit(this.progress, c, dealt * part, m, attackers)) {
           // a class's level-up shows over whoever earned it, yours over you
           if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
           else this.cheer(over, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
@@ -695,7 +695,7 @@ export default class RaidParty extends View {
     const full = healOf(this.progress, cls);
     if (!(m?.hp > 0) || !(full > 0)) return;
     const size = damageOf(this.progress, cls) * Math.min(1, got / full);
-    for (const up of credit(this.progress, cls, Math.min(size, m.hp), m)) {
+    for (const up of credit(this.progress, cls, Math.min(size, m.hp), m, Math.max(1, this.fighters().length))) {
       if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
       else this.cheer(key, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
     }
@@ -1014,7 +1014,11 @@ export default class RaidParty extends View {
     // the knocked out's countdowns turn on that same beat, all at once (at most
     // once a second however many are resting), so they cost no render of their own
     // while the plate's seconds turn; between beats each shows its seconds as of the last
-    if (turning && t - this.koBeat >= DOT_TICKS && down(this.party).length) {
+    // (a turn of the plate's seconds is always a beat, so a countdown never skips a
+    // number when the time resumes; the every-4-ticks beat while it stands still
+    // keeps a second from the last)
+    const plateTurn = keys.length > 0 && this.monster.hp > 0 && turning;
+    if (turning && (plateTurn || t - this.koBeat >= DOT_TICKS) && down(this.party).length) {
       this.koBeat = t;
       changed = true;
     }
