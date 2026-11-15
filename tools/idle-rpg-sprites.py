@@ -2,7 +2,7 @@
 # Draws Idle RPG's pixel art as PNGs (no dependencies): the class sprites
 # (stubby 16x16 adventurers with a one-pixel dark outline, in every colourway
 # the shop sells, and every weapon and hat it sells drawn to lay over them),
-# each weapon's attack, the castle
+# each weapon's attack and effects on the boss, the castle
 # scenery (wall, floor, mountains, clouds, sun, moon, stars, props), the icons,
 # and a small pixel font for numbers.
 #
@@ -12,12 +12,12 @@
 # Everything is drawn at 8 image pixels per art pixel and shown at 4.
 #
 # The pictures go in folders by what they show, then by what it is doing, with
-# short names inside (the paths in mods/idle-rpg/rules.js and main.js follow it):
+# short names inside (the paths in mods/idle-rpg/rules.js, effects.js and main.js follow it):
 #   scene/      the backdrop and props: wall, floor, mountains, stars, sun, moon,
 #               cloud-a, cloud-b, banner, torch, barrel
 #   classes/    <class>/<look>/stand, walk/{l,r}, rag/{c,l,r}, and the fighting
-#               poses stance/, windup/, strike/ {l,r}; <look> is "default" or a
-#               colourway's id; drawn without the weapon
+#               poses stance/, windup/, strike/ {l,r}, and down/ {l,r} (knocked
+#               out); <look> is "default" or a colourway's id; drawn without the weapon
 #   weapons/    <class>/<weapon>/ the same pictures as a class (the healer's: only
 #               windup/), to lay over them; <weapon> is "default" or the weapon's id
 #   hats/       <hat>/<class>/ the same pictures as a class, to lay over them
@@ -25,14 +25,21 @@
 #               slash/<variant>/, arrow/<variant>/, spell/<element>/ {l,r};
 #               burst/<element>, potion/<potion>, splash/<potion>, spark/<element>
 #   monsters/   <kind>/ idle (the whole picture), blink, the pieces that move
-#               (top, base, body, tail), and roar/ for the ogre and dragon
+#               (top, base, body, tail), roar/ for the ogre and dragon, and
+#               attack/, its two attacks on the party (see the last section)
+#   foe/        marker (where an area attack lands) and hit (on whoever it reaches)
 #   stations/   <station>/{idle,hot}, and the arrow over the one under the pointer
 #   campfire/   base, flame-1 to flame-4
 #   light/      the night's darkness: candle, torch, fill, fire-0 to fire-23
-#   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark
+#   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark,
+#               dizzy-1, dizzy-2 (knocked out), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
-#               coin, star, armour, hat, gear, and the card's wrench
-#   font/       <colour>/<character>, the pixel font
+#               coin, star, armour, hat, gear, the card's wrench, and the
+#               stage arrows on the boss's plate: prev, next
+#   effects/    weapon effects (effects.js): icons/ (burn, chill, venom, hex, haste,
+#               might), marks/ (weak, resist), and on the boss burn/flame-1, -2,
+#               chill/crystal, glint, chain/arc/{l,r}, venom/drip-1, -2
+#   font/       <colour>/<character>, the pixel font: white, gold, ember, venom
 import math, os, struct, sys, zlib
 if len(sys.argv) != 2 or sys.argv[1].startswith("-"):  # no options: "--help" is not a folder to fill
     sys.exit("usage: idle-rpg-sprites.py <output folder>")
@@ -709,6 +716,8 @@ icon("icons/skull.png", [                                   # slain
     ".wkwkw.",
 ], {"w": "#ece6d6", "k": "#2a2433"})
 icon("stations/arrow.png", ["wwwww", ".www.", "..w.."], {"w": "#ffffff"})  # bobs over the station under the pointer
+icon("icons/prev.png", ["..w", ".ww", "www", ".ww", "..w"], {"w": "#ffd166"})  # the boss's plate: the stage before
+icon("icons/next.png", ["w..", "ww.", "www", "ww.", "w.."], {"w": "#ffd166"})  # and the stage after
 icon("icons/armour.png", [                                  # the shop's armours
     "aa...aa",
     "aAaaaAa",
@@ -1258,10 +1267,12 @@ for cls, (base, rows) in SPR.items():
             write(f"weapons/{cls}/{weapon}/{frame}.png", png(layer(g, shape[frame], pal), {}))
 
 # ---- The pixel font: digits and a few signs, 3x5, for damage numbers and the
-# badges on the status icons. Each glyph is outlined all round (corners too, so
-# it reads over a monster or the sky) and comes in every colour main.js uses.
-# Its characters and colours must match GLYPHS and GLYPH_COLOURS in
-# mods/idle-rpg/rules.js, which names the files (glyphArt): font/<colour>/<name>.
+# badges on the status icons, and the point and K, M, B, T that shorten big
+# numbers ("1.2K"; the point is 1 wide). Each glyph is outlined all round
+# (corners too, so it reads over a monster or the sky) and comes in every
+# colour main.js uses. Its characters, in order, and colours must match GLYPHS
+# and GLYPH_COLOURS in mods/idle-rpg/rules.js, which names the files
+# (glyphArt) and knows their widths (glyphWidth): font/<colour>/<name>.
 FONT = {
     "0": ["###", "#.#", "#.#", "#.#", "###"],
     "1": [".#.", "##.", ".#.", ".#.", "###"],
@@ -1275,8 +1286,15 @@ FONT = {
     "9": ["###", "#.#", "###", "..#", "###"],
     "plus": ["...", ".#.", "###", ".#.", "..."],
     "bang": [".#.", ".#.", ".#.", "...", ".#."],
+    "point": [".", ".", ".", ".", "#"],
+    "k": ["#.#", "#.#", "##.", "#.#", "#.#"],
+    "m": ["#.#", "###", "###", "#.#", "#.#"],
+    "b": ["##.", "#.#", "##.", "#.#", "##."],
+    "t": ["###", ".#.", ".#.", ".#.", ".#."],
+    "e": ["###", "#..", "##.", "#..", "###"],      # a power of ten, past 1,000T
 }
-GLYPH_COLOURS = {"white": "#ffffff", "gold": "#ffd166"}  # a plain hit and a badge; a critical blow
+GLYPH_COLOURS = {"white": "#ffffff", "gold": "#ffd166",  # a plain hit and a badge; a critical blow;
+                 "ember": "#ff9d3c", "venom": "#a8eb6a"}  # damage over time: burn, venom (effects.js)
 
 def glyph(name, rows, colour):
     h, w = len(rows) + 2, len(rows[0]) + 2
@@ -1457,3 +1475,555 @@ for hat, by_class in HATS.items():
         over = pictures(rows, lambda tag: [r.ljust(22, ".") for r in mine])
         for (frame, b), (_, g) in zip(body, over):
             save(f"hats/{hat}/{cls}/{frame}.png", overlay(g, b))
+
+# ==== Monsters fight back (battle mode) =====================================
+# Everything below is for the monster's attacks on the party (see
+# mods/idle-rpg/party.js), added after all the rest so nothing above changes:
+#   monsters/<kind>/attack/  each monster's two attacks. A pose is a whole
+#               picture on the monster's own canvas, laid in place of its
+#               pictures while it attacks ("l"/"r" where it faces the target);
+#               the rest are what flies and what lands:
+#               slime:  spit/{l,r} and glob (a single blow: a gob of goo spat at
+#                       one attacker, splat where it lands on them); squash and
+#                       puddle (the area attack: it gathers itself, lobs a glob,
+#                       and goo splashes over the marked spot)
+#               ogre:   swing/{l,r} and arc/{l,r} (a club swing whose gust flies
+#                       at one attacker, thud where it lands); slam and quake (the
+#                       club smashed down, the ground cracking under the spot)
+#               dragon: bite (head down, jaws snapping) and claw (marks on the
+#                       one it reaches); breath, fireball/{l,r} and blaze-1, -2
+#                       (it breathes a ball of fire that bursts into a blaze
+#                       across the spot; the two flicker)
+#   foe/        marker, the danger ring on the floor where an area attack will
+#               land (AREA_RADIUS wide, half as deep), and hit, the flash on
+#               anyone an area attack reaches
+#   status/     dizzy-1, dizzy-2 (stars circling a knocked-out head, crossfaded),
+#               heal (a green plus rising off whoever is healed) and sparkle
+#   classes/<class>/<look>/down/{l,r}, weapons/<class>/<weapon>/down/{l,r} (not
+#               the healer's: its potion shows only in its wind-up) and
+#               hats/<hat>/<class>/down/{l,r}: knocked out, lying on its back
+#               with its head to the left or right, on the standing picture's
+#               18x18 canvas, its back on the canvas's bottom row
+FIGHT = True  # (a marker for this section)
+
+def grab(draw, *args, **kw):
+    # the picture a drawing function above would save, as a grid of colours,
+    # instead of writing it
+    global save
+    kept, got = save, []
+    save = lambda name, g, pal={}: got.append([[pal.get(c, c) if c else None for c in row] for row in g])
+    try:
+        draw("-", *args, **kw)
+    finally:
+        save = kept
+    return got[0]
+
+def mirror(g):
+    return [row[::-1] for row in g]
+
+def shout(name, g):
+    # a grid of colours, with the dark outline round it where it is see-through
+    h, w = len(g), len(g[0])
+    o = [r[:] for r in g]
+    for y in range(h):
+        for x in range(w):
+            if g[y][x] is None and near(g, y, x): o[y][x] = OUTLINE
+    save(name, o)
+
+def pair(name, g):
+    # "r" as drawn, "l" its mirror
+    save(f"{name}/r.png", g)
+    save(f"{name}/l.png", mirror(g))
+
+# ---- The slime: 32x24, like slime() above. Its single blow: it leans and
+# stretches toward its target, mouth open, and spits; its area attack: it
+# squashes flat, gathering itself to lob a big glob.
+SLIME = {"B": "#4fb3e0", "D": "#3586b8", "L": "#9bdcf5", "G": "#c9efff"}
+def slime_pose(name, pose):
+    p = Pix(32, 24)
+    B, Bd, Bl = SLIME["B"], SLIME["D"], SLIME["L"]
+    if pose == "spit":                                             # lunging right, its dome thrown forward
+        p.poly([(2, 23), (4, 14), (9, 7), (17, 3), (25, 4), (30, 9), (31, 16), (31, 23)], Bd)
+        p.poly([(3, 21), (5, 14), (10, 8), (17, 4), (24, 5), (29, 10), (30, 16), (30, 21)], B)
+        p.rect(2, 21, 30, 2, Bd)
+        p.ell(14, 8, 3, 2, Bl); p.px(18, 6, Bl)
+        p.rect(15, 10, 3, 4, K); p.rect(23, 10, 3, 4, K); p.px(16, 10, WHITE); p.px(24, 10, WHITE)
+        p.rect(14, 9, 4, 1, Bd); p.rect(22, 9, 4, 1, Bd)            # brows, frowning
+        p.ell(24, 17, 3, 2.5, K); p.rect(23, 18, 3, 1, "#c94040")   # mouth wide, spitting
+    else:                                                           # "squash": flat and wide, cheeks full
+        p.ell(16, 16, 15, 7, Bd); p.rect(1, 16, 31, 7, Bd)
+        p.ell(16, 15, 14, 6, B); p.rect(2, 15, 29, 6, B)
+        p.rect(1, 21, 31, 2, Bd)
+        p.ell(9, 12, 3, 1, Bl); p.px(13, 11, Bl)
+        for x, y in ((9, 14), (10, 15), (11, 16), (10, 17), (9, 18)): p.px(x, y, K)   # eyes squeezed shut: > <
+        for x, y in ((22, 14), (21, 15), (20, 16), (21, 17), (22, 18)): p.px(x, y, K)
+        p.rect(14, 19, 4, 1, K)                                      # cheeks puffed, mouth pressed
+        p.px(6, 18, Bl); p.px(26, 18, Bl)
+    p.save(name)
+
+g = grab(slime_pose, "spit")
+pair("monsters/slime/attack/spit", g)
+save("monsters/slime/attack/squash.png", grab(slime_pose, "squash"))
+icon("monsters/slime/attack/glob.png", [                     # what it spits, and lobs
+    ".BBB.",
+    "BBLGB",
+    "BBBLB",
+    "DBBBB",
+    ".DDD.",
+], SLIME)
+icon("monsters/slime/attack/splat.png", [                    # a glob landing on someone
+    "B.........B",
+    "..B.BBB.B..",
+    ".BBBBLBBBB.",
+    "..BBLGLBB..",
+    ".B.BBBBB.B.",
+    "...B...B...",
+], SLIME)
+icon("monsters/slime/attack/puddle.png", [                   # the big glob splashing over the marked spot
+    "...B.....B......B......B.....B...",
+    ".B....B.....BB.....BB.....B....B.",
+    "........BBBBBBBBBBBBBBBBB........",
+    "..B..BBBBBLLBBBBBBBBBLLBBBBB..B..",
+    "...BBBBBLLGGLBBBBBBBLGGLLBBBBB...",
+    ".BBBBBBBBLLBBBBBBBBBBBLLBBBBBBBB.",
+    "BBBDBBBBBBBBBBBBBBBBBBBBBBBBBDBBB",
+    ".BBDDBBBBBBBBBBBBBBBBBBBBBBBDDBB.",
+    "...DDDDBBBBBBBBBBBBBBBBBBBDDDD...",
+    ".......DDDDDDDDDDDDDDDDDDD.......",
+], SLIME)
+
+# ---- The ogre: 48x48, like ogre() above, its club in its right hand. Its
+# single blow: the club swung down and out to one side (the "l" picture is
+# the "r" one mirrored: it is near enough symmetric), and a gust of the swing
+# flies at the target; its area attack: the club slammed down in front, both
+# fists on it, and the ground cracks under the marked spot.
+def club(p, outer, inner, studs):
+    # the ogre's club, inside a dark edge of its own so it reads over the body
+    edge = [(x + (1 if x >= sum(a for a, _ in outer) / len(outer) else -1), y) for x, y in outer]
+    p.poly(edge, "#3b2614"); p.poly(outer, "#3b2614")
+    p.poly([(x + (0 if x >= sum(a for a, _ in outer) / len(outer) else 1), y + 1) for x, y in outer], OGRE["Wd"])
+    p.poly(inner, OGRE["Wl"])
+    for x, y in studs: p.rect(x, y, 2, 2, BONE)
+
+OGRE = {"G": "#6f9e3f", "Gd": "#4f7a2c", "Gl": "#93bf5a", "Wd": "#7a5230", "Wl": "#9a6639", "Br": "#5a3d22"}
+def ogre_pose(name, pose):
+    p = Pix(48, 48)
+    G, Gd, Gl, Wd, Wl, Br = (OGRE[k] for k in ("G", "Gd", "Gl", "Wd", "Wl", "Br"))
+    p.rect(14, 38, 8, 8, Gd); p.rect(26, 38, 8, 8, Gd)    # legs
+    p.rect(12, 44, 11, 3, Br); p.rect(25, 44, 11, 3, Br)
+    p.ell(24, 30, 15, 12, Gd); p.ell(23, 29, 14, 11, G); p.ell(24, 32, 9, 7, Gl)
+    p.poly([(11, 36), (37, 36), (34, 43), (24, 40), (14, 43)], Wl); p.rect(10, 35, 28, 2, Br); p.rect(22, 34, 4, 4, "#f2c14e")
+    if pose == "swing":
+        p.ell(7, 29, 5, 8, Gd); p.ell(7, 28, 4, 7, G); p.ell(7, 38, 4, 4, G)        # left arm, as it was
+        p.ell(39, 27, 6, 5, Gd); p.ell(39, 26, 5, 4, G)                             # right arm flung out
+        p.poly([(35, 25), (38, 23), (45, 33), (42, 35)], "#3b2614"); p.poly([(36, 25), (38, 24), (44, 33), (42, 34)], OGRE["Wd"])  # the haft
+        club(p, [(40, 33), (45, 30), (47, 33), (47, 46), (42, 47), (39, 40)], [(42, 34), (45, 32), (46, 35), (45, 44), (43, 45), (41, 39)], ((43, 36), (45, 41), (42, 42)))
+        p.ell(38, 27, 3, 3, Gd); p.ell(38, 26, 3, 2, G)                             # its fist on the club
+    else:                                                  # "slam": the club heaved up over its head in both fists
+        p.ell(9, 17, 4, 10, Gd); p.ell(9, 17, 3, 9, G)      # arms raised
+        p.ell(39, 17, 4, 10, Gd); p.ell(39, 17, 3, 9, G)
+    p.poly([(10, 8), (14, 12), (13, 18)], Gd); p.poly([(38, 8), (34, 12), (35, 18)], Gd)  # ears
+    p.ell(24, 14, 11, 10, Gd); p.ell(23, 13, 10, 9, G)
+    p.poly([(15, 8), (23, 11), (24, 11), (32, 8), (32, 10), (15, 10)], Gd)            # brow, knotted
+    p.rect(16, 11, 4, 3, "#ffe27a"); p.rect(27, 11, 4, 3, "#ffe27a"); p.px(18, 12, K); p.px(28, 12, K)
+    p.rect(22, 13, 4, 4, Gd); p.px(22, 16, K); p.px(25, 16, K)
+    p.rect(15, 18, 17, 6, "#3a1f1f"); p.rect(18, 22, 11, 2, "#c94040")                 # bellowing
+    p.rect(16, 18, 2, 3, BONE); p.rect(29, 18, 2, 3, BONE); p.rect(20, 18, 2, 2, BONE); p.rect(25, 18, 2, 2, BONE)
+    if pose == "slam":                                     # the club across the top, fists on it
+        club(p, [(2, 1), (44, 0), (47, 3), (47, 7), (4, 6)], [(4, 2), (44, 2), (46, 4), (45, 5), (5, 4)], ((40, 3), (44, 4), (36, 2)))
+        p.ell(9, 6, 3, 3, Gd); p.ell(9, 5, 3, 2, G); p.ell(39, 6, 3, 3, Gd); p.ell(39, 5, 3, 2, G)
+    p.save(name)
+
+pair("monsters/ogre/attack/swing", grab(ogre_pose, "swing"))
+save("monsters/ogre/attack/slam.png", grab(ogre_pose, "slam"))
+icon("monsters/ogre/attack/arc/r.png", [                       # the swing's gust, flying right
+    "ww.....",
+    ".www...",
+    "..wWww.",
+    "...wWWw",
+    "...wWWw",
+    "...wWWw",
+    "..wWww.",
+    ".www...",
+    "ww.....",
+], {"w": "#c9a66b", "W": "#f4ecd8"})
+icon("monsters/ogre/attack/arc/l.png", [r[::-1] for r in [
+    "ww.....",
+    ".www...",
+    "..wWww.",
+    "...wWWw",
+    "...wWWw",
+    "...wWWw",
+    "..wWww.",
+    ".www...",
+    "ww.....",
+]], {"w": "#c9a66b", "W": "#f4ecd8"})
+icon("monsters/ogre/attack/thud.png", [                      # where the gust lands on someone
+    "w...W...w",
+    ".w..w..w.",
+    "...wWw...",
+    "WwwWWWwwW",
+    "...wWw...",
+    ".w..w..w.",
+    "w...W...w",
+], {"w": "#c9a66b", "W": "#f4ecd8"})
+icon("monsters/ogre/attack/quake.png", [                     # the ground cracking under the marked spot, rocks and dust thrown up
+    "..........s.......S.......s..........",
+    "...dd........S..........s......dd....",
+    "..dDDd..s...........S.......s.dDDd...",
+    ".dDDDDd.....gggggggkggggggg..dDDDDd..",
+    "..dDDd...gggggkgggkggkggggggg.dDDd...",
+    "......gggggggggkgggkgkgggkgggggg.....",
+    "..dd.ggkkggggggkkgkkkggkkgggkkggg.dd.",
+    ".dDDdggggkkkgggggkkWkkgggggkkkggggdDDd",
+    "..dd.gggggggkkkkkkkkkkkkkkkgggggg.dd.",
+    "......ggggkkgggggkgkgkgggkkgggggg....",
+    "........ggggggkggkggkggkggggggg......",
+    "..........gggggggggkggggggggg........",
+], {"d": "#c9a66b", "D": "#f4ecd8", "g": "#9a6639", "k": "#3b2614", "W": "#5a3d22", "s": "#7d8590", "S": "#9aa3ad"})
+
+# ---- The dragon: 80x64, facing left, like dragon() above (the tail is its own
+# picture and keeps swaying). Its single blow: it drops its head and bites
+# with its jaws wide, and claw marks open on whoever it reaches; its area
+# attack: head down, jaws full of fire, it breathes a ball of fire that
+# bursts into a blaze across the marked spot.
+def dragon_pose(name, pose):
+    p = Pix(80, 64)
+    R, Rd, Rl = "#c23b3b", "#8f2626", "#e06a5a"
+    Wg, Wm, Cr = "#7a1f2b", "#b5483f", "#f2c98a"
+    hx, hy, lift = {"bite": (-2, 5, 1), "breath": (-1, 3, 3)}[pose]
+    h = lambda pts: [(x + hx, y + hy) for x, y in pts]
+    up = lambda pts, tips: [(x, y - lift) if i in tips else (x, y) for i, (x, y) in enumerate(pts)]
+    p.poly(up([(44, 34), (52, 6), (62, 14), (70, 4), (76, 26), (62, 38)], (1, 2, 3)), Wg)  # far wing
+    p.ell(44, 45, 20, 13, Rd); p.ell(43, 44, 19, 12, R); p.ell(40, 51, 14, 5, Cr)   # body, belly
+    p.rect(30, 52, 8, 9, Rd); p.rect(50, 52, 8, 9, Rd)                              # legs
+    p.rect(27, 60, 12, 3, Rd); p.rect(47, 60, 12, 3, Rd)
+    for x in (27, 31, 35, 47, 51, 55): p.px(x, 62, BONE)
+    p.poly(h([(22, 20), (34, 18)]) + [(42, 38), (28, 44)], R)                       # neck
+    p.poly(h([(22, 22), (26, 21)]) + [(32, 42), (28, 44)], Cr)
+    for i in range(5): p.rect(22 + i + round(hx * (4 - i) / 4), 24 + i * 4 + round(hy * (4 - i) / 4), 4, 1, "#d9a868")
+    for x, y in ((34 + hx, 14 + hy), (38, 22), (42, 28), (48, 28), (54, 30), (60, 34)):  # back spikes
+        p.poly([(x, y + 5), (x + 2, y), (x + 5, y + 5)], BONE)
+    p.poly(up([(40, 36), (46, 8), (58, 16), (66, 2), (72, 22), (58, 36)], (1, 2, 3)), Wm)  # near wing
+    p.poly(up([(46, 8), (48, 10), (44, 34), (40, 36)], (0, 1)), Rd); p.poly(up([(66, 2), (68, 4), (60, 34), (58, 36)], (0, 1)), Rd)
+    p.ell(19 + hx, 17 + hy, 11, 7, Rd); p.ell(18 + hx, 16 + hy, 10, 6, R)           # head
+    fire = pose == "breath"
+    p.poly(h([(4, 17), (21, 17), (22, 24), (5, 30)]), "#ff9d3c" if fire else "#3a1f1f")  # mouth: dark, or full of fire
+    if fire:
+        p.poly(h([(6, 19), (19, 19), (20, 23), (8, 27)]), "#ffe27a"); p.poly(h([(9, 21), (16, 21), (17, 22), (11, 24)]), "#fff3b0")
+    else:
+        p.poly(h([(7, 28), (19, 22), (21, 24), (9, 29)]), "#c94040")               # tongue
+    p.poly(h([(2, 30), (19, 23), (22, 23), (22, 27), (6, 33)]), Rd)                 # lower jaw, dropped
+    for x, y in ((5, 29), (9, 28), (13, 26), (17, 25)): p.px(x + hx, y + hy, WHITE)
+    p.rect(3 + hx, 10 + hy, 14, 7, R); p.rect(3 + hx, 10 + hy, 14, 1, Rl); p.rect(2 + hx, 12 + hy, 2, 4, R)  # snout
+    for x in (6, 9, 12, 15): p.px(x + hx, 17 + hy, WHITE)
+    p.rect(4 + hx, 17 + hy, 1, 2, WHITE); p.rect(13 + hx, 17 + hy, 1, 2, WHITE)      # fangs
+    p.px(4 + hx, 12 + hy, K); p.rect(17 + hx, 13 + hy, 4, 3, "#ffe27a"); p.rect(18 + hx, 13 + hy, 1, 3, K)
+    p.rect(16 + hx, 12 + hy, 6, 1, Rd)                                              # brow, lowered
+    if fire:
+        p.px(1 + hx, 13 + hy, "#ff9d3c"); p.px(0 + hx, 14 + hy, "#ffe27a")          # smoke and sparks at the nostril
+    p.poly(h([(23, 12), (31, 3), (27, 14)]), BONE); p.poly(h([(19, 10), (24, 2), (22, 11)]), BONE)  # horns
+    p.save(name)
+
+save("monsters/dragon/attack/bite.png", grab(dragon_pose, "bite"))
+save("monsters/dragon/attack/breath.png", grab(dragon_pose, "breath"))
+icon("monsters/dragon/attack/claw.png", [                    # three claw marks raking whoever it reaches
+    "r...r...r..",
+    "Wr..Wr..Wr.",
+    ".Wr..Wr..Wr",
+    "..Wr..Wr..W",
+    "..WW..WW..W",
+    "...Wr..Wr..",
+    "...Wr..Wr..",
+    "....r...r..",
+], {"r": "#e2483f", "W": "#ffffff"})
+icon("monsters/dragon/attack/fireball/r.png", [               # flying right, trailing flame
+    "..r.oo...",
+    ".r.ooyyo.",
+    "roooyWWyo",
+    ".rrooyWyo",
+    "..r.oyyo.",
+    "......o..",
+], {"r": "#e2552f", "o": "#ff9d3c", "y": "#ffe27a", "W": "#fff3b0"})
+icon("monsters/dragon/attack/fireball/l.png", [r[::-1] for r in [
+    "..r.oo...",
+    ".r.ooyyo.",
+    "roooyWWyo",
+    ".rrooyWyo",
+    "..r.oyyo.",
+    "......o..",
+]], {"r": "#e2552f", "o": "#ff9d3c", "y": "#ffe27a", "W": "#fff3b0"})
+BLAZE = {"r": "#e2552f", "o": "#ff9d3c", "y": "#ffe27a", "W": "#fff3b0", "c": "#2a2220", "e": "#c2401f"}
+for i, tips in ((1, [
+    "......r.........r..........r......",
+    ".....ro....r...roo....r...ro......",
+    "..r..oy...ro...oyo...ro...yo...r..",
+    ".ro.ryyo..oyr.royyo..oyr.oyyr.ro..",
+]), (2, [
+    "...r.........r.........r.......r..",
+    "..ro....r...roo...r....or.....ro..",
+    "..yo...ro...oyo..roo...yo..r..yo..",
+    ".oyyr.royo.royyo.oyyr.ryyo.ro.yyor",
+])):
+    icon(f"monsters/dragon/attack/blaze-{i}.png", tips + [
+        "royyWyyoroyyyWyyoroyyWWyyorooyWyyo",
+        "eoyWWWyyoyyWWWyyyoyWWWWyyoyyWWWyoe",
+        "ceooyyyooyyyyyyyoooyyyyoooyyyyooec",
+        ".cceeoooeeoooooeeeeoooeeeeoooeecc.",
+        "...cccceeeeeeeeeeeeeeeeeeeecccc...",
+    ], BLAZE)
+
+# ---- foe/: the marker where an area attack will land, on the floor: a red
+# ring AREA_RADIUS (70px) across each way and half as deep, see-through
+# inside so whoever stands in it shows; and the flash on whoever it reaches.
+def marker():
+    w, h = 37, 19                                     # 35x17 inside the dark outline: 140x68 on screen
+    cx, cy, rx, ry = 18, 9, 17.5, 8.5
+    g = blank(w, h)
+    inside = lambda x, y, a, b: ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 <= 1.0
+    for y in range(h):
+        for x in range(w):
+            if inside(x, y, rx, ry):
+                ring = not inside(x, y, rx - 1.6, ry - 1.4)
+                inner = not inside(x, y, rx - 4, ry - 2.6) and inside(x, y, rx - 5, ry - 3.4) is False and inside(x, y, rx - 3, ry - 2)
+                g[y][x] = "#ff5d5d" if ring else ("#ff5d5daa" if inner else "#ff5d5d4d")
+    edge = [r[:] for r in g]                          # the dark outline outside it, so it reads on wood
+    for y in range(h):
+        for x in range(w):
+            if g[y][x] is None and near(g, y, x): edge[y][x] = OUTLINE
+    g = edge
+    rim = [r[:] for r in g]
+    for y in range(h):
+        for x in range(w):
+            if g[y][x] in ("#ff5d5daa", "#ff5d5d4d") and any(0 <= y+j < h and 0 <= x+i < w and g[y+j][x+i] == "#ff5d5d" for i, j in ((1,0),(-1,0),(0,1),(0,-1))):
+                rim[y][x] = "#141a2680"
+    save("foe/marker.png", rim)
+marker()
+icon("foe/hit.png", [                                         # whoever an area attack reaches
+    "....W....",
+    ".W..r..W.",
+    "..rrWrr..",
+    "..rWWWr..",
+    "WrWWWWWrW",
+    "..rWWWr..",
+    "..rrWrr..",
+    ".W..r..W.",
+    "....W....",
+], {"r": "#ff5d5d", "W": "#ffffff"})
+
+# ---- status/: over a knocked-out head, stars circling (two pictures of the
+# three stars a sixth of a turn apart, crossfaded so they seem to turn), and
+# what rises off whoever is healed: a green plus and a sparkle.
+def dizzy(i, turn):
+    w, h = 23, 9
+    g = blank(w, h)
+    for k in range(3):
+        a = turn + k * 2 * math.pi / 3
+        x, y = round(11 + 9.5 * math.cos(a)), round(4 + 3 * math.sin(a))
+        far = math.sin(a) < -0.3                                  # behind the head: dimmer
+        for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+            g[y + dy][x + dx] = "#d9a53a" if far else "#ffd166"
+        g[y][x] = "#ffe9a8" if far else "#ffffff"
+    big = [[None] * (w + 2) for _ in range(h + 2)]
+    for y in range(h):
+        for x in range(w): big[y + 1][x + 1] = g[y][x]
+    shout(f"status/dizzy-{i}.png", big)
+dizzy(1, 0.25)
+dizzy(2, 0.25 + math.pi / 3)
+icon("status/heal.png", [
+    "..ggg..",
+    "..gLg..",
+    "gggLggg",
+    "gLLWLLg",
+    "gggLggg",
+    "..gLg..",
+    "..ggg..",
+], {"g": "#3fbf6f", "L": "#9af0b0", "W": "#ffffff"})
+icon("status/sparkle.png", ["..L..", "..W..", "LWWWL", "..W..", "..L.."], {"L": "#9af0cf", "W": "#ffffff"})
+
+# ---- Knocked out: each class lying on its back, its head to the left ("l")
+# or right ("r"), in every colourway, with its weapon and every hat lying with
+# it: the standing picture's grid turned a quarter turn, then let down so its
+# back is on the canvas's bottom row (row 16 of 18, the outline under it).
+def lie(g, head):
+    # a quarter turn of a square grid: the head (its top rows) to the left or right
+    n = len(g)
+    t = [[g[n - 1 - x][y] for x in range(n)] for y in range(n)] if head == "r" else [[g[x][n - 1 - y] for x in range(n)] for y in range(n)]
+    return t
+
+def lay(g, drop):
+    # every row moved down `drop` rows
+    n = len(g)
+    return [[None] * len(g[0]) for _ in range(drop)] + g[:n - drop]
+
+def lying(rows, head):
+    # an everyday 16x16 grid lying down, and how far it was let down
+    t = lie(canvas(rows, 18, 1), head)
+    low = max(y for y, row in enumerate(t) if any(row))
+    return t, 16 - low
+
+DOWN = ("l", "r")
+for cls, (base, rows) in SPR.items():
+    for head in DOWN:
+        body, drop = lying(rows, head)
+        body = lay(body, drop)
+        for name, swaps in looks(cls):
+            pal = {**COMMON, **base, **swaps, "#": OUTLINE}
+            write(f"{name}/down/{head}.png", png(outlined(body), pal))
+        for weapon, (pal, poses) in WEAPONS[cls].items():
+            if "stand" not in poses: continue                    # the healer's potion: only in its wind-up
+            held = lay(lie(canvas(sparse(poses["stand"], 16), 18, 1), head), drop)
+            write(f"weapons/{cls}/{weapon}/down/{head}.png", png(layer(held, body, pal), {}))
+        for hat, by_class in HATS.items():
+            top = [r.ljust(16, ".") for r in by_class[cls]] + ["." * 16] * (16 - len(by_class[cls]))
+            worn = lay(lie(canvas(top, 18, 1), head), drop)
+            save(f"hats/{hat}/{cls}/down/{head}.png", overlay(worn, body))
+# ---- Weapon effects (effects/): what weapons' elements and the healer's vials
+# do in a fight, shown on the monster and its name plate (mods/idle-rpg/effects.js
+# names every picture here: EFFECT_ICONS, EFFECT_MARKS, EFFECT_OVERLAYS).
+#   effects/icons/   7x7 icons, outlined like the sign's and shown at the same
+#                    size: the statuses on the monster's plate (burn, chill,
+#                    venom, with its stack count set beside it in the pixel
+#                    font, and the hex aura) and the party's auras (haste, might)
+#   effects/marks/   weak, resist: an arrow up or down, glyph-high (5x5 inside the
+#                    outline, so 7 tall like a glyph), set after a damage number
+#                    that hit the monster's weakness or resistance
+#   effects/<status>/ small pictures laid over the monster while a status is
+#                    on it, a few at a time around its bulk, so they suit every
+#                    monster: burn/flame-1, -2 (flames licking up, to flicker
+#                    between), chill/crystal and glint (frost crystals and a
+#                    sparkle), chain/arc/{l,r} (the second strike's arc), and
+#                    venom/drip-1, -2 (green drips, short and long)
+# Colours are the attacks' own: fire, frost and venom as their spells, the vials'
+# as their potions.
+EMBER = {"r": "#e2552f", "o": "#ff9d3c", "y": "#ffe27a", "W": "#fff3b0"}
+ICE = {"b": "#4f86c6", "i": "#9fd0f5", "I": "#dff3ff", "W": "#ffffff"}
+VENOM = {"x": "#2f7a22", "v": "#6fcf3f", "V": "#a8eb6a", "L": "#e4ffc4"}
+EFFECT_ICONS = {
+    "burn": ([                                                  # a flame
+        "...r...",
+        "..ro.r.",
+        ".rooro.",
+        ".royor.",
+        "royyyor",
+        "royWyor",
+        ".ryWyr.",
+    ], EMBER),
+    "chill": ([                                                 # a snowflake
+        "...i...",
+        ".i.I.i.",
+        "..iWi..",
+        "iIWWWIi",
+        "..iWi..",
+        ".i.I.i.",
+        "...i...",
+    ], ICE),
+    "venom": ([                                                 # a drop of venom
+        "...v...",
+        "..vVv..",
+        "..vVv..",
+        ".vVLVv.",
+        ".vVVVv.",
+        ".xvVvx.",
+        "..xxx..",
+    ], VENOM),
+    "hex": ([                                                   # an evil eye, in the Hex Vial's purple
+        ".......",
+        "..ppp..",
+        ".pPPPp.",
+        "pPPkPPp",
+        ".pPPPp.",
+        "..ppp..",
+        ".......",
+    ], {"p": "#7a3fb8", "P": "#d8b4ff", "k": "#2a1640"}),
+    "haste": ([                                                 # fast forward, in the Haste Vial's yellow
+        "g..g...",
+        "Gg.Gg..",
+        ".Gg.Gg.",
+        "..Gg.Gg",
+        ".Gg.Gg.",
+        "Gg.Gg..",
+        "g..g...",
+    ], {"g": "#e8b030", "G": "#fff0b0"}),
+    "might": ([                                                 # a fist, in the Might Vial's red
+        ".r.r.r.",
+        "rRrRrRr",
+        "rRrRrRr",
+        "rrrrrrr",
+        "rDDDDrr",
+        "rrrrrr.",
+        ".rrrr..",
+    ], {"r": "#d63a3a", "R": "#ff9a8a", "D": "#8f2626"}),
+}
+for name, (rows, pal) in EFFECT_ICONS.items():
+    assert len(rows) == 7 and all(len(r) == 7 for r in rows), name
+    icon(f"effects/icons/{name}.png", rows, pal)
+for name, rows, pal in (
+    ("weak", ["..w..", ".wWw.", "wwwww", ".....", "....."], {"w": "#ff8a3c", "W": "#ffd0a0"}),   # it hurts more: up, warm
+    ("resist", [".....", ".....", "wwwww", ".wWw.", "..w.."], {"w": "#8a95a6", "W": "#c3cad2"}),  # it hurts less: down, steel
+):
+    assert len(rows) == 5 and all(len(r) == 5 for r in rows), name
+    icon(f"effects/marks/{name}.png", rows, pal)
+# On the monster. Each picture is small enough to sit on the slime's dome (its
+# bulk is about 9 art px across) and is laid out a few times over a bigger one.
+for name, rows in (
+    ("flame-1", [                                               # flames licking up, two shapes to flicker between
+        "..r...",
+        "..or.r",
+        ".royor",
+        ".ryyo.",
+        "royWyr",
+        "royWor",
+        ".ryyr.",
+    ]),
+    ("flame-2", [
+        "....r.",
+        "r..ro.",
+        "or.ror",
+        "oyroyr",
+        "ryWyor",
+        "ryWWyr",
+        ".ryyr.",
+    ]),
+):
+    assert len(rows) == 7 and all(len(r) == 6 for r in rows), name
+    icon(f"effects/burn/{name}.png", rows, EMBER)
+icon("effects/chill/crystal.png", [                             # frost crystals growing on it
+    "...I.....",
+    "..IiI..W.",
+    "..bib.Ii.",
+    ".b.ibIib.",
+    "...bibb..",
+    ".Ibbibi..",
+    "Iiiiiiib.",
+], ICE)
+icon("effects/chill/glint.png", [".W.", "WIW", ".W."], ICE)     # a sparkle of frost
+ARC = [                                                         # the second strike's arc, out to the right ("r") or left
+    "........yW..",
+    "...yW..yW.Wy",
+    "..yWyWyW....",
+    ".yW..yW.....",
+    "yW..........",
+]
+icon("effects/chain/arc/r.png", ARC, {"y": "#ffe27a", "W": "#ffffff"})
+icon("effects/chain/arc/l.png", [r[::-1] for r in ARC], {"y": "#ffe27a", "W": "#ffffff"})
+for name, rows in (
+    ("drip-1", [                                                # venom welling up on it into a bead,
+        "vvVvv",
+        ".vvv.",
+        "..v..",
+        ".vVv.",
+        ".xvx.",
+    ]),
+    ("drip-2", [                                                # then the bead falling from it
+        "vvVvv",
+        ".vvv.",
+        "..x..",
+        ".....",
+        ".....",
+        ".vVv.",
+        ".vLv.",
+        ".xvx.",
+    ]),
+):
+    icon(f"effects/venom/{name}.png", rows, VENOM)

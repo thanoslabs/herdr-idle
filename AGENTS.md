@@ -16,7 +16,7 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 ```
 .
 ├── layouts/                  # idle-rpg.json, idle-rpg.svg (settings preview)
-├── mods/idle-rpg/            # main.js, rules.js, mod.json, art/ (PNGs in folders by entity, then animation)
+├── mods/idle-rpg/            # main.js, rules.js, party.js (the boss fighting back), effects.js (what weapons do), mod.json, art/ (PNGs in folders by entity, then animation)
 ├── themes/                   # idle-rpg.json
 ├── RECIPE.md                 # Brief another agent could rebuild it from
 ├── PLAN.md                   # Planning notes for growing it into an idle RPG
@@ -40,7 +40,7 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 - `herdr-app shot <file.png>` captures the window for visual checks.
 - Keep `RECIPE.md`, `preview.png` and `battle.gif` in step with the layout's files.
 - Art is original. Do not copy characters or artwork from existing games or products.
-- `art/` is organised by entity, then by animation, with short names inside (`classes/<class>/<look>/walk/l.png`, `monsters/dragon/roar/top.png`); the generator's header and `RECIPE.md` list the folders. A picture whose path depends on the state or an agent gets it from a builder in `rules.js` (`lookArt`, `weaponArt`, `hatArt`, `attackArt`, `monsterArt`, `glyphArt`), never from string concatenation in `main.js`; the rest are quoted paths passed to `src()` in `main.js`. A new picture goes in the generator, in the folder of what it shows.
+- `art/` is organised by entity, then by animation, with short names inside (`classes/<class>/<look>/walk/l.png`, `monsters/dragon/roar/top.png`); the generator's header and `RECIPE.md` list the folders. A picture whose path depends on the state or an agent gets it from a builder in `rules.js` (`lookArt`, `weaponArt`, `hatArt`, `attackArt`, `monsterArt`, `glyphArt`) or `effects.js` (`effectIconArt`, `markArt`, `overlayArt`), never from string concatenation in `main.js`; the rest are quoted paths passed to `src()` in `main.js`. A new picture goes in the generator, in the folder of what it shows.
 - `gpui-kit.d.ts` and `jsconfig.json` inside mod folders are written by Herdr and git-ignored.
 
 ## Conventions

@@ -69,19 +69,55 @@ jobs:
           # and every picture the rules can ask for is there: each class in each
           # colourway, each weapon's layer for its class in every picture it has
           # and its attack's pictures facing each way, each hat's overlay for each
-          # class (no hat, no overlay), every monster's pictures and every character
-          # of the pixel font, each in every picture it has; plus every picture
-          # main.js names outright
+          # class (no hat, no overlay), every monster's pictures (its attacks on the party too) and every character
+          # of the pixel font in every colour it has (and no other colour), the
+          # weapon effects' icons, marks and pictures on the boss (effects.js);
+          # plus every picture main.js names outright
           node --input-type=module <<'EOF'
-          import { existsSync, readFileSync } from "node:fs";
-          import { ATTACK_PARTS, CLASSES, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, MONSTER_ART, WEAPON_FRAMES, attackArt, catalogue, glyphArt, hatArt, lookArt, monsterArt, weaponArt } from "./mods/idle-rpg/rules.js";
+          import { existsSync, readdirSync, readFileSync } from "node:fs";
+          import { EFFECT_ICONS, EFFECT_MARKS, EFFECT_OVERLAYS, effectIconArt, markArt, overlayArt } from "./mods/idle-rpg/effects.js";
+          import { ATTACK_PARTS, CLASSES, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, MONSTER_ART, MONSTER_ATTACKS, WEAPON_FRAMES, attackArt, attackPart, catalogue, glyphArt, hatArt, lookArt, monsterArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
           const dir = "mods/idle-rpg";
           const unknown = KINDS.filter((k) => !MONSTER_ART[k]);
           if (unknown.length) {
             console.error(`Kinds with no MONSTER_ART: ${unknown.join(", ")}`);
             process.exit(1);
           }
+          // every character a number can be written with (damage, HP: shortNumber,
+          // and "!" and "+" after or before one) is in the pixel font
+          const written = new Set("!+");
+          for (let n = 0; n < 1e80; n = n * 1.37 + 1) for (const ch of shortNumber(n)) written.add(ch);
+          const unwritable = [...written].filter((ch) => !GLYPHS.includes(ch));
+          if (unwritable.length) {
+            console.error(`Characters numbers are written with that the pixel font lacks: ${unwritable.join(" ")}`);
+            process.exit(1);
+          }
+          // the font's colours are GLYPH_COLOURS, no more and no fewer, and every
+          // colour main.js sets text in is one: each quoted word among a
+          // pixelText call's arguments ("white", or either side of a ternary,
+          // d.crit ? "gold" : "white") and the values of DOT_COLOURS
+          const fonts = readdirSync(`${dir}/art/font`).sort();
+          if (fonts.join() !== [...GLYPH_COLOURS].sort().join()) {
+            console.error(`art/font has ${fonts.join(", ")}; GLYPH_COLOURS is ${GLYPH_COLOURS.join(", ")}`);
+            process.exit(1);
+          }
+          const source = readFileSync(`${dir}/main.js`, "utf8");
+          const dots = source.match(/const DOT_COLOURS = \{([^}]*)\}/)?.[1] ?? "";
+          const calls = [...source.matchAll(/pixelText\(((?:[^()]|\([^()]*\))*)\)/g)].map((m) => m[1]).filter((args) => !args.startsWith("text, colour"));
+          if (calls.length < 3) {
+            console.error(`Expected main.js to set pixel text in several places, found ${calls.length}`);
+            process.exit(1);
+          }
+          const colours = [...calls.flatMap((args) => [...args.matchAll(/"([a-z]+)"/g)]), ...dots.matchAll(/"([a-z]+)"/g)].map((m) => m[1]);
+          const uncoloured = colours.filter((c) => !GLYPH_COLOURS.includes(c));
+          if (!dots || uncoloured.length) {
+            console.error(`Text colours the pixel font lacks: ${uncoloured.join(", ") || "(no DOT_COLOURS in main.js)"}`);
+            process.exit(1);
+          }
           const paths = [
+            ...EFFECT_ICONS.map(effectIconArt),
+            ...EFFECT_MARKS.map(markArt),
+            ...Object.entries(EFFECT_OVERLAYS).flatMap(([status, parts]) => parts.map((part) => overlayArt(status, part))),
             ...CLASSES.flatMap((c) => [
               ...catalogue(c, "armour").flatMap((it) => FRAMES.map((f) => lookArt(c, it.id, f))),
               // a weapon's own pictures (never its class's default standing in for it), and
@@ -93,6 +129,9 @@ jobs:
               ...catalogue(c, "hat").flatMap((it) => (hatArt(c, it.id) ? FRAMES.map((f) => hatArt(c, it.id, f)) : [])),
             ]),
             ...KINDS.flatMap((k) => MONSTER_ART[k].map((part) => monsterArt(k, part))),
+            // every piece of each kind's two attacks on the party (monsters fighting back), to either side
+            ...KINDS.flatMap((k) => ["single", "area"].flatMap((type) => Object.entries(MONSTER_ATTACKS[k]?.[type] ?? {}).filter(([, part]) => part).flatMap(([piece]) =>
+              ["l", "r"].map((side) => (attackPart(k, type, piece, side) === null ? "attack piece without a part" : monsterArt(k, attackPart(k, type, piece, side))))))),
             ...GLYPH_COLOURS.flatMap((c) => [...GLYPHS].map((ch) => glyphArt(c, ch))),
             // the quoted "<folder>/<name>.png" paths in main.js (src("scene/wall.png") and so on)
             ...[...readFileSync(`${dir}/main.js`, "utf8").matchAll(/"([a-z0-9-]+(?:\/[a-z0-9-]+)+\.png)"/g)].map((m) => m[1]),
@@ -127,6 +166,7 @@ jobs:
           test -f "$home/layouts/idle-rpg.json"
           test -f "$home/mods/idle-rpg/main.js"
           test -f "$home/mods/idle-rpg/rules.js"
+          test -f "$home/mods/idle-rpg/effects.js"
           test -f "$home/mods/idle-rpg/art/scene/wall.png"
           diff -r mods/idle-rpg/art "$home/mods/idle-rpg/art"
 
