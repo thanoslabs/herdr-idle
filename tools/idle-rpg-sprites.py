@@ -1313,6 +1313,74 @@ for colour, hexa in GLYPH_COLOURS.items():
     for ch, rows in FONT.items():
         glyph(f"font/{colour}/{ch}.png", rows, hexa)
 
+# ---- The lettering: a second face, for words on the HUD (the sign, the stage
+# section, the notes under it). The same 5 rows as the pixel font, so words and
+# numbers share a line, and its digits and signs are drawn the same, but its
+# letters take the width they need: the font's 3-wide M (which shortNumber's
+# "1.2M" keeps) reads as an H in a word, so here M and W are 5 wide and N 4,
+# the rest 3 (and the point and the signs 1). Capitals only: main.js draws
+# lower case as capitals. A space is no picture, just 2 art px of advance
+# (letterWidth in rules.js). Outlined all round like the font. Its characters
+# and colours must match LETTERS and LETTER_COLOURS in mods/idle-rpg/rules.js,
+# which names the files (letterArt) and knows their widths (letterWidth):
+# lettering/<colour>/<name>, the name a lower-case letter, a digit or a sign's name.
+LETTERING = {
+    "a": [".#.", "#.#", "###", "#.#", "#.#"],
+    "b": ["##.", "#.#", "##.", "#.#", "##."],
+    "c": [".##", "#..", "#..", "#..", ".##"],
+    "d": ["##.", "#.#", "#.#", "#.#", "##."],
+    "e": ["###", "#..", "##.", "#..", "###"],
+    "f": ["###", "#..", "##.", "#..", "#.."],
+    "g": [".##", "#..", "#.#", "#.#", ".##"],
+    "h": ["#.#", "#.#", "###", "#.#", "#.#"],
+    "i": ["###", ".#.", ".#.", ".#.", "###"],
+    "j": ["..#", "..#", "..#", "#.#", ".#."],
+    "k": ["#.#", "#.#", "##.", "#.#", "#.#"],
+    "l": ["#..", "#..", "#..", "#..", "###"],
+    "m": ["#...#", "##.##", "#.#.#", "#...#", "#...#"],
+    "n": ["#..#", "##.#", "#.##", "#..#", "#..#"],
+    "o": [".#.", "#.#", "#.#", "#.#", ".#."],
+    "p": ["##.", "#.#", "##.", "#..", "#.."],
+    "q": [".#.", "#.#", "#.#", "##.", ".##"],
+    "r": ["##.", "#.#", "##.", "#.#", "#.#"],
+    "s": [".##", "#..", ".#.", "..#", "##."],
+    "t": ["###", ".#.", ".#.", ".#.", ".#."],
+    "u": ["#.#", "#.#", "#.#", "#.#", "###"],
+    "v": ["#.#", "#.#", "#.#", "#.#", ".#."],
+    "w": ["#...#", "#...#", "#.#.#", "#.#.#", ".#.#."],
+    "x": ["#.#", "#.#", ".#.", "#.#", "#.#"],
+    "y": ["#.#", "#.#", ".#.", ".#.", ".#."],
+    "z": ["###", "..#", ".#.", "#..", "###"],
+    **{d: FONT[d] for d in "0123456789"},                    # the font's digits, unchanged
+    "plus": FONT["plus"],
+    "bang": ["#", "#", "#", ".", "#"],
+    "point": FONT["point"],
+    "colon": [".", "#", ".", "#", "."],
+    "quote": ["#", "#", ".", ".", "."],                       # an apostrophe: "Time's up!"
+    "slash": ["..#", "..#", ".#.", "#..", "#.."],
+    "dash": ["...", "...", "###", "...", "..."],
+}
+LETTER_COLOURS = {"white": "#ffffff", "gold": "#ffd166",      # words and numbers; the stage, the title
+                  "grey": "#8ea3bb", "red": "#ff7b7b",        # the time standing still, nobody in; a failed attempt
+                  "green": "#9ff0bd"}                          # the stage being farmed
+for colour, hexa in LETTER_COLOURS.items():
+    for ch, rows in LETTERING.items():
+        assert len(rows) == 5 and len({len(r) for r in rows}) == 1, ch
+        glyph(f"lettering/{colour}/{ch}.png", rows, hexa)
+
+# ---- The HUD's frames (frame/): the sign top left, the stage section top
+# centre, the strip top right and the stage notes are each a dark slate panel
+# with a lighter bevel, shown at 2 screen px an art px. main.js builds a frame
+# of any size from four bands of colour (FRAME in main.js: a px of outline and
+# a px of bevel, the top and left light, the bottom and right dark) round a
+# fill, with these four 3x3 corners over them, each with its outer pixel cut
+# away so the frame's corners step in like the rest of the art. The colours
+# must match FRAME_COLOURS in main.js.
+FRAME = {"o": OUTLINE, "l": "#56657e", "d": "#1d2534", "f": "#2b3649"}
+for name, rows in (("tl", [".oo", "oll", "olf"]), ("tr", ["oo.", "ldo", "fdo"]),
+                   ("bl", ["olf", "old", ".oo"]), ("br", ["fdo", "ddo", "oo."])):
+    save(f"frame/{name}.png", chars(rows, FRAME))
+
 # ---- The settings menu: a gear (icons/), the right-most icon of the top-right corner ----
 icon("icons/gear.png", [
     "..s..s..",
