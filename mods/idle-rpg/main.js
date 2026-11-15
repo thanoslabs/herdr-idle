@@ -23,16 +23,25 @@
 // after a kill" setting, moves on to the next); time running out brings the
 // same boss back at full HP. Arrows on the plate pick any stage reached, to
 // farm. Turning battle mode off sends everyone back to their spots.
+// The boss fights back (party.js): every character attacking it has an HP bar,
+// and it strikes one of them, or a marked spot on the floor that hurts everyone
+// in it. At 0 HP a character is knocked out (lying down, stars circling, a bar
+// counting down its rest; it is still working) and gets up at full HP after
+// the rest; a knocked-out party is wiped, which fails the attempt like the
+// timer. A healer with the Heal Vial heals whoever is low instead of attacking.
 // Progress (rules.js): every blow that lands earns experience for the
 // attacker's class and for you; a kill earns gold. Each class level makes the
 // class hit harder and earns it a skill point, spent in the skills panel on
 // Power (damage), Haste (attack speed) or Crit (double damage now and then);
-// gold buys the class Attack training there. Levels show on the cards and the
+// gold buys the class Attack and Health training there. Levels show on the cards and the
 // class choices, gold, kills and points to spend on the sign.
 // Gold buys colourways, weapons and hats for a class in the shop (the coin on
 // the sign); everyone with that class on wears what it has equipped. A hat is
 // bought once for every class, and each class picks its own. A weapon changes
-// how the class and its attacks look, not (yet) what they do.
+// how the class and its attacks look and how it fights (effects.js): its pace
+// and weight, an element the boss may be weak to or resist with a status it
+// leaves (burn, chill, chain, venom), or for the healer's vials an aura over
+// the party (haste, might, hex).
 // In the top-right corner, how many agents are in each status (an icon with a
 // count on its corner, hidden at none), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
@@ -54,9 +63,8 @@ import {
   TRAINING,
   YOU,
   attackArt,
-  attackGap,
+  attackPart,
   attackTicksOf,
-  blow,
   bossOf,
   buy,
   canBuy,
@@ -70,12 +78,14 @@ import {
   equip,
   equipped,
   failStage,
-  firstAttack,
   glyphArt,
   glyphWidth,
   hatArt,
+  healOf,
+  healthBonus,
   loadState,
   lookArt,
+  maxHpOf,
   monsterArt,
   owns,
   playerLevel,
@@ -89,6 +99,7 @@ import {
   selectStage,
   shortNumber,
   slay,
+  stageDamage,
   stageTime,
   train,
   trainingBonus,
@@ -96,6 +107,8 @@ import {
   trainingPrice,
   weaponArt,
 } from "./rules.js";
+import { KO_TICKS, down, healParty, healTarget, heals, monsterTick, newParty, resetParty, restLeft, rise, standing, syncParty } from "./party.js";
+import { AURAS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
 
 const ART = "mods/idle-rpg/art";
 // The path image() takes for a picture in art/, given its path in there with
@@ -106,7 +119,7 @@ const ART = "mods/idle-rpg/art";
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
 //   seen, battle, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
-//   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack } },
+//   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack, health } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
 //   hats: [<id>], settings: { damageNumbers, advance } }
 //   (hats are owned by every class; the boss is not saved, see loadState)
@@ -156,6 +169,13 @@ const FIRE_LIGHT_W = 320;
 const CARD_W = 232;
 const SHOP_NAV_W = 78; // the kinds of item down the shop's left side
 const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
+// The shop is built from rows of fixed height like the skills panel (PANEL):
+// a 1px border and 6px of padding round 16 (title), then beside the kinds of
+// item down the left, 24 (class tabs) + 78 (the items) + 26 (two lines on the
+// item picked: what a weapon does), 3px apart: 167px, so under the sign (top
+// 54) it ends at 221 in the lowest scene (230px). The kinds down the left are
+// 22 each, with a 13px line under them, shorter than that.
+const SHOP_ROW = { nav: 22, about: 26, tab: 80 }; // tab: the class picked, its sprite and name ("Warrior" is 33px at 9px)
 // The skills and training panel is built from rows of fixed height, its text
 // on a 13px line, so its height is known: a 1px border and 6px of padding
 // round 16 (title) + 24 (class tabs) + 15 (points) + 15 per skill and per kind
@@ -183,9 +203,47 @@ const RESPAWN_MS = 3000; // how long a fallen boss lies there before the next (i
 const ADVANCE_MS = 5000;
 const TIMES_UP_FRESH = 1000; // the "Time's up!" note over the plate shows this long,
 const TIMES_UP_MS = 2600; // then fades out until this long after the attempt ran out
+// Monsters fighting back (party.js runs it). Where what each kind's attack
+// sends flying sets off (its mouth or club, px from its picture's top-left, in
+// its pose for a target on its left: mirrored for one on its right when the
+// pose has sides, as the slime's spit and the ogre's swing do; the dragon's
+// pictures face left only, so its fireball always leaves its mouth there), and
+// how far it leans toward its target.
+const SHOT_FROM = {
+  slime: { single: { x: 36, y: 72 }, area: { x: 64, y: 80 } },
+  ogre: { single: { x: 20, y: 160 } },
+  dragon: { area: { x: 36, y: 104 } },
+};
+const LUNGE = 10;
+const HP_W = 40; // a character's HP bar, over its head
+const HIT_FADE = 400; // a hit flash or an attack's impact fades out this long
+// The pictures a monster's attack shows on screen (px): what flies and what
+// lands, by its name in MONSTER_ATTACKS (rules.js).
+const ATTACK_SIZE = {
+  "attack/glob": [28, 28], "attack/splat": [52, 32], "attack/puddle": [140, 48],
+  "attack/arc": [36, 44], "attack/thud": [44, 36], "attack/quake": [160, 56],
+  "attack/fireball": [44, 32], "attack/claw": [52, 40], "attack/blaze-1": [144, 44], "attack/blaze-2": [144, 44],
+};
+const sizeOf = (part) => ATTACK_SIZE[part.replace(/\/[lr]$/, "")] ?? [40, 40];
 const MONSTER_Y = 108; // where its feet are on the floor
 const BAR_W = 120;
 const PLATE_H = 50; // the boss's name plate: the stage line, the name and HP, the health bar, the time bar
+const PLATE_ICON_H = 18; // and under them, while the boss has a status or the party's hex on it, a row of icons (2 screen px an art px)
+// Weapon effects (effects.js). Damage over time is gathered tick by tick and
+// lands once a second (as the attempt's time shown turns, when the plate is
+// drawn anyway; every DOT_TICKS ticks while it stands still), one sum per
+// class and status (plus the render on the next tick that starts its number's
+// fade, as for any blow); burn in ember, venom in green.
+const DOT_TICKS = 4;
+const DOT_COLOURS = { burn: "ember", venom: "venom" };
+const DOT_SPOT = { burn: -1, venom: 1 }; // its number shows left or right of the boss's middle
+// Where a status's pictures sit on the boss, px from the middle of its bulk
+// (its core), the first `n` of them by kind: one picture small enough for the
+// slime, more of them over a bigger boss.
+const EFFECT_SPOTS = [[-1, -0.5], [0.85, -1], [0, 0.5], [-0.5, -1.4]];
+const EFFECT_COUNT = { slime: 2, ogre: 3, dragon: 4 };
+const CHAIN_W = 56; // the chain's second arc, out past the first blow (14x7 art px)
+const CHAIN_H = 28;
 const MELEE = 90; // how close to the monster's bulk a warrior must be to reach it
 const SWORD = 44; // how far outside the bulk a warrior stands, so the swing lands on it
 const RANGE = 360; // how far the ranged classes stand from the monster: five characters
@@ -331,7 +389,16 @@ export default class RaidParty extends View {
     // of the attack clock, so only while someone is attacking a live boss.
     this.monster = bossOf(this.progress.stage, 1);
     this.left = stageTime(this.monster.stage);
-    this.timesUp = null; // { at, id, fading? } after an attempt ran out of time, while its note shows
+    this.timesUp = null; // { at, id, text, fading? } after an attempt failed (time, or a wipe), while its note shows
+    // Who is fighting the boss and how they are (HP, knocked out, its attacks
+    // under way), in memory only: see party.js. Kept in step on every tick of
+    // the attack clock and by the watch.
+    this.party = newParty();
+    // The boss's statuses (burn, chill, venom: effects.js) and the damage over
+    // time they have dealt since it last landed (see tick), in memory only,
+    // like the boss: a new boss or a new attempt starts clean.
+    this.statuses = newStatuses();
+    this.dots = Object.create(null); // "<class>/<status>": { cls, status, matchup, n, owed: what of n each share is owed (see shares) }
     this.settings = saved.settings; // { <key>: on } for every one of SETTINGS
     this.cheerSeq = 0;
     // The damage numbers on screen, oldest first, while the setting is on (it
@@ -378,6 +445,8 @@ export default class RaidParty extends View {
       howl(0)(cx);
     });
     cx.timer.every(WATCH_MS, (cx) => {
+      // whoever stopped fighting while the clock was stopped leaves the party (no render)
+      this.muster();
       // nothing happens while the scene is too narrow to show the fight
       if (!this.battle || Math.max(320, this.size.width) < 640) return;
       if (this.fight()) cx.notify(); // a new monster walked in
@@ -396,6 +465,7 @@ export default class RaidParty extends View {
     this.skillsOpen = null; // the class the skills panel under the sign shows, while it is open
     this.shopOpen = null; // the class the shop under the sign shows, while it is open
     this.shopKind = SHOP_KINDS[0]; // the kind of item it shows: the one picked down its left side
+    this.shopPick = null; // the item whose lines show under the items (see shopCard)
     this.settingsOpen = false; // the settings menu under the gear is open
     this.picking = false; // the open card is showing the class choices
     this.walking = false;
@@ -434,7 +504,10 @@ export default class RaidParty extends View {
   }
 
   // Brings in the next boss if one is due, otherwise lands `blows` on the one
-  // there, in order: each { key, damage, crit, seed } (see blow in rules.js).
+  // there, in order: each { key, damage, crit, seed } and, from tick, the
+  // class that dealt it (`cls`, else `key`'s), how it met the boss's
+  // weakness (`matchup`), whether it is a chained second strike (`chain`) or
+  // damage over time (`dot`: "burn" or "venom").
   // Only damage that lands earns experience: a boss with 3 HP left takes 3
   // of a 4-point blow, and nothing of the blows after it. Returns whether
   // anything changed. Progress is saved on a kill, not on hits: saving
@@ -450,30 +523,39 @@ export default class RaidParty extends View {
     }
     // no blow lands while the scene is too narrow to show the fight
     if (Math.max(320, this.size.width) < 640) return false;
-    // who took part in a kill, for its gold: everyone attacking now (the
-    // working agents, and you when you join in), counted while the boss still
-    // stands; at least the one landing the blow
-    const attackers = Math.max(1, this.attackers().length);
+    // who took part in a kill, for its gold: everyone in the fight now (the
+    // working agents, knocked out or not, so a knockout does not also cut the
+    // gold, and you when you join in); at least the one landing the blow
+    const attackers = Math.max(1, this.fighters().length);
     let landed = false;
-    for (const { key, damage, crit, seed } of blows) {
+    for (const { key, damage, crit, seed, cls, matchup = null, chain = false, dot = null, dir = 1, shares: owed = null } of blows) {
       if (m.hp <= 0) break;
       const dealt = Math.min(damage, m.hp);
       m.hp -= dealt;
       landed = true;
       if (this.settings.damageNumbers) {
-        this.damage.push({ key, seed, n: dealt, crit, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock, monster: m.id });
+        this.damage.push({ key, seed, n: dealt, crit, matchup, chain, dot, dir, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock, monster: m.id });
         if (this.damage.length > MAX_DAMAGE) this.damage.shift();
       } else if (crit) this.crits[key] = { n: damage, seed, id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock };
-      for (const up of credit(this.progress, this.sprites[key], dealt, m)) {
-        // a class's level-up shows over whoever earned it, yours over you
-        if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
-        else this.cheer(key, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
+      // damage over time is credited to the class that put it on; what the
+      // party's auras added to a blow, to the healer class that gives them
+      // (shares in effects.js): the kill's experience is the same, shared out
+      const by = cls ?? this.sprites[key];
+      const aura = owed ? owed.haste + owed.might + owed.hex : 0;
+      for (const [c, part, over] of [[by, 1 - aura, key], ["healer", aura, this.holder("healer", this.attackers())]]) {
+        if (!(part > 0)) continue;
+        for (const up of credit(this.progress, c, dealt * part, m)) {
+          // a class's level-up shows over whoever earned it, yours over you
+          if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
+          else this.cheer(over, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
+        }
       }
     }
     if (!landed) return false;
     if (m.hp <= 0) {
       m.hp = 0;
       m.slainAt = Date.now();
+      this.clearEffects(); // its statuses fall with it
       // the stage is cleared: gold, and the next stage reached (and fought, if advancing)
       const best = this.progress.best;
       slay(this.progress, m, this.settings.advance, attackers);
@@ -486,6 +568,24 @@ export default class RaidParty extends View {
     return true;
   }
 
+  // Experience for a heal by `key` that restored `got` HP: what one of its
+  // blows (damageOf) would earn on the boss now (blowXp, so the stage's rate),
+  // times the share of the heal that was needed (`got` of healOf), to its
+  // class and to you, as credit does for a blow. Without it the healer's
+  // class, healing instead of attacking, falls far behind the others. Saved
+  // with the rest of a fight's experience (on a kill or a failed attempt).
+  healXp(key, got) {
+    const cls = this.sprites[key];
+    const m = this.monster;
+    const full = healOf(this.progress, cls);
+    if (!(m?.hp > 0) || !(full > 0)) return;
+    const size = damageOf(this.progress, cls) * Math.min(1, got / full);
+    for (const up of credit(this.progress, cls, Math.min(size, m.hp), m)) {
+      if (up === YOU) this.cheer(YOU, `Level ${playerLevel(this.progress.xp[YOU]).level}`);
+      else this.cheer(key, `${capital(up)} ${classLevel(this.progress.xp[up]).level}`);
+    }
+  }
+
   // A fresh attempt: the boss of the stage being fought, at full HP, and the
   // full time limit. Its numbers go with the last one.
   newBoss() {
@@ -493,11 +593,38 @@ export default class RaidParty extends View {
     this.left = stageTime(this.monster.stage);
     this.damage = [];
     this.timesUp = null;
+    this.clearEffects();
+    // a fresh attempt: everyone up at full HP (the knocked out too), its attacks afresh
+    resetParty(this.party, this.clock, Math.random);
   }
 
-  // The attempt failed (its time ran out; a party wipe is to come the same
-  // way): past stage 1 the fight goes back a stage, to farm it (failStage in
-  // rules.js), with a fresh attempt there; at stage 1 the same boss is back
+  // Takes every status off the boss and drops the damage over time not yet
+  // landed: a new boss, a new attempt, a kill, or the raid ended.
+  clearEffects() {
+    this.statuses = newStatuses();
+    this.dots = Object.create(null);
+  }
+
+  // The party's auras (effects.js) from who attacks now: a healer on the
+  // Haste, Might or Hex Vial gives its aura only while it stands.
+  auras() {
+    return partyAuras(this.attackers().map((key) => ({ cls: this.sprites[key], weapon: equipped(this.progress, this.sprites[key], "weapon") })));
+  }
+
+  // Who of `keys` a class's damage over time is shown for (a level-up note
+  // goes over them): the first with that class on, else you.
+  holder(cls, keys) {
+    return keys.find((key) => this.sprites[key] === cls) ?? YOU;
+  }
+
+  // What the boss's name plate's icons say, so a status coming or going is drawn.
+  iconKey() {
+    return plateIcons(this.statuses, null).map((ic) => `${ic.id}${ic.n}`).join();
+  }
+
+  // The attempt failed: its time ran out, or the party was wiped (`why`
+  // "Wiped!", see tick): past stage 1 the fight goes back a stage, to farm it
+  // (failStage in rules.js), with a fresh attempt there; at stage 1 the same boss is back
   // at full HP with the full time. A note over the plate says which ("Time's
   // up! Back to stage 8"). Nothing is lost but the attempt; the experience
   // its blows earned is saved, once.
@@ -509,6 +636,8 @@ export default class RaidParty extends View {
       this.monster.hp = this.monster.maxHp;
       this.left = stageTime(this.monster.stage);
       this.damage = [];
+      this.clearEffects();
+      resetParty(this.party, this.clock, Math.random); // a fresh attempt: everyone up at full HP (newBoss does it too)
     }
     this.timesUp = { at: Date.now(), id: (this.cheerSeq += 1), text: to !== from ? `${why} Back to stage ${to}` : why };
     this.save();
@@ -532,26 +661,59 @@ export default class RaidParty extends View {
   }
 
   // Whether you join in when the party attacks: the ranged classes from
-  // wherever you stand, a warrior only from beside the monster.
-  joins(W) {
+  // wherever you stand, a warrior only from beside the monster. `alive`: only
+  // while the monster stands (between a kill and the next boss you are still
+  // in the fight, see fighters).
+  joins(W, alive = true) {
     const kind = MONSTERS[this.monster?.kind];
-    if (!this.fighting || !kind || !(this.monster.hp > 0)) return false;
+    if (!this.fighting || !kind || (alive && !(this.monster.hp > 0))) return false;
     return this.sprites[YOU] !== "warrior" || Math.abs(this.you.x - (W / 2 + kind.core.x)) - kind.core.half <= MELEE;
   }
 
-  // Who attacks now: every working agent, and you alongside them if you can
-  // reach (see joins). Nobody while battle mode is off, the scene is too
-  // narrow to show the fight, or the monster is down.
-  attackers() {
+  // Who is in the fight: every working agent, and you alongside them if you
+  // can reach (see joins), knocked out or not, between a kill and the next
+  // boss too. Nobody while battle mode is off or the scene is too narrow.
+  fighters() {
     const W = Math.max(320, this.size.width);
-    if (!this.battle || W < 640 || !MONSTERS[this.monster?.kind] || !(this.monster.hp > 0)) return [];
+    if (!this.battle || W < 640 || !MONSTERS[this.monster?.kind]) return [];
     const keys = agents()
       .filter((a) => a.status === "working")
       .map((a) => a.address);
     // you fight alongside them, once you have arrived: `you` is already the
     // spot you are walking to
-    if (keys.length && !this.walking && this.joins(W)) keys.push(YOU);
+    if (keys.length && !this.walking && this.joins(W, false)) keys.push(YOU);
     return keys;
+  }
+
+  // Whether `key` is in the fight but knocked out (see party.js).
+  knocked(key) {
+    return key in this.party.members && !standing(this.party, key);
+  }
+
+  // Who attacks now: everyone in the fight who is not knocked out, while the
+  // monster is alive.
+  attackers() {
+    if (!(this.monster?.hp > 0)) return [];
+    return this.fighters().filter((key) => !this.knocked(key));
+  }
+
+  // Brings the party (party.js) in line with who is fighting: newcomers join
+  // at full HP, leavers go, everyone's max HP (rules.js maxHpOf) and spot are
+  // updated. Returns the keys in the fight.
+  muster() {
+    const keys = this.fighters();
+    const W = Math.max(320, this.size.width);
+    const kind = MONSTERS[this.monster?.kind];
+    const at = keys.length && kind ? this.formation(agents(), W, kind) : {};
+    const fighters = keys.map((key) => ({ key, maxHp: maxHpOf(this.progress, this.sprites[key]), ...(key === YOU ? this.you : at[key]) }));
+    syncParty(this.party, fighters, this.clock, Math.random);
+    return keys;
+  }
+
+  // The potion class `cls` throws (its weapon's), or undefined.
+  potionOf(cls) {
+    const id = equipped(this.progress, cls, "weapon");
+    return catalogue(cls, "weapon").find((it) => it.id === id)?.potion;
   }
 
   // The skill ranks of the class someone has on (undefined counts as all 0).
@@ -589,7 +751,8 @@ export default class RaidParty extends View {
   // chain of timers is ever running; one that fails stops, and the watch
   // starts it again.
   wake(cx) {
-    if (this.ticking || !this.attackers().length) return;
+    // it also runs while anyone in the fight is knocked out, so their rest runs on
+    if (this.ticking || (!this.attackers().length && !down(this.party).length)) return;
     this.ticking = true;
     const next = (cx) => {
       let more = false;
@@ -606,34 +769,134 @@ export default class RaidParty extends View {
   // One tick of the attack clock, which also runs the attempt's time down.
   // Each attacker keeps its own rhythm: someone who joins starts somewhere in
   // their first gap, and each attack starts the next one's countdown
-  // (attackGap: their class's Haste, give or take a tick or two, so nobody
+  // (nextGap of their pace: Haste, weapon and aura, give or take, so nobody
   // falls into step). An attack runs ATTACK_PHASES ticks, then one of rest;
   // its blow lands on the last phase. Whoever stops attacking (stops working,
   // walks out of reach, the monster falls) loses their rhythm. Re-renders only
   // while someone is mid-attack, the seconds shown change, or something else
   // changed. Returns whether to keep ticking: not once nobody is attacking.
+  //
+  // The boss fights back on the same clock (party.js): the party is brought in
+  // line with who is fighting, then its attacks start and land; whoever is
+  // knocked out stops attacking until their rest is over (the clock runs on
+  // while anyone rests, but the attempt's time does not without an attacker);
+  // a wipe fails the attempt like the timer. A healer with the Heal Vial heals
+  // the one lowest on HP instead of attacking when anyone is under HEAL_BELOW.
+  // It renders as an attack starts, a tick later (so what flies can glide),
+  // as it lands and for two ticks after (impacts fade), and on any hit, heal or
+  // knockout.
+  //
+  // Weapons (effects.js): each attacker's pace is its class's Haste gap times
+  // its weapon's factor (and the haste aura's), carried in fractions of a tick
+  // (the next attack is due a gap after the last was due, not after it
+  // started); its blow is struck with the weapon, the boss's weakness, its
+  // statuses and the party's auras, and may chain. The statuses tick only
+  // while someone attacks a live boss (they freeze with the attempt's time),
+  // their damage gathered and landing once every DOT_TICKS ticks.
   tick(cx) {
     const t = (this.clock += 1);
-    const keys = this.attackers();
     let changed = false;
+    const inFight = this.muster();
+    const alive = this.monster.hp > 0;
+    const e = alive ? monsterTick(this.party, t, stageDamage(this.monster.stage), Math.random) : { back: rise(this.party, t), hits: [], landed: null, started: null, wiped: false };
+    if (e.back.length || e.hits.length || e.started || e.landed) changed = true;
+    const foe = this.party.foe;
+    if (foe.pending && t === foe.pending.start + 1) changed = true; // what flies sets off
+    if (foe.last && t - foe.last.lands >= 1 && t - foe.last.lands <= 2) changed = true; // the pose ends, impacts fade
+    if (e.wiped) {
+      this.fail("Wiped!");
+      cx.notify();
+      return true;
+    }
+    const keys = this.attackers();
+    const auras = this.auras();
     for (const key of Object.keys(this.rhythm)) {
       if (keys.includes(key)) continue;
       if (this.rhythm[key].start !== null) changed = true; // cut off mid-attack: draw them at rest
       delete this.rhythm[key];
     }
+    // a healer with the Heal Vial heals instead when someone is low (see
+    // party.js), two healers on one tick picking different allies while they can
+    const aimed = [];
     for (const key of keys) {
-      const ranks = this.ranksOf(key);
-      const r = (this.rhythm[key] ??= { start: null, next: t + firstAttack(ranks, Math.random()), seed: 0 });
+      const cls = this.sprites[key];
+      const pace = cadence(attackTicksOf(this.ranksOf(key)), cls, equipped(this.progress, cls, "weapon"), auras);
+      // someone who joins starts anywhere in their first gap
+      const r = (this.rhythm[key] ??= { start: null, next: t + 1 + Math.random() * Math.max(0, pace.ticks - 1), seed: 0, factor: 1 });
       if (r.start !== null && t - r.start > ATTACK_PHASES) r.start = null; // its rest has been drawn
       if (r.start === null && t >= r.next) {
         r.start = r.seed = t;
-        r.next = t + attackGap(ranks, Math.random());
+        r.factor = pace.factor; // what its blow's damage is multiplied by, for the gap it keeps
+        r.haste = pace.haste; // the share of its blows the haste aura adds (owed to the healer)
+        r.next = Math.max(r.next, t - 1) + nextGap(pace.ticks, Math.random());
+        r.heal = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, aimed) : null;
+        if (r.heal) aimed.push(r.heal);
       }
     }
-    const blows = keys
-      .filter((key) => this.phaseOf(key) === ATTACK_PHASES)
-      .map((key) => ({ key, seed: this.rhythm[key].seed, ...blow(this.progress, this.sprites[key], Math.random()) }));
+    // the boss's statuses tick, while anyone attacks it alive (never while it is
+    // down, nor in the countdown to the next stage); their damage is gathered (see DOT_TICKS)
+    const kind = this.monster.kind;
+    if (keys.length && this.monster.hp > 0) {
+      const before = this.iconKey();
+      for (const d of tickStatuses(this.statuses, kind, auras)) {
+        const p = (this.dots[`${d.cls}/${d.status}`] ??= { cls: d.cls, status: d.status, matchup: d.matchup, n: 0, owed: { attacker: 0, haste: 0, might: 0, hex: 0 } });
+        p.n += d.damage;
+        for (const k of Object.keys(p.owed)) p.owed[k] += d.damage * d.shares[k];
+      }
+      if (this.iconKey() !== before) changed = true; // one wore off
+    }
+    // At the impact a healing throw heals whoever is lowest now (the one it
+    // was aimed at may have left, fallen or been topped up), if anyone still
+    // qualifies and the healer still holds the Heal Vial; else it is an
+    // ordinary blow (with an aura vial, an aura healer's half). A heal earns its
+    // class experience (see healXp).
+    const landing = keys.filter((key) => this.phaseOf(key) === ATTACK_PHASES);
+    const healed = [];
+    for (const key of landing.filter((k) => this.rhythm[k].heal)) {
+      const cls = this.sprites[key];
+      const to = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, healed) : null;
+      this.rhythm[key].heal = to;
+      if (!to) continue;
+      healed.push(to);
+      const got = healParty(this.party, to, healOf(this.progress, cls), t);
+      if (got > 0) {
+        changed = true;
+        this.healXp(key, got);
+      }
+    }
+    const blows = [];
+    for (const key of landing.filter((k) => !this.rhythm[k].heal)) {
+      const r = this.rhythm[key];
+      const cls = this.sprites[key];
+      const out = strike(
+        { cls, weapon: equipped(this.progress, cls, "weapon"), damage: damageOf(this.progress, cls), critChance: critChanceOf(this.progress.skills[cls]), factor: r.factor, haste: r.haste },
+        kind,
+        this.statuses,
+        auras,
+        Math.random,
+      );
+      r.chainAt = out.hits.length > 1 ? t : null; // the second strike's arc shows
+      // which way the attacker faces the boss: its chain's arc leaps on that way, and its second number at the arc's end
+      const dir = key === YOU ? (this.youDir ?? 1) : (this.at?.[key]?.dir ?? 1);
+      for (const h of out.hits) blows.push({ key, cls, seed: r.seed, damage: h.damage, crit: h.crit, matchup: out.matchup, chain: h.chain, dir, shares: out.shares });
+    }
+    // what the statuses dealt lands once a second, one sum per class and status:
+    // as the attempt's time shown turns to the next second (drawn then anyway),
+    // or every DOT_TICKS while it stands still
+    const turning = keys.length && this.monster.hp > 0 ? Math.ceil((this.left - TICK_STEP) / 1000) !== Math.ceil(this.left / 1000) : t % DOT_TICKS === 0;
+    if (turning && this.monster.hp > 0) {
+      for (const p of Object.values(this.dots)) {
+        if (p.n > 0) {
+          const owed = Object.fromEntries(Object.entries(p.owed).map(([k, n]) => [k, n / p.n]));
+          blows.push({ key: this.holder(p.cls, keys), cls: p.cls, seed: t, damage: p.n, crit: false, matchup: p.matchup, dot: p.status, shares: owed });
+        }
+      }
+      this.dots = Object.create(null);
+    }
     if (blows.length && this.fight(blows)) changed = true;
+    // a number that popped in on the last tick starts its rise and fade on this one
+    // (an attacker's rest draws it; damage over time can land with nobody mid-attack)
+    if (this.damage.some((d) => d.tick === t - 1)) changed = true;
     // the attempt's time runs while the boss is alive and someone attacks it;
     // the plate shows whole seconds, so it is drawn again as each one passes
     if (keys.length && this.monster.hp > 0) {
@@ -651,7 +914,7 @@ export default class RaidParty extends View {
       changed = true;
     }
     if (changed || keys.some((key) => this.rhythm[key].start !== null)) cx.notify();
-    return keys.length > 0;
+    return keys.length > 0 || (inFight.length > 0 && down(this.party).length > 0);
   }
 
   // A number from 0 to n - 1 for one attacker's attack that started on tick
@@ -721,7 +984,10 @@ export default class RaidParty extends View {
     const side = d > 0 ? "r" : "l";
     const phase = this.phaseOf(who.key);
     const flying = phase === 2 || phase === 3;
-    const hit = this.hitOf(who.key, this.rhythm[who.key]?.seed ?? 0, W, kind);
+    // a healing throw lands on the ally it heals (over its middle), not the monster
+    const ally = this.rhythm[who.key]?.heal;
+    const allyAt = ally ? (ally === YOU ? this.you : this.at?.[ally]) : null;
+    const hit = allyAt ? { x: allyAt.x, y: allyAt.y - 36 } : this.hitOf(who.key, this.rhythm[who.key]?.seed ?? 0, W, kind);
     const art = (name, w, h) => image(src(name)).w(w).h(h);
     const pop = (id, name, w, h, at, on) =>
       div()
@@ -749,7 +1015,14 @@ export default class RaidParty extends View {
     // the warrior swings its own weapon; only the slash is extra
     if (c === "warrior") return [pop("slash", part("shot"), 32, 44, from(62, 24), phase === 2)];
     if (c === "archer") return [shot(part("shot"), 44, 20, from(40, 22)), pop("hit", part("hit"), 20, 20, hit, phase === 4)];
-    if (c === "wizard") return [shot(part("shot"), 40, 32, from(46, 26)), pop("hit", part("hit"), 44, 44, hit, phase === 4)];
+    if (c === "wizard") {
+      // a chained blow (the Bolt Staff): a second arc leaps on past the first, the way the spell flew
+      const chained = this.rhythm[who.key]?.chainAt;
+      const arcOn = chained != null && chained === this.clock;
+      const arcAt = { x: hit.x + (d > 0 ? CHAIN_W / 2 : -CHAIN_W / 2), y: hit.y - 12 };
+      const arc = chained != null && this.clock - chained <= 2 ? [pop("chain", overlayArt("chain", d > 0 ? "arc/r" : "arc/l"), CHAIN_W, CHAIN_H, arcAt, arcOn)] : [];
+      return [shot(part("shot"), 40, 32, from(46, 26)), pop("hit", part("hit"), 44, 44, hit, phase === 4), ...arc];
+    }
     // healer: the potion is lobbed, rising for the first half and falling for the second
     const lob = (el) =>
       el
@@ -770,6 +1043,13 @@ export default class RaidParty extends View {
     const hurt = hits > 0 && !dead;
     const roaring = m.kind === "ogre" && this.roar;
     const howl = m.kind === "dragon" && !dead ? this.howl : null; // the dragon's roar: "rear" | "roar" | "settle"
+    // its own attack (party.js): a pose of its own in place of its pictures,
+    // leaning toward the target, from the attack's start to a tick after it lands
+    const empty = !Object.keys(this.party.members).length; // nobody fighting: no attack shows
+    const fa = empty ? null : (this.party.foe.pending ?? (this.party.foe.last && this.clock - this.party.foe.last.lands <= 1 ? this.party.foe.last : null));
+    const faSide = fa && fa.x < W / 2 + kind.core.x ? "l" : "r";
+    const posed = fa && !dead ? attackPart(m.kind, fa.kind, "pose", faSide) : null;
+    const lean = posed && fa.kind === "single" ? (faSide === "l" ? -LUNGE : LUNGE) : 0;
     const lids = this.blink && !dead && !roaring && !howl;
     // Rings of sound leave the dragon's mouth one after another as the roar
     // starts. Each is drawn from the wind-up on, unseen at the mouth, so the
@@ -801,9 +1081,12 @@ export default class RaidParty extends View {
         .left(0)
         .top(0)
         .child(image(src(monsterArt(m.kind, part))).w(kind.w).h(kind.h));
-    // the plate over its head, kept inside the scene when the wall is low
-    const plateTop = Math.max(top - PLATE_H - 4, 4 - this.wallH);
-    const plate = this.plate(m, kind, left + Math.round(kind.w / 2), plateTop);
+    // the plate over its head, kept inside the scene when the wall is low; a
+    // row taller while it shows status icons
+    const icons = dead ? [] : plateIcons(this.statuses, this.auras());
+    this.plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
+    const plateTop = Math.max(top - this.plateH - 4, 4 - this.wallH);
+    const plate = this.plate(m, kind, left + Math.round(kind.w / 2), plateTop, icons);
     const note = this.timesUpNote(left + Math.round(kind.w / 2), plateTop) ?? this.advanceNote(m, left + Math.round(kind.w / 2), plateTop);
     return [
       div()
@@ -829,21 +1112,61 @@ export default class RaidParty extends View {
             // roaring upper body shaking over it), and all blink.
             .top(this.struck && hurt ? -4 : 0)
             .transition("top", { duration: 90, easing: "ease-out" })
+            .left(lean)
+            .transition("left", { duration: 150, easing: "ease-out" })
             .when(m.kind === "dragon", (el) => el.child(layer("tail").loop("top", { from: 0, to: 5, period: 2600 })))
-            .child(layer(roaring ? "roar/roar" : m.kind === "slime" ? "base" : m.kind === "dragon" ? (howl === "roar" ? "roar/roar" : howl ? "roar/rear" : "body") : "idle"))
-            .when(howl === "roar", (el) => el.child(layer("roar/top").loop("left", { from: -2, to: 2, period: 140, easing: "linear" })))
-            .when(Boolean(howl), (el) => el.children([0, 1, 2].map(ring)))
-            .when(!roaring && !howl, (el) =>
+            .when(Boolean(posed), (el) => el.child(layer(posed)))
+            .when(!posed, (el) => el.child(layer(roaring ? "roar/roar" : m.kind === "slime" ? "base" : m.kind === "dragon" ? (howl === "roar" ? "roar/roar" : howl ? "roar/rear" : "body") : "idle")))
+            .when(!posed && howl === "roar", (el) => el.child(layer("roar/top").loop("left", { from: -2, to: 2, period: 140, easing: "linear" })))
+            .when(!posed && Boolean(howl), (el) => el.children([0, 1, 2].map(ring)))
+            .when(!posed && !roaring && !howl, (el) =>
               el.child(
                 layer("top")
                   .loop("top", m.kind === "slime" ? { from: 0, to: 8, period: 1700 } : { from: 0, to: -3, period: m.kind === "dragon" ? 3200 : 2600 })
                   .when(lids, (top) => top.child(layer("blink"))),
               ),
-            ),
+            )
+            .when(!dead, (el) => el.children(this.marks(m.kind, kind))),
         ),
       plate,
       ...(note ? [note] : []),
     ];
+  }
+
+  // The pictures of the statuses on the boss (effects/<status>/), laid over
+  // its body around the middle of its bulk, a few more on a bigger boss
+  // (EFFECT_COUNT): flames licking up while it burns, two shapes crossfading;
+  // frost crystals and a twinkle while it is chilled; venom welling up and
+  // dripping, a drip per stack. All native loops, nothing re-rendered.
+  marks(name, kind) {
+    const st = this.statuses;
+    const n = EFFECT_COUNT[name] ?? 2;
+    const cx = kind.w / 2 + kind.core.x;
+    const cy = kind.h - 4 - kind.core.y;
+    const spot = (i) => ({ x: Math.round(cx + EFFECT_SPOTS[i][0] * kind.core.r), y: Math.round(cy + EFFECT_SPOTS[i][1] * kind.core.r) });
+    const pic = (part, w, h, at, fade) =>
+      div()
+        .absolute()
+        .left(at.x - w / 2)
+        .top(at.y - h)
+        .when(Boolean(fade), (el) => el.loop("opacity", fade))
+        .child(image(src(overlayArt(...part))).w(w).h(h));
+    const out = [];
+    if (Object.keys(st.burn).length)
+      for (let i = 0; i < n; i++) {
+        const period = 480 + i * 110;
+        out.push(pic(["burn", "flame-1"], 32, 36, spot(i), { from: 1, to: 0, period, easing: "linear" }), pic(["burn", "flame-2"], 32, 36, spot(i), { from: 0, to: 1, period, easing: "linear" }));
+      }
+    if (st.chill > 0) {
+      for (let i = 0; i < n - 1; i++) out.push(pic(["chill", "crystal"], 44, 36, spot(i), null));
+      out.push(pic(["chill", "glint"], 20, 20, spot(n - 1), { from: 0, to: 1, period: 900 }));
+    }
+    for (let i = 0; i < Math.min(n, st.venom.length); i++) {
+      const at = spot((i + 1) % n);
+      const period = 1300 + i * 170;
+      out.push(pic(["venom", "drip-1"], 28, 28, at, { from: 1, to: 0, period }), pic(["venom", "drip-2"], 28, 40, { x: at.x, y: at.y + 12 }, { from: 0, to: 1, period }));
+    }
+    return out;
   }
 
   // The boss's name plate, over its head (kept inside the scene when the wall
@@ -855,7 +1178,9 @@ export default class RaidParty extends View {
   // the boss's name and HP; its health bar; and a thin bar of the time left.
   // The bars glide between renders, which come at least once a second while
   // the time runs (see tick), so nothing renders just to move them.
-  plate(m, kind, x, top) {
+  // `icons` (plateIcons in effects.js): a last row of icons for the statuses
+  // on it (burn, chill, venom with its stacks) and the party's hex.
+  plate(m, kind, x, top, icons = []) {
     const dead = m.hp <= 0;
     const { stage, best } = this.progress;
     const tone = m.hp > m.maxHp / 2 ? "#4cd47b" : m.hp > m.maxHp / 5 ? "#ffd166" : "#ff5d5d";
@@ -952,7 +1277,102 @@ export default class RaidParty extends View {
               .bg(running ? "#5cc8ff" : "#5d7088")
               .transition("width", { duration: TICK_STEP, easing: "linear" }),
           ),
+      )
+      .when(icons.length > 0, (el) =>
+        el.child(
+          h_flex()
+            .id("idle-rpg-plate-icons")
+            .h(PLATE_ICON_H)
+            .flex_none()
+            .gap(3)
+            .items_center()
+            .children(
+              icons.map((ic) =>
+                h_flex()
+                  .id(`idle-rpg-plate-${ic.id}`)
+                  .flex_none()
+                  .gap(1)
+                  .items_center()
+                  .child(image(src(effectIconArt(ic.id))).w(18).h(18))
+                  .when(ic.id === "venom", (row) => row.child(pixelText(String(ic.n), "white", 2))),
+              ),
+            ),
+        ),
       );
+  }
+
+  // What the boss's attack (party.js) puts on the floor: `under` everyone, the
+  // marker where an area attack will land (pulsing while it waits) and what
+  // covers the spot as it lands; `over` everyone, what flies at the target
+  // (sitting unseen at the mouth as the attack starts, gliding there from the
+  // next tick on, natively, to arrive as it lands) and what lands on a single
+  // target. Impacts pop in on the tick it lands and fade on the next.
+  foeAttack(W, kind) {
+    const m = this.monster;
+    const under = [];
+    const over = [];
+    if (!kind || !(m.hp > 0) || !Object.keys(this.party.members).length) return { under, over };
+    const t = this.clock;
+    const left = Math.round(W / 2 - kind.w / 2);
+    const top = MONSTER_Y - kind.h + 4;
+    const art = (part, w, h) => image(src(monsterArt(m.kind, part))).w(w).h(h);
+    const sideOf = (a) => (a.x < W / 2 + kind.core.x ? "l" : "r");
+    const targetOf = (a) => (a.kind === "area" ? { x: a.x, y: a.y } : { x: a.x, y: a.y - 36 });
+    const p = this.party.foe.pending;
+    if (p) {
+      const side = sideOf(p);
+      if (p.kind === "area")
+        under.push(
+          div()
+            .id(`idle-rpg-marker-${p.id}`)
+            .absolute()
+            .left(p.x - 74)
+            .top(p.y - 38)
+            .loop("opacity", { from: 0.55, to: 1, period: 400 })
+            .child(image(src("foe/marker.png")).w(148).h(76)),
+        );
+      const shot = attackPart(m.kind, p.kind, "shot", side);
+      if (shot) {
+        const [w, h] = sizeOf(shot);
+        const mouth = SHOT_FROM[m.kind]?.[p.kind] ?? { x: kind.w / 2, y: kind.h / 2 };
+        const sided = attackPart(m.kind, p.kind, "pose", "l") !== attackPart(m.kind, p.kind, "pose", "r");
+        const from = { x: left + (side === "r" && sided ? kind.w - mouth.x : mouth.x), y: top + mouth.y };
+        const to = targetOf(p);
+        const go = t > p.start;
+        const glide = { duration: Math.max(TICK_STEP, (p.lands - p.start - 1) * TICK_STEP), easing: "linear" };
+        over.push(
+          div()
+            .id(`idle-rpg-foe-shot-${p.id}`)
+            .absolute()
+            .left(Math.round((go ? to.x : from.x) - w / 2))
+            .top(Math.round((go ? to.y : from.y) - h / 2))
+            .opacity(go ? 1 : 0)
+            .transition("left", glide)
+            .transition("top", glide)
+            .child(art(shot, w, h)),
+        );
+      }
+    }
+    const l = this.party.foe.last;
+    if (l && t - l.lands <= 2) {
+      const fresh = t === l.lands;
+      const hit = attackPart(m.kind, l.kind, "hit", sideOf(l));
+      const flicker = attackPart(m.kind, l.kind, "flicker", sideOf(l));
+      if (hit) {
+        const [w, h] = sizeOf(hit);
+        const at = targetOf(l);
+        const pop = div()
+          .id(`idle-rpg-foe-hit-${l.id}`)
+          .absolute()
+          .left(Math.round(at.x - w / 2))
+          .top(Math.round(at.y - (l.kind === "area" ? h - 8 : h / 2)))
+          .opacity(fresh ? 1 : 0)
+          .transition("opacity", { duration: fresh ? 20 : l.kind === "area" ? 2 * HIT_FADE : HIT_FADE, easing: "ease-out" })
+          .child(div().relative().w(w).h(h).child(art(hit, w, h)).when(Boolean(flicker), (el) => el.child(div().absolute().left(0).top(0).loop("opacity", { from: 0, to: 1, period: 220, easing: "linear" }).child(art(flicker, w, h)))));
+        (l.kind === "area" ? under : over).push(pop);
+      }
+    }
+    return { under, over };
   }
 
   // "Moving to stage 13 in 3" over the plate while a boss that first cleared
@@ -966,7 +1386,7 @@ export default class RaidParty extends View {
       .id(`idle-rpg-advance-${m.id}`)
       .absolute()
       .left(x - 90)
-      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + PLATE_H + 4) // under the plate when there is no room over it
+      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + (this.plateH ?? PLATE_H) + 4) // under the plate when there is no room over it
       .w(180)
       .justify_center()
       .child(div().px(5).rounded(6).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`Moving to stage ${m.advancing} in ${secs}`));
@@ -983,7 +1403,7 @@ export default class RaidParty extends View {
       .id(`idle-rpg-timesup-${t.id}`)
       .absolute()
       .left(x - 90)
-      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + PLATE_H + 4) // under the plate when there is no room over it
+      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + (this.plateH ?? PLATE_H) + 4) // under the plate when there is no room over it
       .w(180)
       .justify_center()
       .opacity(fresh ? 1 : 0)
@@ -1045,6 +1465,7 @@ export default class RaidParty extends View {
   }
 
   walkTo(p, W, cx) {
+    if (this.fighting && this.knocked(YOU)) return; // knocked out: you lie there until your rest is over
     const to = { x: Math.round(clamp(p.x, 30, W - 30)), y: Math.round(clamp(p.y, YOU_Y[0], YOU_Y[1])) }; // whole pixels keep the sprite sharp
     const fire = this.fireX(W);
     if (fire !== null && this.inFire(to, fire)) to.y = Math.min(YOU_Y[1], FIRE_Y + 12); // up to the campfire's stones, not into them
@@ -1192,9 +1613,13 @@ export default class RaidParty extends View {
     const dir = this.at[a.address].dir;
     const phase = this.phaseOf(a.address);
     const frame = !fighting || !(this.monster?.hp > 0) ? "stance" : phase === 1 ? "windup" : phase === 2 || phase === 3 ? "strike" : "stance";
-    const pose = this.fighting
-      ? div().relative().w(72).h(72).child(div().absolute().left(dir > 0 ? 0 : -24).top(0).child(this.sprite(c, `${frame}/${dir > 0 ? "r" : "l"}`, 96, 72)))
-      : this.sprite(c, "stand", 72, 72);
+    // knocked out (still working): lying on its back, its head away from the monster
+    const out = fighting && this.knocked(a.address);
+    const pose = out
+      ? this.sprite(c, `down/${dir > 0 ? "l" : "r"}`, 72, 72)
+      : this.fighting
+        ? div().relative().w(72).h(72).child(div().absolute().left(dir > 0 ? 0 : -24).top(0).child(this.sprite(c, `${frame}/${dir > 0 ? "r" : "l"}`, 96, 72)))
+        : this.sprite(c, "stand", 72, 72);
     const where = `${a.space_name} · ${a.tab_name}`;
     const open = this.card === a.address;
     return [
@@ -1228,8 +1653,9 @@ export default class RaidParty extends View {
             .when(a.status === "working" && !fighting, (el) => el.loop("top", { from: 0, to: -7, period: 520 }))
             .child(pose),
         ),
-      // in a fight a working agent attacks instead of showing the swords overhead
-      ...(fighting ? [] : [this.bubble(a, x, y)]),
+      // in a fight a working agent attacks instead of showing the swords
+      // overhead, and has its HP bar there (or, knocked out, its stars and rest)
+      ...(fighting ? this.vitals(a.address, x, y) : [this.bubble(a, x, y)]),
       v_flex()
         .id(`idle-rpg-label-${a.address}`)
         .transition("left", MOVE)
@@ -1242,6 +1668,83 @@ export default class RaidParty extends View {
         // named for where it works; what kind of agent it is, is on its card
         .child(div().max_w(CELL_W - 4).px(5).rounded(7).bg("#00000066").truncate().text_size(10).font_semibold().text_color(CREAM).child(where)),
     ];
+  }
+
+  // What shows over someone in the fight whose feet are at x, y (see
+  // party.js): their HP bar, or, knocked out, stars circling over them and a
+  // gold bar running down their rest (natively, from the render after they
+  // fell); a flash where a blow hit them and a green plus rising off them when
+  // healed, each popping in on the tick it happened and fading on the next.
+  // Freshness is by the attack clock's ticks. Nothing for anyone not in it.
+  // One box at the feet holds it all, gliding with `move` as the sprite does.
+  vitals(key, x, y, move = MOVE) {
+    const m = this.party.members[key];
+    if (!m) return [];
+    const t = this.clock;
+    const out = [];
+    // all of it in one box at the feet, gliding with the sprite (`move`) to a new spot
+    const bar = (inner) => div().absolute().left(-HP_W / 2 - 1).top(-78).w(HP_W + 2).h(7).p(1).bg("#141a26").child(inner);
+    if (m.down !== null) {
+      const fresh = t <= m.down - KO_TICKS;
+      out.push(
+        bar(
+          div()
+            .id(`idle-rpg-rest-${key}-${m.down}`)
+            .h(5)
+            .w(fresh ? HP_W : 0)
+            .bg(GOLD)
+            .transition("width", { duration: Math.max(TICK_STEP, Math.round(restLeft(this.party, key, t) * KO_TICKS * TICK_STEP)), easing: "linear" }),
+        ),
+        // stars circling: two pictures a sixth of a turn apart, crossfaded, bobbing
+        div()
+          .absolute()
+          .left(-38)
+          .top(-66)
+          .w(75)
+          .h(33)
+          .loop("top", { from: -66, to: -62, period: 900 })
+          .child(div().absolute().left(0).top(0).loop("opacity", { from: 1, to: 0, period: 700, easing: "linear" }).child(image(src("status/dizzy-1.png")).w(75).h(33)))
+          .child(div().absolute().left(0).top(0).loop("opacity", { from: 0, to: 1, period: 700, easing: "linear" }).child(image(src("status/dizzy-2.png")).w(75).h(33))),
+      );
+    } else {
+      const share = m.hp / m.maxHp;
+      const tone = share > 0.5 ? "#4cd47b" : share > 0.25 ? "#ffd166" : "#ff5d5d";
+      out.push(bar(div().id(`idle-rpg-hp-${key}`).h(5).w(Math.round(HP_W * share)).bg(tone).transition("width", { duration: 150, easing: "ease-out" })));
+      // a healer giving the party an aura (its vial's) shows its icon by its bar
+      // while the boss stands, in the box that glides with it
+      const potion = statsOf(this.sprites[key], equipped(this.progress, this.sprites[key], "weapon")).potion;
+      if (AURAS.includes(potion) && this.monster?.hp > 0)
+        out.push(div().id(`idle-rpg-aura-${key}`).absolute().left(HP_W / 2 + 3).top(-84).child(image(src(effectIconArt(potion))).w(18).h(18)));
+    }
+    if (m.hitAt !== null && t - m.hitAt <= 2) {
+      const fresh = t === m.hitAt;
+      out.push(
+        div()
+          .id(`idle-rpg-hurt-${key}-${m.hitAt}`)
+          .absolute()
+          .left(-22)
+          .top(-60)
+          .opacity(fresh ? 1 : 0)
+          .transition("opacity", { duration: fresh ? 20 : HIT_FADE, easing: "ease-out" })
+          .child(image(src("foe/hit.png")).w(44).h(44)),
+      );
+    }
+    if (m.healedAt !== null && t - m.healedAt <= 2) {
+      const fresh = t === m.healedAt;
+      out.push(
+        div()
+          .id(`idle-rpg-healed-${key}-${m.healedAt}`)
+          .absolute()
+          .left(-18)
+          .top(fresh ? -64 : -92)
+          .opacity(fresh ? 1 : 0)
+          .transition("top", { duration: 900, easing: "ease-out" })
+          .transition("opacity", { duration: 900, easing: "ease-in" })
+          .child(image(src("status/heal.png")).w(36).h(36))
+          .child(div().absolute().left(30).top(-6).child(image(src("status/sparkle.png")).w(20).h(20))),
+      );
+    }
+    return [div().id(`idle-rpg-vitals-${key}`).absolute().left(x).top(y).transition("left", move).transition("top", move).children(out)];
   }
 
   // Whether a note made on attack-clock tick `tick` still shows as it popped
@@ -1293,17 +1796,25 @@ export default class RaidParty extends View {
   }
 
   // One damage number in the pixel font, over the point where its blow landed:
-  // white, or for a critical blow gold, a size up and with a "!". It pops in,
+  // white, or for a critical blow gold, a size up and with a "!"; a chained
+  // second strike's at the end of its arc; damage over time (summed over a
+  // second) beside the boss's middle, in ember for burn and green for venom.
+  // A blow that hit the boss's weakness has an orange arrow up after it, one
+  // it resists a grey arrow down (effects/marks). It pops in,
   // then on the next render (the next tick of the attack clock, which runs on
   // through the attacker's rest) rises and fades natively, like a level-up
   // note. Each is nudged a little left, right or not at all by its number, so
   // blows that land together do not cover each other exactly.
   damageNote(d, W, kind) {
-    const at = this.hitOf(d.key, d.seed, W, kind);
+    const core = { x: Math.round(W / 2 + kind.core.x), y: MONSTER_Y - kind.core.y };
+    const hit = d.dot ? { x: core.x + DOT_SPOT[d.dot] * (kind.core.r + 20), y: core.y + 12 } : this.hitOf(d.key, d.seed, W, kind);
+    const at = d.chain ? { x: hit.x + (d.dir < 0 ? -CHAIN_W : CHAIN_W), y: hit.y - 16 } : hit; // the end of its arc (see attack)
     const n = shortNumber(Math.max(1, d.n)); // a blow that took the last fraction of a point still shows 1
     const text = d.crit ? `${n}!` : n;
     const scale = d.crit ? 4 : 3;
-    const w = textW(text, scale);
+    const mark = markArt(d.matchup);
+    const textWidth = textW(text, scale);
+    const w = textWidth + (mark ? 6 * scale : 0); // the mark shares the last glyph's outline column
     const h = GLYPH_H * scale;
     const fresh = this.fresh(d.tick);
     const top = at.y - h / 2 - 8 - (fresh ? 0 : DAMAGE_RISE);
@@ -1315,7 +1826,14 @@ export default class RaidParty extends View {
       .opacity(fresh ? 1 : 0)
       .transition("top", { duration: DAMAGE_MS, easing: "ease-out" })
       .transition("opacity", { duration: DAMAGE_MS, easing: "ease-in" })
-      .child(pixelText(text, d.crit ? "gold" : "white", scale));
+      .child(
+        div()
+          .relative()
+          .w(w)
+          .h(h)
+          .child(pixelText(text, d.dot ? DOT_COLOURS[d.dot] : d.crit ? "gold" : "white", scale))
+          .when(Boolean(mark), (el) => el.child(div().absolute().left(textWidth - scale).top(0).child(image(src(mark)).w(7 * scale).h(GLYPH_H * scale)))),
+      );
   }
 
   // Where the campfire stands between raids: the middle of its picture, or
@@ -1477,7 +1995,9 @@ export default class RaidParty extends View {
         // SVGs came out soft on retina screens.
         // In a fight, standing still, you face the monster in the same stance
         // and attack frames as the agents (see critter).
-        this.fighting && !this.walking
+        this.fighting && this.knocked(YOU)
+          ? this.sprite(c, `down/${this.youDir > 0 ? "l" : "r"}`, 72, 72)
+          : this.fighting && !this.walking
           ? div()
               .relative()
               .w(72)
@@ -1729,10 +2249,18 @@ export default class RaidParty extends View {
     // (by the campfire a copy, since those behind it are drawn beside it: see the loop below)
     this.at = foeKind ? this.formation(list, W, foeKind) : fire !== null ? { ...this.spots } : this.spots;
     const youDir = you.x <= W / 2 + (foeKind?.core.x ?? 0) ? 1 : -1; // which way the monster is from you
-    this.youFights = hits > 0 && !this.walking && this.joins(W);
-    this.struck = (this.youFights && this.phaseOf(YOU) === 4) || list.some((a) => a.status === "working" && this.phaseOf(a.address) === 4);
+    this.youFights = hits > 0 && !this.walking && this.joins(W) && !this.knocked(YOU);
+    // the monster hops when a blow lands on it (a healing throw is no blow)
+    const blowing = (key) => this.phaseOf(key) === 4 && !this.rhythm[key]?.heal;
+    this.struck = (this.youFights && blowing(YOU)) || list.some((a) => a.status === "working" && blowing(a.address));
     this.youDir = youDir;
     const actors = [{ y: you.y, draw: () => [this.you_()] }, { y: MONSTER_Y, draw: () => this.foe(W, hits) }];
+    // the boss's own attack: what lies on the floor under everyone, and what flies or lands over them
+    const foeAttack = this.foeAttack(W, foeKind);
+    if (foeAttack.over.length) actors.push({ y: FLOOR_H, draw: () => foeAttack.over });
+    // your HP bar, or stars and rest, while you are in the fight
+    // (not while you walk: `you` is already where you are going, and walking takes you out of the fight)
+    if (foeKind && YOU in this.party.members && !this.walking) actors.push({ y: FLOOR_H, draw: () => this.vitals(YOU, you.x, you.y, { duration: this.walkMs ?? 300, easing: "linear" }) });
     // the campfire stands among them, so whoever is in front of it is drawn over it (first, so a tie goes to them)
     if (fire !== null) actors.unshift({ y: FIRE_Y, draw: () => this.campfire(fire) });
     if (this.youFights) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: YOU, cls: this.sprites[YOU], x: you.x, y: you.y, dir: youDir }, W, foeKind) });
@@ -1799,6 +2327,7 @@ export default class RaidParty extends View {
           .child(div().absolute().left(12).top(-34).child(image(src("stations/table/idle.png")).w(112).h(56)))
           .child(div().absolute().left(136).top(-30).child(image(src("scene/barrel.png")).w(48).h(52)))
           .when(!this.battle, (el) => el.children(this.stations()))
+          .children(foeAttack.under)
           .children(actors.flatMap((p) => p.draw()))
           .child(this.gloom(W, fire))
           // over the night's dark, so they read at any hour, and under the cards
@@ -1986,6 +2515,7 @@ export default class RaidParty extends View {
               .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
               .on_click((_e, cx) => {
                 this.battle = !this.battle;
+                this.clearEffects(); // statuses stay with the fight they were put on
                 // the panels open from different places in a raid and out of one
                 this.codex = this.settingsOpen = false;
                 this.skillsOpen = this.shopOpen = null;
@@ -2274,6 +2804,7 @@ export default class RaidParty extends View {
   // skills panel and any card.
   openShop(cls) {
     this.shopOpen = cls;
+    this.shopPick = null; // the item whose lines show: the one on, until another is clicked
     if (!cls) return;
     this.codex = this.settingsOpen = false;
     this.skillsOpen = this.card = null;
@@ -2370,7 +2901,7 @@ export default class RaidParty extends View {
   // one picked, its points, a Reset that gives them all back, and a line per
   // skill with its rank, what it gives now, and a + that spends a point on it;
   // then its training, bought with the gold shown in the title: a line per
-  // kind (TRAINING in rules.js) with its level, the damage it multiplies by,
+  // kind (TRAINING in rules.js: Attack, Health) with its level, the damage or HP it multiplies by,
   // and Buy at the next level's price, dimmed and dead while the gold is
   // short. Buying saves at once. Its height is fixed by PANEL (147px, 165 with
   // a second kind of training), short enough for the scene at its lowest
@@ -2414,15 +2945,16 @@ export default class RaidParty extends View {
         .child(div().w(30).flex_none().font_semibold().text_color(GOLD).child(`${ranks[k]}/${MAX_RANK}`))
         .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(SKILL_TEXT[k]?.(this.progress, cls, ranks) ?? ""))
         .child(this.button(`idle-rpg-skill-${k}`, "+", canRaise(this.progress, cls, k), () => raise(this.progress, cls, k)));
-    // one kind of training (TRAINING in rules.js), bought with the gold in the
-    // title: its level, what it multiplies damage by now, and Buy at its price
+    // one kind of training (TRAINING in rules.js: Attack, Health), bought with
+    // the gold in the title: its level, what it multiplies damage or HP by
+    // now, and Buy at its price
     const drill = ({ key, name }) => {
       const level = trainingOf(this.progress, cls, key);
       return line(`idle-rpg-train-row-${key}`)
         .tooltip(`${name} training: bought with gold, for every ${capital(cls)}`)
         .child(div().w(38).flex_none().text_color("#dbe7f3").child(name))
         .child(div().w(30).flex_none().font_semibold().text_color(GOLD).child(`Lv ${level}`))
-        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(`${times(trainingBonus(level))} damage`))
+        .child(div().flex_1().min_w(0).truncate().text_size(10).text_color("#8ea3bb").child(key === "health" ? `${times(healthBonus(level))} HP` : `${times(trainingBonus(level))} damage`))
         .child(this.button(`idle-rpg-train-${key}`, `Buy ${shortNumber(trainingPrice(level))}`, canTrain(this.progress, cls, key), () => train(this.progress, cls, key)));
     };
     return v_flex()
@@ -2492,8 +3024,12 @@ export default class RaidParty extends View {
   // winds up to attack, where every weapon shows best (the healer's potion
   // only shows then). A hat is bought once for every class, which the
   // panel says under them while hats are shown; each class still has its own
-  // on. A kind with nothing for sale yet says so. Short enough for the scene
-  // at its lowest (230px, the sign taking 54).
+  // on. A kind with nothing for sale yet says so. Under the items, two lines on
+  // the one picked (clicking an item picks it; the one on until then): for a
+  // weapon what it does (shopLines in effects.js: its pace, its element's
+  // status and the bosses weak to it or resisting it, a vial's aura), the
+  // tiles being too narrow for it. Its height is fixed by PANEL and SHOP_ROW
+  // (167px), short enough for the scene at its lowest (230px, the sign taking 54).
   shopCard(left) {
     const cls = this.shopOpen;
     const kind = SHOP_KINDS.includes(this.shopKind) ? this.shopKind : SHOP_KINDS[0];
@@ -2506,13 +3042,21 @@ export default class RaidParty extends View {
       weapon: (it) => this.sprite(cls, "windup/r", 48, 36, undefined, undefined, it.id),
       hat: (it) => this.sprite(cls, "stand", 36, 36, undefined, it.id),
     };
+    // the item whose lines show under the items: the one picked, else the one on
+    const pick = items.find((it) => it.id === this.shopPick) ?? items.find((it) => it.id === equipped(this.progress, cls, kind)) ?? items[0];
+    const about = !pick
+      ? ["", ""]
+      : kind === "weapon"
+        ? shopLines(cls, pick.id)
+        : [pick.name, SHOP[kind].shared ? "Looks only, worn by any class" : `Looks only, for every ${capital(cls)}`];
     const nav = (k) =>
       h_flex()
         .id(`idle-rpg-shop-kind-${k}`)
+        .h(SHOP_ROW.nav)
+        .flex_none()
         .gap(5)
         .items_center()
         .px(4)
-        .py(3)
         .rounded(6)
         .border(1)
         .border_color(k === kind ? "#5cc8ff" : "#00000000")
@@ -2521,16 +3065,26 @@ export default class RaidParty extends View {
         .hover((st) => st.bg("#ffffff1c"))
         .on_click((_e, cx) => {
           this.shopKind = k;
+          this.shopPick = null;
           cx.notify();
         })
         .child(image(src(SHOP_ICONS[k] ?? "icons/coin.png")).w(18).h(18))
         .child(div().text_size(10).font_semibold().text_color(CREAM).child(SHOP[k].name));
+    // the class picked is a wider tab with its name beside its sprite; the
+    // others show the sprite alone, their name in a tooltip (four names do not
+    // fit beside four sprites in the 218px column)
     const tab = (id, on, act, ...content) =>
-      v_flex()
+      h_flex()
         .id(id)
-        .flex_1()
+        .when(on, (el) => el.w(SHOP_ROW.tab).flex_none())
+        .when(!on, (el) => el.flex_1())
+        .min_w(0)
+        .h(PANEL.tab)
+        .gap(2)
+        .px(2)
         .items_center()
-        .py(2)
+        .justify_center()
+        .overflow_hidden()
         .rounded(6)
         .border(1)
         .border_color(on ? "#5cc8ff" : "#00000000")
@@ -2544,6 +3098,7 @@ export default class RaidParty extends View {
         .children(content);
     const item = (it) => {
       const on = equipped(this.progress, cls, kind) === it.id;
+      const picked = it === pick;
       return v_flex()
         .id(`idle-rpg-shop-item-${it.id}`)
         .flex_1()
@@ -2554,8 +3109,13 @@ export default class RaidParty extends View {
         .py(3)
         .rounded(6)
         .border(1)
-        .border_color(on ? "#5cc8ff" : "#00000000")
+        .border_color(on ? "#5cc8ff" : picked ? "#5cc8ff70" : "#00000000")
         .bg(on ? "#5cc8ff22" : "#ffffff0a")
+        .cursor_pointer()
+        .on_click((_e, cx) => {
+          this.shopPick = it.id;
+          cx.notify();
+        })
         .child(preview[kind]?.(it) ?? div().h(36))
         .child(div().max_w_full().truncate().text_size(10).text_color("#dbe7f3").child(it.name))
         .child(
@@ -2576,19 +3136,23 @@ export default class RaidParty extends View {
       .left(left)
       .top(54)
       .w(SHOP_NAV_W + 8 + CARD_W)
-      .p(8)
-      .gap(6)
+      .p(PANEL.pad)
+      .gap(PANEL.gap)
       .rounded(8)
       .bg("#101a2cf0")
       .border(1)
       .border_color("#ffffff24")
       .text_size(11)
+      .line_height(PANEL.line)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(
         h_flex()
+          .id("idle-rpg-shop-title")
+          .h(PANEL.title)
+          .flex_none()
           .gap(6)
           .items_center()
-          .child(image(src("icons/coin.png")).w(18).h(18))
+          .child(image(src("icons/coin.png")).w(16).h(16))
           .child(div().flex_1().text_size(12).font_semibold().text_color("#ffffff").child("Shop"))
           .child(div().font_semibold().text_color(GOLD).child(`${shortNumber(this.progress.gold)} gold`))
           .child(
@@ -2615,7 +3179,7 @@ export default class RaidParty extends View {
             v_flex()
               .w(SHOP_NAV_W)
               .flex_none()
-              .gap(3)
+              .gap(PANEL.gap)
               .children(SHOP_KINDS.map(nav))
               // under the hats, in place of "More soon": what one costs buys it for everyone
               .child(div().px(4).pt(2).text_size(9).text_color(SHOP[kind].shared ? GOLD : "#8ea3bb").child(SHOP[kind].shared ? "Bought once, for every class" : "More soon")),
@@ -2624,25 +3188,31 @@ export default class RaidParty extends View {
             v_flex()
               .flex_1()
               .min_w(0)
-              .gap(3)
+              .gap(PANEL.gap)
               .child(
                 h_flex()
+                  .id("idle-rpg-shop-tabs")
+                  .h(PANEL.tab)
+                  .flex_none()
                   .gap(4)
                   .children(
                     CLASSES.map((c) =>
                       tab(
                         `idle-rpg-shop-${c}`,
                         c === cls,
-                        () => (this.shopOpen = c),
-                        this.sprite(c, "stand", 24, 24),
-                        div().text_size(9).font_semibold().text_color(CREAM).child(capital(c)),
-                      ),
+                        () => {
+                          this.shopOpen = c;
+                          this.shopPick = null;
+                        },
+                        this.sprite(c, "stand", 18, 18),
+                        ...(c === cls ? [div().flex_none().text_size(9).font_semibold().text_color(CREAM).child(capital(c))] : []),
+                      ).when(c !== cls, (el) => el.tooltip(capital(c))),
                     ),
                   ),
               )
               .child(
                 items.length
-                  ? h_flex().gap(4).children(items.map(item))
+                  ? h_flex().h(SHOP_ITEM_H).flex_none().gap(4).children(items.map(item))
                   : // the same height as a row of items, so the panel does not jump between kinds
                     v_flex()
                       .h(SHOP_ITEM_H)
@@ -2652,6 +3222,18 @@ export default class RaidParty extends View {
                       .bg("#ffffff0a")
                       .text_color("#8ea3bb")
                       .child(`No ${SHOP[kind].name.toLowerCase()} for sale yet`),
+              )
+              // two lines on the item picked: for a weapon, what it does
+              .child(
+                v_flex()
+                  .id("idle-rpg-shop-about")
+                  .h(SHOP_ROW.about)
+                  .flex_none()
+                  .px(4)
+                  .text_size(10)
+                  .tooltip(about.filter(Boolean).join(" · ") || " ")
+                  .child(div().id("idle-rpg-shop-about-1").truncate().font_semibold().text_color("#dbe7f3").child(about[0]))
+                  .child(div().id("idle-rpg-shop-about-2").truncate().text_color("#8ea3bb").child(about[1])),
               ),
           ),
       );

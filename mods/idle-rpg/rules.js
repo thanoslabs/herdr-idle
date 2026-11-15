@@ -24,7 +24,7 @@
 
 export const CLASSES = ["wizard", "healer", "warrior", "archer"];
 export const YOU = "you"; // the person's key in `sprites`, `xp` and as an open card
-export const STATE_VERSION = 6;
+export const STATE_VERSION = 7;
 // The kinds of boss, in the order the stages cycle through them (slime, ogre,
 // dragon, slime, ...). main.js draws them (MONSTERS there), each needs its
 // pictures in MONSTER_ART below.
@@ -60,14 +60,32 @@ export const CLASS_LEVEL_XP = 100; // a class goes from level n to n + 1 for CLA
 export const PLAYER_LEVEL_XP = 250; // you go from level n to n + 1 for PLAYER_LEVEL_XP * n
 export const PLAYER_XP_SHARE = 1; // you earn this many times what the classes earn, from every blow
 
-// Training: gold makes a class hit harder, one level at a time, each level
-// dearer than the last. A kind of training is { key, name }; "attack" is the
-// only one for now (a "health" one comes with monsters fighting back).
-export const TRAINING = [{ key: "attack", name: "Attack" }];
+// Training: gold makes a class hit harder (Attack) or last longer (Health), one
+// level at a time, each level dearer than the last, on the same curve for both
+// (each kind's price follows its own level). A kind of training is { key, name }.
+export const TRAINING = [
+  { key: "attack", name: "Attack" },
+  { key: "health", name: "Health" },
+];
 export const TRAINING_BONUS = 1.12; // damage multiplier per level of Attack training (compounding)
+export const HEALTH_BONUS = 1.2; // max HP multiplier per level of Health training (compounding)
 export const TRAINING_PRICE = 3; // gold for the first level
 export const TRAINING_PRICE_GROWTH = 1.25; // each level costs this many times the one before (rounded down)
 export const MAX_TRAINING = 1000; // the most levels believed (a saved number past it is cut down)
+
+// Monsters fight back (see party.js, which runs it). Every character fighting
+// has HP: its class's base (the warrior, at the monster's feet, the most) times
+// the class level's bonus (LEVEL_BONUS, as for damage) and its Health
+// training's. The boss's blows grow with the stage like its HP, more slowly:
+// STAGE_DAMAGE x DAMAGE_GROWTH^(s-1) x s^DAMAGE_POWER is one blow on a party of
+// PARTY_SIZE (party.js softens it for fewer). A healer holding the Heal Vial
+// heals HEAL_SHARE of its own max HP a throw. Defaults chosen with a
+// simulation (see PLAN.md), to be retuned.
+export const CLASS_HP = { wizard: 100, healer: 100, warrior: 200, archer: 130 };
+export const STAGE_DAMAGE = 4;
+export const DAMAGE_GROWTH = 1.22;
+export const DAMAGE_POWER = 0.75;
+export const HEAL_SHARE = 0.25;
 
 // Skills. Every class has the same three for now; CLASS_SKILLS keeps a list per
 // class so one can get its own later. Ranks are per class, so a skill applies
@@ -106,7 +124,8 @@ export const ATTACK_JITTER = 2;
 // by all four, kept once in the state under the kind's `shared` key, though
 // each class still puts on its own. Weapons are each class's own, like
 // armours: what it fights with, and what its attacks look like (see
-// attackArt); for now every weapon deals the same damage. The first item of
+// attackArt), and how it fights: its pace and weight, its element or its
+// vial's aura (see effects.js, which reads these). The first item of
 // every catalogue is the class's default look: free, always owned. Buying is
 // for good (no refunds), and changing between owned items is free.
 export const DEFAULT_LOOK = "default";
@@ -126,8 +145,8 @@ const COLOUR_NAMES = {
 // tools/idle-rpg-sprites.py, which draws each over every class.
 const HAT_NAMES = [[DEFAULT_LOOK, "No hat"], ["party", "Party Hat"], ["santa", "Santa Hat"], ["pumpkin", "Pumpkin"]];
 const HATS = HAT_NAMES.map(([id, name], i) => ({ id, name, price: i ? HAT_PRICES[i - 1] : 0 }));
-// What a weapon's attacks will one day carry (they do nothing yet): an
-// element, or null for none, and for the healer's potions, which potion it is.
+// What a weapon's attacks carry (effects.js says what each does): an element,
+// or null for none, and for the healer's potions, which potion it is.
 export const ELEMENTS = ["fire", "frost", "storm", "poison"];
 export const POTIONS = ["heal", "haste", "might", "hex"];
 // Each class's weapons as [id, name, element] and, for the healer, whose
@@ -172,7 +191,8 @@ export const SHOP_KINDS = Object.keys(SHOP);
 // tools/idle-rpg-sprites.py draws each of them in every colourway, and every
 // weapon and hat to lay over each.
 export const POSES = ["stance", "windup", "strike"];
-export const FRAMES = ["stand", "walk/l", "walk/r", "rag/c", "rag/l", "rag/r", ...POSES.flatMap((p) => [`${p}/l`, `${p}/r`])];
+// "down/l" and "down/r" are knocked out, lying with the head to the left or right.
+export const FRAMES = ["stand", "walk/l", "walk/r", "rag/c", "rag/l", "rag/r", ...POSES.flatMap((p) => [`${p}/l`, `${p}/r`]), "down/l", "down/r"];
 const frameOf = (frame) => (FRAMES.includes(frame) ? frame : FRAMES[0]);
 // The pictures each class's weapons have: all of them, but the healer's, whose
 // weapon is the potion it holds up only as it winds up to throw (its staff is
@@ -215,13 +235,44 @@ const ATTACK_ART = {
 //
 // Each monster's pictures in monsters/<kind>/, without ".png": its whole
 // picture ("idle", also the codex's), the eyelids laid over it ("blink"), the
-// pieces that move on their own (see foe in main.js), and its roar. Every kind
-// in KINDS has one.
+// pieces that move on their own (see foe in main.js), its roar, and its two
+// attacks on the party (MONSTER_ATTACKS). Every kind in KINDS has one.
+//
+// Each kind's attacks, as parts of MONSTER_ART ("*" standing for the side the
+// target is on, "l" or "r"): `single`, a blow at one attacker: the pose the
+// monster strikes while it lands (a whole picture in place of its own), what
+// flies at the target and what lands on it; `area`, at a spot on the floor:
+// the pose while its marker shows, what flies there (null: nothing) and what
+// covers the spot as it lands ("-1"/"-2" frames flicker, see foe in main.js).
+export const MONSTER_ATTACKS = {
+  slime: {
+    single: { pose: "attack/spit/*", shot: "attack/glob", hit: "attack/splat" },
+    area: { pose: "attack/squash", shot: "attack/glob", hit: "attack/puddle" },
+  },
+  ogre: {
+    single: { pose: "attack/swing/*", shot: "attack/arc/*", hit: "attack/thud" },
+    area: { pose: "attack/slam", shot: null, hit: "attack/quake" },
+  },
+  dragon: {
+    single: { pose: "attack/bite", shot: null, hit: "attack/claw" },
+    area: { pose: "attack/breath", shot: "attack/fireball/*", hit: "attack/blaze-1", flicker: "attack/blaze-2" },
+  },
+};
+const sides = (part) => (part.includes("*") ? ["l", "r"].map((x) => part.replace("*", x)) : [part]);
 export const MONSTER_ART = {
   slime: ["idle", "blink", "top", "base"],
   ogre: ["idle", "blink", "top", "roar/roar"],
   dragon: ["idle", "blink", "top", "body", "tail", "roar/rear", "roar/roar", "roar/top", "roar/wave"],
 };
+for (const [kind, both] of Object.entries(MONSTER_ATTACKS))
+  for (const a of Object.values(both)) for (const part of Object.values(a)) if (part) for (const p of sides(part)) if (!MONSTER_ART[kind].includes(p)) MONSTER_ART[kind].push(p);
+
+// The part of MONSTER_ART for one piece (`pose`, `shot`, `hit`, `flicker`) of
+// `kind`'s attack of `type` ("single" | "area") at a target on `side`, or null.
+export function attackPart(kind, type, piece, side = "r") {
+  const part = MONSTER_ATTACKS[kind]?.[type === "area" ? "area" : "single"]?.[piece];
+  return typeof part === "string" ? part.replace("*", side === "l" ? "l" : "r") : null;
+}
 
 // The path in art/ of picture `part` of monster `kind` ("monsters/dragon/roar/top.png"),
 // or null for a kind or a part it does not have.
@@ -242,7 +293,9 @@ export const SETTINGS = [
 // Digits, a sign or two, and what shortNumber writes: a point, K, M, B, T,
 // and E for a power of ten.
 export const GLYPHS = "0123456789+!.KMBTE";
-export const GLYPH_COLOURS = ["white", "gold"];
+// white for a plain blow and the badges, gold for a critical blow, and the
+// colours of damage over time (effects.js): ember for burn, venom for venom.
+export const GLYPH_COLOURS = ["white", "gold", "ember", "venom"];
 const GLYPH_NAMES = { "+": "plus", "!": "bang", ".": "point", K: "k", M: "m", B: "b", T: "t", E: "e" };
 // How many art px wide each character is without its outline (3 unless named
 // here); main.js sets them one art px apart, sharing an outline column.
@@ -373,7 +426,7 @@ export function bossOf(s, id = 1) {
   return { kind: stageKind(stage), hp: bossHp(stage), maxHp: bossHp(stage), stage, id };
 }
 
-// A class's training with every kind at 0: { attack: 0 }.
+// A class's training with every kind at 0: { attack: 0, health: 0 }.
 function noTraining() {
   return Object.fromEntries(TRAINING.map((t) => [t.key, 0]));
 }
@@ -477,6 +530,23 @@ export function trainingOf(progress, cls, key = "attack") {
 
 // The damage multiplier `level` levels of Attack training give.
 export const trainingBonus = (level) => TRAINING_BONUS ** Math.min(count(level), MAX_TRAINING);
+
+// The max HP multiplier `level` levels of Health training give.
+export const healthBonus = (level) => HEALTH_BONUS ** Math.min(count(level), MAX_TRAINING);
+
+// The max HP of a character of class `cls` (see CLASS_HP): a real number,
+// shown rounded. An unknown class has the lowest base.
+export function maxHpOf(progress, cls) {
+  const base = CLASSES.includes(cls) ? CLASS_HP[cls] : Math.min(...CLASSES.map((c) => CLASS_HP[c]));
+  if (!CLASSES.includes(cls)) return base;
+  return base * levelBonus(progress.xp?.[cls]) * healthBonus(trainingOf(progress, cls, "health"));
+}
+
+// What one throw of the Heal Vial by a character of class `cls` restores.
+export const healOf = (progress, cls) => HEAL_SHARE * maxHpOf(progress, cls);
+
+// One of the boss's blows at stage `s` on a party of PARTY_SIZE (see party.js).
+export const stageDamage = (s) => STAGE_DAMAGE * DAMAGE_GROWTH ** (stageOf(s) - 1) * stageOf(s) ** DAMAGE_POWER;
 
 // What the next level of training costs from `level`, in gold.
 export const trainingPrice = (level) => Math.min(Math.floor(TRAINING_PRICE * TRAINING_PRICE_GROWTH ** Math.min(count(level), MAX_TRAINING)), MAX);
@@ -763,11 +833,14 @@ export function settingsOf(saved) {
 // The version that first had stages and training: state saved before it
 // starts at stage 1 with no training, whatever it says.
 const STAGES_SINCE = 6;
+// The version that first had Health training: state saved before it has none.
+const HEALTH_SINCE = 7;
 
 // A class's saved training: each kind a whole number from 0 up (anything else
 // is 0), cut down to MAX_TRAINING.
-function trainingOfSaved(saved) {
-  return Object.fromEntries(TRAINING.map(({ key }) => [key, Math.min(record(saved) && has(saved, key) ? count(saved[key]) : 0, MAX_TRAINING)]));
+function trainingOfSaved(saved, version) {
+  const known = (key) => key !== "health" || version >= HEALTH_SINCE;
+  return Object.fromEntries(TRAINING.map(({ key }) => [key, Math.min(record(saved) && has(saved, key) && known(key) ? count(saved[key]) : 0, MAX_TRAINING)]));
 }
 
 // A class's saved skill ranks, given its experience `xp`. Each rank must be a
@@ -823,7 +896,8 @@ export function loadState(saved) {
     xp,
     // version 1 had no skills: every rank starts at 0
     skills: Object.fromEntries(CLASSES.map((c) => [c, ranksOf(record(s.skills) ? s.skills[c] : undefined, c, xp[c])])),
-    training: Object.fromEntries(CLASSES.map((c) => [c, trainingOfSaved(has(training, c) ? training[c] : undefined)])),
+    // version 6 had Attack training only: Health starts at 0
+    training: Object.fromEntries(CLASSES.map((c) => [c, trainingOfSaved(has(training, c) ? training[c] : undefined, count(s.version))])),
     // versions 1 and 2 had no shop: every class owns and wears its default;
     // versions 1 to 4 sold no weapons: every class owns and holds its default
     looks: Object.fromEntries(CLASSES.map((c) => [c, looksOf(record(s.looks) && has(s.looks, c) ? s.looks[c] : undefined, c, shared, count(s.version))])),
