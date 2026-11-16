@@ -7,6 +7,27 @@ import { inflateSync } from "node:zlib";
 import { ART } from "./world.mjs";
 
 const cache = new Map();
+const sizes = new Map();
+
+// A picture's size in its own px, { w, h }, from its header alone.
+export function pngSize(file) {
+  if (!sizes.has(file)) {
+    const d = readFileSync(join(ART, file)).subarray(0, 24);
+    sizes.set(file, { w: d.readUInt32BE(16), h: d.readUInt32BE(20) });
+  }
+  return sizes.get(file);
+}
+
+// How Herdr draws a picture in a box: at the picture's own proportions,
+// never stretched to another shape, as large as fits, centred ("contain").
+// Returns the stretch it covers inside the box: { x, y, w, h } relative to the box.
+export function drawnIn(file, w, h) {
+  const p = pngSize(file);
+  const scale = Math.min(w / p.w, h / p.h);
+  const dw = p.w * scale;
+  const dh = p.h * scale;
+  return { x: (w - dw) / 2, y: (h - dh) / 2, w: dw, h: dh };
+}
 
 // { w, h, top, bottom, left, right }: the picture's size and the first and
 // last rows and columns with any pixel not fully transparent (in its own px).

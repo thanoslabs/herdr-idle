@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { div, image, readRun, texts } from "./harness/elements.mjs";
 import { Timers, seeded } from "./harness/clock.mjs";
+import { drawnIn, pngSize } from "./harness/png.mjs";
 import { mountRaid } from "./harness/view.mjs";
 
 describe("elements", () => {
@@ -25,6 +26,23 @@ describe("elements", () => {
     const v = await mountRaid();
     v.view.render = () => div().child(image("mods/idle-rpg/art/nope.png"));
     assert.throws(() => v.render(), /not in art/);
+  });
+  test("a picture given a box of another shape fails the render (Herdr draws it smaller, never stretched)", async () => {
+    const v = await mountRaid();
+    const pic = (w, h) => () => div().child(image("mods/idle-rpg/art/scene/wall.png").w(w).h(h)); // a 2:1 picture
+    v.view.render = pic(128, 64);
+    v.render();
+    v.view.render = pic(129, 64); // a pixel of rounding is allowed
+    v.render();
+    v.view.render = pic(256, 64);
+    assert.throws(() => v.render(), /scene\/wall\.png: 256x64 for a \d+x\d+ picture/);
+    v.checkShapes = false;
+    v.render();
+  });
+  test("drawnIn: a picture sits at its own shape, as large as fits, centred", () => {
+    const p = pngSize("scene/wall.png");
+    const d = drawnIn("scene/wall.png", 4 * p.w, p.h);
+    assert.deepEqual(d, { x: 1.5 * p.w, y: 0, w: p.w, h: p.h });
   });
   test("pixel text reads back, spaces and all", () => {
     const run = div();

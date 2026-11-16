@@ -14,7 +14,29 @@ import "./register.mjs";
 import { CYCLE_MS, Timers, seeded, timeAt } from "./clock.mjs";
 import { El, all, boxOf, byId, idsLike, images, pathTo, readRun, runs, texts, walk } from "./elements.mjs";
 import { pathToFileURL } from "node:url";
-import { MOD, resetWorld, world } from "./world.mjs";
+import { ART_PREFIX, MOD, resetWorld, world } from "./world.mjs";
+import { pngSize } from "./png.mjs";
+
+// Herdr draws a picture at its own proportions inside the box it is given:
+// a box of another shape leaves part of itself empty (the picture is never
+// stretched). So a render that gives a picture a box of a different shape
+// (more than a pixel of rounding off) is an error, like a missing picture.
+// A picture that is meant to sit letterboxed goes here, with why. (None today.)
+export const LETTERBOXED = new Set([]);
+
+// The images in `tree` whose box is not their picture's shape: ["path: w x h for a p x q picture"].
+export function misshapen(tree) {
+  const out = [];
+  for (const el of all(tree, (n) => n.type === "image")) {
+    const { w, h } = el.style;
+    if (typeof w !== "number" || typeof h !== "number") continue;
+    const file = el.src.slice(ART_PREFIX.length);
+    if (LETTERBOXED.has(file)) continue;
+    const p = pngSize(file);
+    if (Math.abs(w - (h * p.w) / p.h) > 1 && Math.abs(h - (w * p.h) / p.w) > 1) out.push(`${file}: ${w}x${h} for a ${p.w}x${p.h} picture`);
+  }
+  return out;
+}
 
 export { CYCLE_MS, timeAt };
 export { agent, agents, raid, savedState } from "./fixtures.mjs";
@@ -78,7 +100,7 @@ export async function mountRaid(options = {}, view = {}) {
 }
 
 export class Handle {
-  constructor({ saved, key = STATE, agents = [], spaces = [], width = 1280, height = 360, inset, seed = 1, phase = 0.25 } = {}) {
+  constructor({ saved, key = STATE, agents = [], spaces = [], width = 1280, height = 360, inset, seed = 1, phase = 0.25, checkShapes = true } = {}) {
     this.size = { width, height };
     this.timers = new Timers(timeAt(phase));
     this.random = seeded(seed);
@@ -87,6 +109,7 @@ export class Handle {
     // (the attack clock's timer is main.js's `next`, set by wake: name "next")
     this.renderLog = [];
     this.causes = [];
+    this.checkShapes = checkShapes; // see misshapen(); a test may turn it off to look at what is drawn anyway
     this.notified = 0; // cx.notify() calls
     this.dirty = false;
     this.tree = null;
@@ -139,6 +162,10 @@ export class Handle {
     this.dirty = false;
     world.dirty = false;
     if (world.missing.length) throw new Error(`render asked for pictures that are not in art/:\n${[...new Set(world.missing)].join("\n")}`);
+    if (this.checkShapes) {
+      const bad = misshapen(this.tree);
+      if (bad.length) throw new Error(`render gave pictures a box of another shape (Herdr would draw them smaller, not stretched):\n${[...new Set(bad)].join("\n")}`);
+    }
     return this.tree;
   }
 

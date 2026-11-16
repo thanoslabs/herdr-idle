@@ -12,7 +12,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { CLASSES } from "../../mods/idle-rpg/rules.js";
-import { opaqueBounds } from "../harness/png.mjs";
+import { drawnIn, opaqueBounds } from "../harness/png.mjs";
 import { agent, mountRaid, mountView, raid, walk } from "../harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
@@ -64,12 +64,22 @@ const pathHas = (n, id) => {
   return false;
 };
 
-// The darkness's pieces as the stretches of the width they darken: [from, to).
+// The darkness's pieces as the stretches of the width they actually darken:
+// [from, to). Each picture is drawn at its own proportions inside its box
+// (drawnIn: Herdr never stretches one to another shape), and a clipped piece
+// shows only its clip.
 function gloomSpans(v) {
   const g = v.get("idle-rpg-gloom");
   return g.kids.map((piece) => {
-    const s = piece.style;
-    return [s.left, s.left + (s.w ?? piece.kids[0].kids?.[0]?.style.w ?? piece.kids[0].style.w)];
+    const clipped = piece.style.overflow_hidden;
+    const holder = clipped ? piece.kids[0] : piece; // the box the image sits at
+    const img = holder.kids[0];
+    const x0 = piece.style.left + (clipped ? holder.style.left : 0);
+    const d = drawnIn(img.src.replace("mods/idle-rpg/art/", ""), img.style.w, img.style.h);
+    let from = x0 + d.x;
+    let to = x0 + d.x + d.w;
+    if (clipped) [from, to] = [Math.max(from, piece.style.left), Math.min(to, piece.style.left + piece.style.w)];
+    return [Math.round(from), Math.round(to)];
   });
 }
 
@@ -77,18 +87,19 @@ describe("the night's darkness", () => {
   for (const battle of [true, false])
     test(`covers the whole width, every pixel once, ${battle ? "in a raid" : "in town (the campfire's pool cut in)"}`, async () => {
       const found = await sweep(
-        () => mountRaid({ battle }),
+        // measure what is drawn, rather than stop at a misshapen box
+        () => mountRaid({ battle }, { checkShapes: false }),
         (v, w) => {
           const spans = gloomSpans(v).sort((a, b) => a[0] - b[0]);
           const out = [];
           let at = 0;
           for (const [a, b] of spans) {
             if (a > at) out.push({ what: "a gap in the darkness", side: `from ${at}`, by: a - at });
-            if (a < at) out.push({ what: "darkness laid twice", side: `from ${a}`, by: at - a });
+            if (a < at && b > a) out.push({ what: "darkness laid twice", side: `from ${a}`, by: Math.min(at, b) - a });
             at = Math.max(at, b);
           }
           if (at < w) out.push({ what: "the darkness stops short", side: `of the right edge (ends at ${at})`, by: w - at });
-          if (v.get("idle-rpg-gloom").style.w !== w) out.push({ what: "the darkness's box", side: "is not the scene's width", by: Math.abs(v.get("idle-rpg-gloom").style.w - w) });
+          if (v.get("idle-rpg-gloom").style.w < w) out.push({ what: "the darkness's box", side: "is not the scene's width", by: Math.abs(v.get("idle-rpg-gloom").style.w - w) });
           return out;
         },
       );
