@@ -1362,6 +1362,8 @@ LETTERING = {
     "quote": ["#", "#", ".", ".", "."],                       # an apostrophe: "Time's up!"
     "slash": ["..#", "..#", ".#.", "#..", "#.."],
     "dash": ["...", "...", "###", "...", "..."],
+    "open": [".#", "#.", "#.", "#.", ".#"],                 # brackets: "(paused)" by the time
+    "close": ["#.", ".#", ".#", ".#", "#."],
 }
 LETTER_COLOURS = {"white": "#ffffff", "gold": "#ffd166",      # words and numbers; the stage, the title
                   "grey": "#8ea3bb", "red": "#ff7b7b",        # the time standing still, nobody in; a failed attempt
