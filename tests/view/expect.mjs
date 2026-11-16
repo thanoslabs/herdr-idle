@@ -6,8 +6,10 @@
 //   stage repeats it, farming (with nothing cleared yet, best 1, stage 1 is
 //   simply tried again). Before it: one stage back ("one-back").
 // - What the stage section says (stageSection in main.js): since
-//   fix/idle-pause, "(PAUSED)" beside the time while nobody attacks a living
-//   boss (PAUSED_LABEL; null before).
+//   fix/idle-pause, "(PAUSED)" beside the time while it stands still
+//   (PAUSED_LABEL; null before). Since feat/no-wipe-idle-healers the time runs
+//   while anyone is in the fight (a working agent), standing or knocked out,
+//   with the boss alive; before, only while someone stood attacking it.
 
 export const DROP_RULE = "best-1"; // "one-back" before fix/idle-pause; "best-1" since
 
@@ -24,7 +26,7 @@ export const PAUSED_LABEL = "(PAUSED)"; // null before fix/idle-pause
 
 // The stage section's text (v.text("idle-rpg-stage")), in drawing order.
 // `clock` is the time shown ("9:42"; "" while the boss is down), `running`
-// whether anyone attacks a living boss.
+// whether the time runs (anyone in the fight, the boss alive).
 export function stageTexts({ stage, farming = false, clock, running = true }) {
   const out = [`STAGE ${stage}`];
   if (farming) out.push("FARM");

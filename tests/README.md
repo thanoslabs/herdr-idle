@@ -16,11 +16,11 @@ Quote the glob: Node expands it (`node --test tests/` does not work on Node 22, 
 | | |
 |---|---|
 | `rules*.test.mjs`, `party.test.mjs`, `effects.test.mjs` | the plain modules (`rules.js`; its shop, art paths and `loadState`; `party.js`; `effects.js`) |
-| `view/*.test.mjs` | the real `main.js` through the harness: loading, fights, failures, the boss's attacks, weapon effects, panels, the HUD and `hudLayout`, screen sizes, saves, render discipline, every picture, the simulation's parity |
+| `view/*.test.mjs` | the real `main.js` through the harness: loading, fights, failures (only by the clock; everyone down at once), the boss's attacks, healers (working and standing by), weapon effects, panels, the HUD and `hudLayout`, screen sizes, saves, render discipline, every picture, the simulation's parity |
 | `crowd.test.mjs` | 50–400 agents: today's quadratic `place()`, as a baseline |
 | `sim.test.mjs` | `tools/sim.mjs --smoke` and its player |
 | `harness.test.mjs` | the harness itself |
-| `harness/` | the harness (below); `view/expect.mjs` holds the rules about to change (the drop-back on a failure, the stage section's text) in one place each |
+| `harness/` | the harness (below); `view/expect.mjs` holds the rules about to change (the drop-back on a failure, the stage section's text and when its time runs) in one place each |
 
 Known bugs are tests of the correct behaviour marked `{ todo: "why" }`: they run and report but do not fail the run. Fix the bug and remove the `todo`. A todo that starts passing is not a failure either, so CI prints a warning naming it; locally: `node --test --test-reporter=tap 'tests/**/*.test.mjs' | grep -E '^ *ok .* # TODO'`.
 
@@ -51,7 +51,7 @@ v.saves; v.stored; v.commands; v.renders; v.renderLog; v.pendingTimers()
 v.view                                   // the RaidParty instance itself
 ```
 
-`raid()` (in `harness/fixtures.mjs`) builds a version 7 save and its agents from a few options (classes, level, training, weapons, looks, stage, settings); `savedState(version)` is a save as each version of the mod wrote it; `mountView({ saved, agents, width, height, inset, seed, phase })` mounts anything.
+`raid()` (in `harness/fixtures.mjs`) builds a version 7 save and its agents from a few options (classes, statuses, level, training, weapons, looks, stage, settings); `savedState(version)` is a save as each version of the mod wrote it; `mountView({ saved, agents, width, height, inset, seed, phase })` mounts anything.
 
 A change to what the view shows or does needs a test here: a few lines with these helpers.
 

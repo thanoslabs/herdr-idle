@@ -1,15 +1,18 @@
-// Failed attempts through main.js: running out of time and being wiped both
-// drop the fight back (failStage; the rule is in ./expect.mjs) into farming,
-// with a note under the stage section, saved once; the pulsing next arrow ends it.
+// Failed attempts through main.js: only running out of time, with the boss
+// alive, loses one: it drops the fight back (failStage; the rule is in
+// ./expect.mjs) into farming, with a note under the stage section, saved once;
+// the pulsing next arrow ends it. Everyone knocked out at once ends nothing:
+// they rest and get up, and the time runs on.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { bossHp } from "../../mods/idle-rpg/rules.js";
+import { up } from "../../mods/idle-rpg/party.js";
 import { mountRaid } from "../harness/view.mjs";
 import { afterFail, stageTexts } from "./expect.mjs";
 
 // a party too tough to wipe and too weak to kill at stage 15: it times out
 const STALEMATE = { classes: ["warrior"], you: "healer", stage: 15, health: 40 };
-// a fresh party at stage 30: wiped within seconds
+// a fresh party at stage 30: all knocked out within seconds, again and again
 const DOOMED = { classes: ["wizard", "archer"], you: "archer", stage: 30 };
 
 describe("a time-out", () => {
@@ -53,23 +56,70 @@ describe("a time-out", () => {
   });
 });
 
-describe("a wipe", () => {
-  test("the last one standing falls: back a stage, farming, 'WIPED!', saved once", async () => {
+describe("everyone down at once", () => {
+  // the first moment nobody in the fight is standing
+  const allDown = (h) => Object.keys(h.view.party.members).length > 0 && up(h.view.party).length === 0;
+
+  test("nobody loses: no note, no drop back, nothing saved, and the time runs on, white, not paused", async () => {
     const v = await mountRaid(DOOMED);
     const saves = v.saves.length;
-    v.until((h) => h.view.timesUp, 120000);
-    const want = afterFail(30, 30);
-    assert.deepEqual([v.view.progress.stage, v.view.progress.farming], [want.stage, want.farming]);
-    assert.deepEqual(v.text(v.ids("idle-rpg-timesup-")[0]), [`WIPED! BACK TO STAGE ${want.stage}`]);
-    assert.equal(v.saves.length, saves + 1);
-    assert.ok(v.view.left > 590000, "a fresh attempt");
-    for (const m of Object.values(v.view.party.members)) assert.deepEqual([m.hp === m.maxHp, m.down], [true, null]);
+    v.until(allDown, 120000, 250);
+    const [left, clock] = [v.view.left, v.view.clock];
+    assert.equal(v.view.timesUp, null);
+    assert.deepEqual([v.view.progress.stage, v.view.progress.farming, v.view.monster.stage], [30, false, 30]);
+    assert.equal(v.saves.length, saves);
+    assert.equal(v.find("idle-rpg-stage-paused"), null);
+    v.advance(2000);
+    assert.ok(allDown(v), "still all down two seconds later");
+    assert.equal(v.view.left, left - (v.view.clock - clock) * 250, "the time ran every tick");
+    assert.ok(v.view.clock - clock >= 7);
+    assert.deepEqual(v.text("idle-rpg-stage"), stageTexts({ stage: 30, clock: v.text("idle-rpg-stage-clock")[0], running: true }));
+    assert.deepEqual(v.runs("idle-rpg-stage-clock")[0].colours, ["white"]);
+    assert.equal(v.get("idle-rpg-monster-time").style.bg, "#5cc8ff");
+    assert.equal(v.saves.length, saves);
   });
 
-  test("the experience the attempt earned is kept and saved", async () => {
+  test("the boss waits while nobody stands; they get up after their rests at full HP, and the fight goes on", async () => {
     const v = await mountRaid(DOOMED);
+    v.until(allDown, 120000, 250);
+    const members = v.view.party.members;
+    const first = Math.min(...Object.values(members).map((m) => m.down));
+    v.until((h) => {
+      if (allDown(h)) assert.equal(h.view.party.foe.pending?.start >= h.view.clock - 1 ? h.view.party.foe.pending.start : null, null, "no attack starts with nobody standing");
+      return !allDown(h);
+    }, 31000, 250);
+    assert.equal(v.view.clock, first, "up the tick its rest ends");
+    const back = Object.entries(members).filter(([, m]) => m.down === null);
+    assert.ok(back.length >= 1);
+    for (const [, m] of back) assert.equal(m.hp, m.maxHp);
+    assert.ok(v.find(`idle-rpg-hp-${back[0][0]}`), "its HP bar is back");
+    assert.equal(v.view.timesUp, null);
+    // the boss's next attack comes at least FIRST_ATTACK_TICKS after the last tick nobody stood
+    assert.ok(v.view.party.foe.next >= first + 3, `${v.view.party.foe.next} against ${first}`);
+  });
+
+  test("a hopeless attempt is lost only at 0:00, after ten minutes of fighting: then back a stage, farming, saved once, with its experience", async () => {
+    const v = await mountRaid(DOOMED);
+    const saves = v.saves.length;
     const before = { ...v.view.progress.xp };
-    v.until((h) => h.view.timesUp, 120000);
+    let downs = 0;
+    let was = false;
+    v.until((h) => {
+      const now = allDown(h);
+      if (now && !was) downs += 1;
+      was = now;
+      if (!h.view.timesUp) assert.equal(h.saves.length, saves, "nothing saved before the time runs out");
+      return h.view.timesUp;
+    }, 11 * 60000, 250);
+    assert.ok(downs >= 5, `everyone was down at once ${downs} times`);
+    // the time ran on every tick from the first (1.25s) to the 2400th
+    assert.equal(v.view.clock, 2400);
+    const want = afterFail(30, 30);
+    assert.deepEqual([v.view.progress.stage, v.view.progress.farming], [want.stage, want.farming]);
+    assert.deepEqual(v.text(v.ids("idle-rpg-timesup-")[0]), [`TIME'S UP! BACK TO STAGE ${want.stage}`]);
+    assert.equal(v.saves.length, saves + 1);
+    assert.equal(v.view.left, 600000, "a fresh attempt");
+    for (const m of Object.values(v.view.party.members)) assert.deepEqual([m.hp === m.maxHp, m.down], [true, null]);
     const xp = v.view.progress.xp;
     for (const k of ["you", "wizard", "archer"]) assert.ok(xp[k] > before[k], `${k} earned nothing`);
     assert.deepEqual(v.stored.xp, JSON.parse(JSON.stringify(xp)), "every total saved as it is");

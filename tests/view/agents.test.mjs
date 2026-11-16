@@ -33,8 +33,10 @@ describe("coming and going", () => {
     v.setAgents([{ ...a, status: "idle" }, b]);
     v.advance(2000);
     v.setAgents([a, b]);
-    v.advance(2000);
-    assert.equal(v.view.party.members.t1.hp, v.view.party.members.t1.maxHp);
+    v.until((h) => h.view.party.members.t1, 2000, 250);
+    const m = v.view.party.members.t1;
+    // at full HP, unless a blow struck it on the very tick it came back
+    assert.ok(m.hp === m.maxHp || m.hitAt === v.view.clock, `${m.hp} of ${m.maxHp}`);
   });
   test("you pick a class from your card; it is saved", async () => {
     const v = await mountRaid({ you: "archer" });

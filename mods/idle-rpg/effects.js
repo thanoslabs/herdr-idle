@@ -22,7 +22,7 @@
 //   aura while it is in the fight (faster attacks, more damage, the monster
 //   taking more damage), and deals half damage itself. Several healers on the
 //   same vial give one aura; different vials all count. The Heal Vial has
-//   none. What an aura adds to a blow is the aura healer's doing, so that
+//   none (it heals twice as often instead: party.js). Every healer heals. What an aura adds to a blow is the aura healer's doing, so that
 //   share of the blow's experience goes to the healer class (see Shares).
 //
 // Effects belong to a class, not to an agent (agents are short-lived): every

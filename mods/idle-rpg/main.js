@@ -19,17 +19,19 @@
 // swing, an arrow or bolt, a spell, a thrown potion, each looking like the
 // weapon its class holds) on its own rhythm, every 3 seconds or less. Each
 // attempt has a time limit, shown in the stage section, that runs only while
-// someone attacks (10 minutes, shown as "9:42"): a kill in time clears the
+// an agent is working (10 minutes, shown as "9:42"): a kill in time clears the
 // stage (and, with the "Advance after a kill" setting, moves on to the next);
-// time running out, or the party being wiped, sends it back a stage to farm.
+// time running out, the only way to lose, sends it back a stage to farm.
 // Arrows in the stage section (top centre) pick any stage reached. Turning battle mode off sends
 // everyone back to their spots.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
 // in it. At 0 HP a character is knocked out (lying down, stars circling, a
 // gold bar and a number counting down the 30 seconds of its rest; it is still
-// working) and gets up at full HP after the rest; a knocked-out party is
-// wiped, which fails the attempt like the timer. A healer with the Heal Vial heals whoever is low instead of attacking.
+// working) and gets up at full HP after the rest; with everyone down the boss
+// waits and the time runs on. Every healer throws a heal now and then at the
+// fighter lowest on HP, a working one between its attacks and an idle, done
+// or blocked one from its spot (the Heal Vial twice as often).
 // Progress (rules.js): every blow that lands earns experience for the
 // attacker's class and for you; a kill earns gold. Each class level makes the
 // class hit harder and earns it a skill point, spent in the skills panel on
@@ -56,6 +58,7 @@ import { agents, props, run, setShared, shared, spaces } from "herdr";
 import {
   ATTACK_PHASES,
   CLASSES,
+  DEFAULT_LOOK,
   LABELS,
   CLASS_SKILLS,
   MAX_RANK,
@@ -114,7 +117,7 @@ import {
   trainingPrice,
   weaponArt,
 } from "./rules.js";
-import { KO_TICKS, down, healParty, healTarget, heals, monsterTick, newParty, resetParty, restLeft, restSeconds, rise, standing, syncParty } from "./party.js";
+import { KO_TICKS, down, firstHeal, healGap, healParty, healTarget, healTicks, monsterTick, newParty, resetParty, restLeft, restSeconds, rise, standing, syncParty } from "./party.js";
 import { AURAS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
 
 const ART = "mods/idle-rpg/art";
@@ -497,10 +500,10 @@ export default class RaidParty extends View {
     // The boss of the stage being fought, { kind, hp, maxHp, stage, id, slainAt? },
     // and the attempt's time left in ms. Neither is saved: an attempt starts
     // afresh when the layout loads. The time runs down one TICK_STEP per tick
-    // of the attack clock, so only while someone is attacking a live boss.
+    // of the attack clock while anyone is in the fight with a live boss (see clockRuns).
     this.monster = bossOf(this.progress.stage, 1);
     this.left = stageTime(this.monster.stage);
-    this.timesUp = null; // { at, id, text, fading? } after an attempt failed (time, or a wipe), while its note shows
+    this.timesUp = null; // { at, id, text, fading? } after an attempt failed (its time ran out), while its note shows
     // The attack-clock tick the knocked-out characters' countdowns were last
     // turned on (see tick): they all show their seconds as of then, so any
     // number of them turn together, once a second.
@@ -688,8 +691,9 @@ export default class RaidParty extends View {
   // Experience for a heal by `key` that restored `got` HP: what one of its
   // blows (damageOf) would earn on the boss now (blowXp, so the stage's rate),
   // times the share of the heal that was needed (`got` of healOf), to its
-  // class and to you, as credit does for a blow. Without it the healer's
-  // class, healing instead of attacking, falls far behind the others. Saved
+  // class and to you, as credit does for a blow, with the fighters as the
+  // attackers (a healer standing by is not one of them, but earns all the
+  // same). Without it the healer's class falls behind the others. Saved
   // with the rest of a fight's experience (on a kill or a failed attempt).
   healXp(key, got) {
     const cls = this.sprites[key];
@@ -739,13 +743,14 @@ export default class RaidParty extends View {
     return plateIcons(this.statuses, null).map((ic) => `${ic.id}${ic.n}`).join();
   }
 
-  // The attempt failed: its time ran out, or the party was wiped (`why`
-  // "Wiped!", see tick): past stage 1 the fight goes back a stage, to farm it
+  // The attempt failed: its time ran out with the boss alive (the only way
+  // to lose one; see tick): past stage 1 the fight goes back a stage, to farm it
   // (failStage in rules.js), with a fresh attempt there; at stage 1 the same boss is back
   // at full HP with the full time. A note under the stage section says which ("Time's
   // up! Back to stage 8"). Nothing is lost but the attempt; the experience
   // its blows earned is saved, once.
-  fail(why = LABELS.timesUp) {
+  fail() {
+    const why = LABELS.timesUp;
     const from = this.monster.stage;
     const to = failStage(this.progress);
     if (to !== from) this.newBoss();
@@ -814,6 +819,27 @@ export default class RaidParty extends View {
     return this.fighters().filter((key) => !this.knocked(key));
   }
 
+  // Whether the attempt's time runs: the boss is alive and anyone is in the
+  // fight (see fighters), on their feet or knocked out. Otherwise it stands
+  // still, and the stage section says "(PAUSED)".
+  clockRuns() {
+    return this.monster?.hp > 0 && this.fighters().length > 0;
+  }
+
+  // The healers standing by in the fight's scene: every agent with the
+  // healer class on that is not working (idle, done or blocked) and not being
+  // carried, in agents() order, while the fight shows. They throw heals at the
+  // fighters on their own rhythm (see tick) from their spot in the formation,
+  // but do not fight: never a target, no aura, no part of a kill's gold or
+  // experience shares, nothing to the clock.
+  standby() {
+    const W = Math.max(320, this.size.width);
+    if (!this.battle || W < 640 || !MONSTERS[this.monster?.kind]) return [];
+    return agents()
+      .filter((a) => a.status !== "working" && this.sprites[a.address] === "healer" && this.drag?.address !== a.address)
+      .map((a) => a.address);
+  }
+
   // Brings the party (party.js) in line with who is fighting: newcomers join
   // at full HP, leavers go, everyone's max HP (rules.js maxHpOf) and spot are
   // updated. Returns the keys in the fight.
@@ -831,6 +857,14 @@ export default class RaidParty extends View {
   potionOf(cls) {
     const id = equipped(this.progress, cls, "weapon");
     return catalogue(cls, "weapon").find((it) => it.id === id)?.potion;
+  }
+
+  // The weapon someone has in hand: their class's, but a healer throwing a
+  // heal holds the Heal Vial whatever it has equipped (the heal's green potion
+  // and splash; see tick).
+  held(key) {
+    const cls = this.sprites[key];
+    return cls === "healer" && this.rhythm[key]?.heal ? DEFAULT_LOOK : equipped(this.progress, cls, "weapon");
   }
 
   // The skill ranks of the class someone has on (undefined counts as all 0).
@@ -869,7 +903,8 @@ export default class RaidParty extends View {
   // starts it again.
   wake(cx) {
     // it also runs while anyone in the fight is knocked out, so their rest runs on
-    if (this.ticking || (!this.attackers().length && !down(this.party).length)) return;
+    // (healers standing by never start it: they heal only while someone fights)
+    if (this.ticking || (!this.clockRuns() && !down(this.party).length)) return;
     this.ticking = true;
     const next = (cx) => {
       let more = false;
@@ -890,72 +925,109 @@ export default class RaidParty extends View {
   // falls into step). An attack runs ATTACK_PHASES ticks, then one of rest;
   // its blow lands on the last phase. Whoever stops attacking (stops working,
   // walks out of reach, the monster falls) loses their rhythm. Re-renders only
-  // while someone is mid-attack, the seconds shown change (the stage section's, and
-  // the knocked out's countdowns, which turn on the same beat), or something
-  // else changed. Returns whether to keep ticking: not once nobody is
-  // attacking.
+  // while someone is mid-attack or mid-throw, the seconds shown change (the
+  // stage section's, and the knocked out's countdowns, which turn on the same
+  // beat), or something else changed. Returns whether to keep ticking: not
+  // once nobody is in the fight (nor resting).
   //
   // The boss fights back on the same clock (party.js): the party is brought in
   // line with who is fighting, then its attacks start and land; whoever is
-  // knocked out stops attacking until their rest is over (the clock runs on
-  // while anyone rests, but the attempt's time does not without an attacker);
-  // a wipe fails the attempt like the timer. A healer with the Heal Vial heals
-  // the one lowest on HP instead of attacking when anyone is under HEAL_BELOW.
-  // It renders as an attack starts, a tick later (so what flies can glide),
-  // as it lands and for two ticks after (impacts fade), and on any hit, heal or
-  // knockout.
+  // knocked out stops attacking until their rest is over. Everyone down at
+  // once ends nothing: the boss waits, the attempt's time runs on (it runs
+  // while anyone is in the fight, standing or not, see clockRuns), and they
+  // get up after their rests; only the time running out fails the attempt.
+  //
+  // Healing (party.js): every healer throws a heal on a rhythm of its own
+  // (healTicks, healGap: about every 6s, 3s with the Heal Vial; neither Haste
+  // nor an aura changes it) at the standing fighter lowest on HP for its max,
+  // if anyone is under full: a working healer as well as its attacks, and a
+  // healer standing by (idle, done or blocked, see standby) while anyone is in
+  // the fight. One character does one thing at a time: a heal or an attack
+  // falling due while the other is under way waits for it to finish, and when
+  // both are due on a free tick the heal goes first. Each schedule keeps its
+  // own time (the next is due a gap after the last was due). A heal due with
+  // nobody to heal is not thrown; its next is a gap on.
+  // It renders as an attack or a throw starts, a tick later (so what flies
+  // can glide), as it lands and for two ticks after (impacts fade), and on any
+  // hit, heal or knockout.
   //
   // Weapons (effects.js): each attacker's pace is its class's Haste gap times
   // its weapon's factor (and the haste aura's), carried in fractions of a tick
   // (the next attack is due a gap after the last was due, not after it
   // started); its blow is struck with the weapon, the boss's weakness, its
-  // statuses and the party's auras, and may chain. The statuses tick only
-  // while someone attacks a live boss (they freeze with the attempt's time),
-  // their damage gathered and landing once every DOT_TICKS ticks.
+  // statuses and the party's auras, and may chain. The statuses tick while
+  // the attempt's time runs (with everyone knocked out too: what was put on
+  // keeps burning; they freeze with the time), their damage gathered and
+  // landing once every DOT_TICKS ticks. The auras need their healer standing
+  // in the fight.
   tick(cx) {
     const t = (this.clock += 1);
     let changed = false;
     const inFight = this.muster();
     const alive = this.monster.hp > 0;
-    const e = alive ? monsterTick(this.party, t, stageDamage(this.monster.stage), Math.random) : { back: rise(this.party, t), hits: [], landed: null, started: null, wiped: false };
+    // the attempt's time runs while anyone is in the fight, on their feet or not, and the boss lives
+    const running = inFight.length > 0 && alive;
+    const e = alive ? monsterTick(this.party, t, stageDamage(this.monster.stage), Math.random) : { back: rise(this.party, t), hits: [], landed: null, started: null };
     if (e.back.length || e.hits.length || e.started || e.landed) changed = true;
     const foe = this.party.foe;
     if (foe.pending && t === foe.pending.start + 1) changed = true; // what flies sets off
     if (foe.last && t - foe.last.lands >= 1 && t - foe.last.lands <= 2) changed = true; // the pose ends, impacts fade
-    if (e.wiped) {
-      this.fail(LABELS.wiped);
-      cx.notify();
-      return true;
-    }
     const keys = this.attackers();
     const auras = this.auras();
+    // everyone with a rhythm this tick: the attackers, then the healers standing by
+    const actors = [...keys, ...(running ? this.standby() : [])];
     for (const key of Object.keys(this.rhythm)) {
-      if (keys.includes(key)) continue;
+      if (actors.includes(key)) continue;
       if (this.rhythm[key].start !== null) changed = true; // cut off mid-attack: draw them at rest
       delete this.rhythm[key];
     }
-    // a healer with the Heal Vial heals instead when someone is low (see
-    // party.js), two healers on one tick picking different allies while they can
+    // two healers on one tick pick different allies while they can (see party.js)
     const aimed = [];
-    for (const key of keys) {
+    for (const key of actors) {
       const cls = this.sprites[key];
-      const pace = cadence(attackTicksOf(this.ranksOf(key)), cls, equipped(this.progress, cls, "weapon"), auras);
-      // someone who joins starts anywhere in their first gap
-      const r = (this.rhythm[key] ??= { start: null, next: t + 1 + Math.random() * Math.max(0, pace.ticks - 1), seed: 0, factor: 1 });
+      const fights = keys.includes(key);
+      const healer = cls === "healer";
+      const pace = fights ? cadence(attackTicksOf(this.ranksOf(key)), cls, equipped(this.progress, cls, "weapon"), auras) : null;
+      const mend = healer ? healTicks(this.potionOf(cls)) : 0;
+      // someone who joins starts anywhere in their first gap, and a healer anywhere in its first heal's
+      let r = this.rhythm[key];
+      if (!r) {
+        r = this.rhythm[key] = { start: null, next: fights ? t + 1 + Math.random() * Math.max(0, pace.ticks - 1) : null, mend: null, seed: 0, factor: 1, heal: null };
+        if (healer) r.mend = t + firstHeal(mend, Math.random());
+      }
+      if (r.next === null && fights) r.next = t + 1 + Math.random() * Math.max(0, pace.ticks - 1); // a healer standing by that starts working
+      if (healer && r.mend === null) r.mend = t + firstHeal(mend, Math.random()); // one that has become a healer
+      if (!healer) r.mend = null;
+      if (!fights) r.next = null;
+      if (!fights && r.start !== null && !r.heal) {
+        r.start = null; // an attack cut off: one standing by only heals
+        changed = true; // drawn at rest
+      }
       if (r.start !== null && t - r.start > ATTACK_PHASES) r.start = null; // its rest has been drawn
-      if (r.start === null && t >= r.next) {
+      if (r.start !== null) continue;
+      // a heal first: due, and someone to heal; else none is thrown and the next is a gap on
+      if (healer && t >= r.mend) {
+        const to = healTarget(this.party, aimed);
+        r.mend = Math.max(r.mend, t - 1) + healGap(mend, Math.random());
+        if (to) {
+          r.start = r.seed = t;
+          r.heal = to;
+          aimed.push(to);
+          continue;
+        }
+      }
+      if (fights && t >= r.next) {
         r.start = r.seed = t;
+        r.heal = null;
         r.factor = pace.factor; // what its blow's damage is multiplied by, for the gap it keeps
         r.haste = pace.haste; // the share of its blows the haste aura adds (owed to the healer)
         r.next = Math.max(r.next, t - 1) + nextGap(pace.ticks, Math.random());
-        r.heal = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, aimed) : null;
-        if (r.heal) aimed.push(r.heal);
       }
     }
-    // the boss's statuses tick, while anyone attacks it alive (never while it is
+    // the boss's statuses tick while the attempt's time runs (never while the boss is
     // down, nor in the countdown to the next stage); their damage is gathered (see DOT_TICKS)
     const kind = this.monster.kind;
-    if (keys.length && this.monster.hp > 0) {
+    if (running) {
       const before = this.iconKey();
       for (const d of tickStatuses(this.statuses, kind, auras)) {
         const p = (this.dots[`${d.cls}/${d.status}`] ??= { cls: d.cls, status: d.status, matchup: d.matchup, n: 0, owed: { attacker: 0, haste: 0, might: 0, hex: 0 } });
@@ -964,18 +1036,16 @@ export default class RaidParty extends View {
       }
       if (this.iconKey() !== before) changed = true; // one wore off
     }
-    // At the impact a healing throw heals whoever is lowest now (the one it
-    // was aimed at may have left, fallen or been topped up), if anyone still
-    // qualifies and the healer still holds the Heal Vial; else it is an
-    // ordinary blow (with an aura vial, an aura healer's half). A heal earns its
-    // class experience (see healXp).
-    const landing = keys.filter((key) => this.phaseOf(key) === ATTACK_PHASES);
+    // At the impact a heal goes to whoever is lowest now (the one it was aimed
+    // at may have left, fallen or been topped up), if anyone is under full; the
+    // potion is drawn landing on them. A heal earns its class experience (see healXp).
+    const landing = actors.filter((key) => this.phaseOf(key) === ATTACK_PHASES);
     const healed = [];
     for (const key of landing.filter((k) => this.rhythm[k].heal)) {
       const cls = this.sprites[key];
-      const to = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, healed) : null;
-      this.rhythm[key].heal = to;
+      const to = cls === "healer" ? healTarget(this.party, healed) : null;
       if (!to) continue;
+      this.rhythm[key].heal = to;
       healed.push(to);
       const got = healParty(this.party, to, healOf(this.progress, cls), t);
       if (got > 0) {
@@ -1002,7 +1072,7 @@ export default class RaidParty extends View {
     // what the statuses dealt lands once a second, one sum per class and status:
     // as the attempt's time shown turns to the next second (drawn then anyway),
     // or every DOT_TICKS while it stands still
-    const turning = keys.length && this.monster.hp > 0 ? Math.ceil((this.left - TICK_STEP) / 1000) !== Math.ceil(this.left / 1000) : t % DOT_TICKS === 0;
+    const turning = running ? Math.ceil((this.left - TICK_STEP) / 1000) !== Math.ceil(this.left / 1000) : t % DOT_TICKS === 0;
     if (turning && this.monster.hp > 0) {
       for (const p of Object.values(this.dots)) {
         if (p.n > 0) {
@@ -1019,7 +1089,7 @@ export default class RaidParty extends View {
     // (a turn of the stage section's seconds is always a beat, so a countdown never skips a
     // number when the time resumes; the every-4-ticks beat while it stands still
     // keeps a second from the last)
-    const plateTurn = keys.length > 0 && this.monster.hp > 0 && turning;
+    const plateTurn = running && this.monster.hp > 0 && turning;
     if (turning && (plateTurn || t - this.koBeat >= DOT_TICKS) && down(this.party).length) {
       this.koBeat = t;
       changed = true;
@@ -1027,9 +1097,9 @@ export default class RaidParty extends View {
     // a number that popped in on the last tick starts its rise and fade on this one
     // (an attacker's rest draws it; damage over time can land with nobody mid-attack)
     if (this.damage.some((d) => d.tick === t - 1)) changed = true;
-    // the attempt's time runs while the boss is alive and someone attacks it;
+    // the attempt's time runs while the boss is alive and anyone is in the fight;
     // the stage section shows whole seconds, so it is drawn again as each one passes
-    if (keys.length && this.monster.hp > 0) {
+    if (running && this.monster.hp > 0) {
       const shown = Math.ceil(this.left / 1000);
       this.left -= TICK_STEP;
       if (this.left <= 0) {
@@ -1043,8 +1113,8 @@ export default class RaidParty extends View {
       note.fading = true;
       changed = true;
     }
-    if (changed || keys.some((key) => this.rhythm[key].start !== null)) cx.notify();
-    return keys.length > 0 || (inFight.length > 0 && down(this.party).length > 0);
+    if (changed || actors.some((key) => this.rhythm[key]?.start != null)) cx.notify();
+    return running || (inFight.length > 0 && down(this.party).length > 0);
   }
 
   // A number from 0 to n - 1 for one attacker's attack that started on tick
@@ -1139,7 +1209,7 @@ export default class RaidParty extends View {
         .transition("top", { duration: FLIGHT, easing: "linear" })
         .child(inner(div().relative()).child(art(name, w, h)));
     const from = (dx, dy) => ({ x: s.x + d * dx, y: s.y - dy });
-    const weapon = equipped(this.progress, c, "weapon");
+    const weapon = this.held(who.key);
     const part = (name) => attackArt(c, weapon, name, side);
 
     // the warrior swings its own weapon; only the slash is extra
@@ -1634,16 +1704,18 @@ export default class RaidParty extends View {
     const fighting = this.fighting && a.status === "working";
     // In formation everyone faces the monster in a fighting stance, on a wider
     // picture (96px) so a weapon can reach out; a working agent winds up on
-    // phase 1 and strikes on 2 and 3.
+    // phase 1 and strikes on 2 and 3, and so does a healer standing by as it
+    // throws a heal (it has a rhythm only then: see tick).
     const dir = this.at[a.address].dir;
     const phase = this.phaseOf(a.address);
-    const frame = !fighting || !(this.monster?.hp > 0) ? "stance" : phase === 1 ? "windup" : phase === 2 || phase === 3 ? "strike" : "stance";
+    const acts = fighting || Boolean(this.rhythm[a.address]);
+    const frame = !acts || !(this.monster?.hp > 0) ? "stance" : phase === 1 ? "windup" : phase === 2 || phase === 3 ? "strike" : "stance";
     // knocked out (still working): lying on its back, its head away from the monster
     const out = fighting && this.knocked(a.address);
     const pose = out
       ? this.sprite(c, `down/${dir > 0 ? "l" : "r"}`, 72, 72)
       : this.fighting
-        ? div().relative().w(72).h(72).child(div().absolute().left(dir > 0 ? 0 : -24).top(0).child(this.sprite(c, `${frame}/${dir > 0 ? "r" : "l"}`, 96, 72)))
+        ? div().relative().w(72).h(72).child(div().absolute().left(dir > 0 ? 0 : -24).top(0).child(this.sprite(c, `${frame}/${dir > 0 ? "r" : "l"}`, 96, 72, undefined, undefined, this.held(a.address))))
         : this.sprite(c, "stand", 72, 72);
     const where = `${a.space_name} · ${a.tab_name}`;
     const open = this.card === a.address;
@@ -2043,7 +2115,7 @@ export default class RaidParty extends View {
                   .absolute()
                   .left(this.youDir > 0 ? 0 : -24)
                   .top(0)
-                  .child(this.sprite(c, `${!this.youFights ? "stance" : [0, "windup", "strike", "strike", 0][this.phaseOf(YOU)] || "stance"}/${this.youDir > 0 ? "r" : "l"}`, 96, 72)),
+                  .child(this.sprite(c, `${!this.youFights ? "stance" : [0, "windup", "strike", "strike", 0][this.phaseOf(YOU)] || "stance"}/${this.youDir > 0 ? "r" : "l"}`, 96, 72, undefined, undefined, this.held(YOU))),
               )
           : this.sprite(c, this.walking ? (this.step ? "walk/r" : "walk/l") : "stand", 72, 72),
       )
@@ -2307,7 +2379,8 @@ export default class RaidParty extends View {
       s.y = Math.round(s.y);
       if (fire !== null && !foeKind) this.at[a.address] = this.clearOfFire(s, fire);
       actors.push({ y: this.at[a.address].y, draw: () => this.critter(a) });
-      if (this.fighting && a.status === "working" && this.monster.hp > 0) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: a.address, cls: this.sprites[a.address], ...this.at[a.address] }, W, foeKind) });
+      // what a working agent throws or swings, and a healer standing by's heals
+      if (this.fighting && (a.status === "working" || this.rhythm[a.address]) && this.monster.hp > 0) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: a.address, cls: this.sprites[a.address], ...this.at[a.address] }, W, foeKind) });
     }
     // level-up notes and critical blows' numbers, drawn after the HUD with the
     // damage numbers (they rise high enough in a short scene to meet it)
@@ -2547,8 +2620,8 @@ export default class RaidParty extends View {
   // ("10:00"), so it keeps its size as the seconds turn.
   stageWidth() {
     const farm = this.progress.farming ? 6 + letterW(LABELS.farm) : 0;
-    // while nobody attacks a living boss the time stands still, and says so
-    const paused = this.monster?.hp > 0 && this.attackers().length === 0 ? letterW(LABELS.paused) + 6 : 0;
+    // while nobody is in the fight with a living boss the time stands still, and says so
+    const paused = this.monster?.hp > 0 && !this.clockRuns() ? letterW(LABELS.paused) + 6 : 0;
     return 2 * FRAME + 2 * 4 + 18 + 2 + letterW(LABELS.stage(this.progress.stage)) + farm + 2 + 18 + 10 + paused + letterW("00:00");
   }
 
@@ -2717,7 +2790,7 @@ export default class RaidParty extends View {
   // farming after a failed attempt a green "FARM" after the number, and the
   // next arrow pulsing), and the minutes and seconds left of the attempt
   // ("9:42"), white while the time runs and grey while it stands still (nobody
-  // attacking; none while the boss is down); under them a bar of the time
+  // in the fight, see clockRuns; none while the boss is down); under them a bar of the time
   // left, gliding between renders, which come at least once a second while
   // the time runs (see tick), so nothing renders just to move it.
   stageSection(b) {
@@ -2726,7 +2799,7 @@ export default class RaidParty extends View {
     const { stage, best } = this.progress;
     const farming = Boolean(this.progress.farming);
     const limit = stageTime(m.stage);
-    const running = !dead && this.attackers().length > 0;
+    const running = !dead && this.clockRuns();
     const x0 = FRAME + 4;
     const y0 = FRAME + 1;
     const arrow = (dir, to, x) => {
@@ -2765,7 +2838,7 @@ export default class RaidParty extends View {
     kids.push(arrow("next", stage + 1, x));
     const clock = dead ? "" : clockText(this.left);
     const barW = b.w - 2 * x0;
-    // the time only runs while someone attacks: standing still, it says so
+    // the time only runs while anyone is in the fight: standing still, it says so
     if (!dead && !running) {
       kids.push(
         div()
@@ -2773,7 +2846,7 @@ export default class RaidParty extends View {
           .absolute()
           .left(b.w - x0 - letterW("00:00") - 6 - letterW(LABELS.paused))
           .top(y0 + 4)
-          .tooltip("The time runs only while an agent is working and attacking.")
+          .tooltip("The time runs only while an agent is working.")
           .child(letterText(LABELS.paused, "grey")),
       );
     }
@@ -2808,8 +2881,8 @@ export default class RaidParty extends View {
   }
 
   // A stage note under the stage section, in a frame of its own (see
-  // hudLayout): after a failed attempt, "Time's up! Back to stage 8" or
-  // "Wiped! Back to stage 8" in red, which pops in, then on the render tick()
+  // hudLayout): after a failed attempt, "Time's up! Back to stage 8" in
+  // red, which pops in, then on the render tick()
   // asks for once it has shown TIMES_UP_FRESH (marking it `fading`) fades
   // natively, gone after TIMES_UP_MS; or, while a boss that first cleared its
   // stage lies there (see ADVANCE_MS), "Moving to stage 13 in 3" in gold,

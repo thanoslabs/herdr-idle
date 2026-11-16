@@ -1,6 +1,6 @@
 // The boss fighting back, as drawn: HP bars over those in the fight only, its
 // attacks (pose, marker, what flies and lands), knockouts with the down pose,
-// stars, rest bar and countdown, getting up, and the Heal Vial's heals.
+// stars, rest bar and countdown, getting up, and heals (more in healers.test.mjs).
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { KO_TICKS } from "../../mods/idle-rpg/party.js";
@@ -121,7 +121,7 @@ describe("knockouts", () => {
 });
 
 describe("healing", () => {
-  test("a Heal Vial healer heals the one lowest instead of attacking, and a green plus rises off it", async () => {
+  test("a working healer heals as well as attacking, and a green plus rises off whoever it heals", async () => {
     const v = await mountRaid({ classes: ["warrior", "healer"], you: "archer", stage: 6, health: 4 });
     v.until((h) => h.ids("idle-rpg-healed-").length > 0, 120000);
     const id = v.ids("idle-rpg-healed-")[0];
@@ -131,10 +131,14 @@ describe("healing", () => {
     assert.deepEqual([v.get(id).style.opacity, v.get(id).style.top], [0, -92]);
   });
 
-  test("an aura vial never heals; its healer shows the vial's icon by its bar", async () => {
+  test("an aura vial's healer heals too, with the Heal Vial's potion, and shows its vial's icon by its bar", async () => {
     const v = await mountRaid({ classes: ["warrior", "healer"], you: "archer", stage: 6, health: 4, weapons: { healer: "might" } });
-    v.advance(60000);
-    assert.equal(v.ids("idle-rpg-healed-").length, 0);
+    v.until((h) => h.ids("idle-rpg-healed-").length > 0, 120000);
     assert.ok(v.images("idle-rpg-aura-t2").some((p) => p.endsWith("effects/icons/might.png")));
+    // its own blows throw the Might Vial's potion
+    v.until((h) => h.view.phaseOf("t2") === 2 && !h.view.rhythm.t2.heal, 60000, 250);
+    assert.ok(v.images("idle-rpg-shot-t2").some((p) => p.endsWith("attacks/potion/might.png")));
+    v.until((h) => h.view.phaseOf("t2") === 2 && h.view.rhythm.t2.heal, 60000, 250);
+    assert.ok(v.images("idle-rpg-shot-t2").some((p) => p.endsWith("attacks/potion/heal.png")));
   });
 });
