@@ -70,13 +70,14 @@ jobs:
           # colourway, each weapon's layer for its class in every picture it has
           # and its attack's pictures facing each way, each hat's overlay for each
           # class (no hat, no overlay), every monster's pictures (its attacks on the party too) and every character
-          # of the pixel font in every colour it has (and no other colour), the
+          # of the pixel font in every colour it has (and no other colour), every
+          # character of the lettering likewise and every label the HUD letters, the
           # weapon effects' icons, marks and pictures on the boss (effects.js);
           # plus every picture main.js names outright
           node --input-type=module <<'EOF'
           import { existsSync, readdirSync, readFileSync } from "node:fs";
           import { EFFECT_ICONS, EFFECT_MARKS, EFFECT_OVERLAYS, effectIconArt, markArt, overlayArt } from "./mods/idle-rpg/effects.js";
-          import { ATTACK_PARTS, CLASSES, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, MONSTER_ART, MONSTER_ATTACKS, WEAPON_FRAMES, attackArt, attackPart, catalogue, glyphArt, hatArt, lookArt, monsterArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
+          import { ATTACK_PARTS, CLASSES, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, LABELS, LETTERS, LETTER_COLOURS, MONSTER_ART, MONSTER_ATTACKS, WEAPON_FRAMES, attackArt, attackPart, catalogue, clockText, glyphArt, hatArt, letterArt, letterable, lookArt, monsterArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
           const dir = "mods/idle-rpg";
           const unknown = KINDS.filter((k) => !MONSTER_ART[k]);
           if (unknown.length) {
@@ -114,7 +115,40 @@ jobs:
             console.error(`Text colours the pixel font lacks: ${uncoloured.join(", ") || "(no DOT_COLOURS in main.js)"}`);
             process.exit(1);
           }
+          // the lettering (the HUD's words) likewise: its colours are
+          // LETTER_COLOURS, and every colour a letterText call or a note or
+          // button in main.js sets it in is one ("text: ..." and "colour: ...")
+          const letterings = readdirSync(`${dir}/art/lettering`).sort();
+          if (letterings.join() !== [...LETTER_COLOURS].sort().join()) {
+            console.error(`art/lettering has ${letterings.join(", ")}; LETTER_COLOURS is ${LETTER_COLOURS.join(", ")}`);
+            process.exit(1);
+          }
+          const lettered = [...source.matchAll(/letterText\(((?:[^()]|\([^()]*\))*)\)/g)].map((m) => m[1]).filter((args) => !args.startsWith("text, colour"));
+          // the words come only from LABELS in rules.js: no letterText call is given a quoted string
+          const quoted = lettered.filter((args) => /^\s*["'`]/.test(args));
+          if (quoted.length) {
+            console.error(`letterText given words not in LABELS (rules.js): ${quoted.join(" | ")}`);
+            process.exit(1);
+          }
+          const letterColours = [...lettered.flatMap((args) => [...args.matchAll(/"([a-z]+)"/g)]), ...source.matchAll(/\b(?:text|colour): "([a-z]+)"/g)].map((m) => m[1]);
+          const unlettered = letterColours.filter((c) => !LETTER_COLOURS.includes(c));
+          if (lettered.length < 3 || unlettered.length) {
+            console.error(`Lettering colours it lacks: ${unlettered.join(", ") || `(only ${lettered.length} letterText calls)`}`);
+            process.exit(1);
+          }
+          // and every label main.js letters can be drawn whole: the numbers beside the
+          // words are shortNumber's and clockText's, and each label is tried with every digit
+          const samples = ["0123456789", "999"];
+          const labels = Object.values(LABELS).flatMap((l) => (typeof l === "function" ? samples.flatMap((n) => [l(n, n), l(LABELS.timesUp, n), l(LABELS.wiped, n)]) : [l]));
+          for (let n = 0; n < 1e80; n = n * 1.37 + 1) labels.push(shortNumber(n));
+          for (let ms = 0; ms <= 3600000; ms += 997) labels.push(clockText(ms));
+          const unletterable = [...new Set(labels.filter((t) => !letterable(t)))];
+          if (unletterable.length) {
+            console.error(`Labels the lettering cannot draw: ${unletterable.join(" | ")}`);
+            process.exit(1);
+          }
           const paths = [
+            ...LETTER_COLOURS.flatMap((c) => [...LETTERS].filter((ch) => ch !== " ").map((ch) => letterArt(c, ch))),
             ...EFFECT_ICONS.map(effectIconArt),
             ...EFFECT_MARKS.map(markArt),
             ...Object.entries(EFFECT_OVERLAYS).flatMap(([status, parts]) => parts.map((part) => overlayArt(status, part))),
