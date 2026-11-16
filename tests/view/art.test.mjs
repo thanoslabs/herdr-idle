@@ -166,11 +166,11 @@ describe("every picture asked for is in art/", () => {
 // the sweep or a label, and this says what to update. (Digits are left out:
 // which show depends on the stage and the time; every digit is drawn in white.)
 const UNDRAWN_LETTERING = {
-  white: "b bang c dash f g h j k l p plus q quote slash v x y z",
-  gold: "b bang c colon dash f h j k l plus point q quote slash u w x z",
-  grey: "a bang c dash f g h j k l m p plus point q quote r s slash u v w x z",
-  red: "colon dash f h j l m n plus point q quote r slash u v x y z",
-  green: "b bang c colon d dash e g h i j k l n o p plus point q quote s slash t u v w x y z",
+  white: "b bang c close dash f g h j k l open p plus q quote slash v x y z",
+  gold: "b bang c close colon dash f h j k l open plus point q quote slash u w x z",
+  grey: "bang c dash f g h j k l m plus point q quote r slash v w x z",
+  red: "close colon dash f h j l m n open plus point q quote r slash u v x y z",
+  green: "b bang c close colon d dash e g h i j k l n o open p plus point q quote s slash t u v w x y z",
 };
 
 // The lettering's pictures no label or number draws: every character in

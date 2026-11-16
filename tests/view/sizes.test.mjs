@@ -138,7 +138,7 @@ describe("the night's darkness", () => {
     for (const p of drawnAbove) assert.match(p, /^scene\/(stars|sun|moon|cloud-a|cloud-b)\.png$/, `${p} is drawn above the darkness`);
   });
 
-  test("covers the whole scene height at night", { todo: "the darkness is 296px tall (the floor, the wall and 80px over it, fading out): on a scene taller than 296px the top (H - 296)px, up to 264px at 560, is darkened only by the sky's half-strength tint" }, async () => {
+  test("reaching the top of a scene taller than 296px (a possible change, not a reported defect)", { todo: "by design the darkness is 296px tall (the floor, the wall and 80px over it, fading out): on a scene taller than 296px the top (H - 296)px, up to 264px at 560, has only the sky's half-strength tint; this asserts full cover in case that is wanted" }, async () => {
     const found = await sweep(
       () => mountRaid(),
       (v, w, h) => {

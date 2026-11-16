@@ -119,7 +119,8 @@ describe("a kill", () => {
 describe("the attempt's clock", () => {
   test("runs while someone attacks, shown as minutes and seconds with a bar", async () => {
     const v = await mountRaid({ ...NO_HEALER, stage: 30 , health: 60 });
-    assert.deepEqual(v.text("idle-rpg-stage"), stageTexts({ stage: 30, clock: "10:00", running: false }));
+    // working agents are attackers from the start: the clock reads as running (white, not paused) before the first tick
+    assert.deepEqual(v.text("idle-rpg-stage"), stageTexts({ stage: 30, clock: "10:00", running: true }));
     v.advance(10000);
     const left = v.view.left;
     // the clock started with the first tick at 1.25s: 36 ticks of 250ms by 10s

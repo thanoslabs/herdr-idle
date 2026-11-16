@@ -10,6 +10,7 @@
 // As in gpui-kit, an element is consumed by the parent it is given to: giving
 // it to a second one throws.
 
+import { GLYPHS, LETTERS, glyphArt, glyphWidth, letterArt, letterWidth } from "../../mods/idle-rpg/rules.js";
 import { recordImage } from "./world.mjs";
 
 // The element methods main.js uses, each checked against gpui-kit.d.ts (the
@@ -240,18 +241,19 @@ export function boxOf(el, rootSize) {
 // a picture per character in a row of absolutely placed boxes. These turn
 // them back into strings.
 
-const GLYPH_NAMES = { plus: "+", bang: "!", point: ".", colon: ":", quote: "'", slash: "/", dash: "-" };
-const LETTER_WIDTHS = { M: 5, W: 5, N: 4, "!": 1, ".": 1, ":": 1, "'": 1, " ": 1 };
-const FONT_WIDTHS = { ".": 1 };
+// The picture names of both faces, read back from rules.js's own builders
+// (so a character added there reads back here with no change).
+const NAMES = new Map();
+for (const ch of LETTERS) if (letterArt("white", ch)) NAMES.set(`lettering:${letterArt("white", ch).split("/").pop().replace(".png", "")}`, ch);
+for (const ch of GLYPHS) NAMES.set(`font:${glyphArt("white", ch).split("/").pop().replace(".png", "")}`, ch);
 const GLYPH_SRC = /\/(font|lettering)\/([a-z]+)\/([a-z0-9]+)\.png$/;
 
 // { face, colour, ch } for a glyph's picture, or null.
 export function glyphOf(src) {
   const m = GLYPH_SRC.exec(src ?? "");
   if (!m) return null;
-  const name = m[3];
-  const ch = GLYPH_NAMES[name] ?? name.toUpperCase();
-  return { face: m[1], colour: m[2], ch };
+  const ch = NAMES.get(`${m[1]}:${m[3]}`);
+  return ch === undefined ? null : { face: m[1], colour: m[2], ch };
 }
 
 // Whether `el` is one character of a run: a box placed by `left` holding
@@ -267,7 +269,7 @@ export function readRun(el) {
   const glyphs = el.kids.map((k) => ({ left: k.style.left, w: k.kids[0].style.w, ...glyphOf(k.kids[0].src) })).sort((a, b) => a.left - b.left);
   const face = glyphs[0].face;
   // art px per screen px: the lettering is 2; the font's scale comes from the first glyph's width
-  const widthOf = (ch) => (face === "lettering" ? (LETTER_WIDTHS[ch] ?? 3) : (FONT_WIDTHS[ch] ?? 3));
+  const widthOf = (ch) => (face === "lettering" ? letterWidth(ch) : glyphWidth(ch));
   const scale = face === "lettering" ? 2 : glyphs[0].w / (widthOf(glyphs[0].ch) + 2);
   let text = "";
   let next = 0; // where the next character would start, in art px

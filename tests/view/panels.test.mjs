@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { trainingPrice } from "../../mods/idle-rpg/rules.js";
-import { mountRaid, mountView, savedState, timeAt } from "../harness/view.mjs";
+import { misshapen, mountRaid, mountView, savedState, timeAt } from "../harness/view.mjs";
 
 const PANELS = ["idle-rpg-codex", "idle-rpg-skills", "idle-rpg-shop", "idle-rpg-settings"];
 const open = (v) => PANELS.filter((id) => v.has(id));
@@ -157,6 +157,14 @@ describe("the shop", () => {
     v.click("idle-rpg-shop-buy-haste");
     assert.equal(v.view.progress.gold, 5);
     assert.equal(v.view.progress.looks.healer.weapon.equipped, "haste");
+  });
+});
+
+describe("the shop's pictures", () => {
+  test("every picture in the shop has a box of its own shape", { todo: "the Hats tab's icon (icons/hat.png, 72x64) is given an 18x18 box: Herdr draws it at 18x16, centred (main.js shopCard nav, SHOP_ICONS)" }, async () => {
+    const v = await mountRaid({ gold: 50 });
+    v.click("idle-rpg-gold");
+    assert.deepEqual(misshapen(v.get("idle-rpg-shop"), new Set()), []);
   });
 });
 

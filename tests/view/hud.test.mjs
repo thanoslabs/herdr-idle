@@ -41,6 +41,14 @@ describe("what the frames say", () => {
     assert.deepEqual(v.text("idle-rpg-plate"), ["Dragon", "5.3K/5.3K"]);
     assert.ok(!v.text("idle-rpg-plate").some((t) => /stage|\d:\d\d/i.test(t)));
   });
+  test("the stage section is wider while paused, by the label and its gap", async () => {
+    const v = await mountRaid({ stage: 12 });
+    const running = v.box("idle-rpg-stage").w;
+    v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
+    const paused = v.box("idle-rpg-stage");
+    assert.deepEqual(v.runs("idle-rpg-stage-paused").map((r) => [r.text, r.colours]), [["(PAUSED)", ["grey"]]]);
+    assert.ok(paused.w > running, `${paused.w} against ${running}`);
+  });
   test("the stage section and the plate are apart; a note lies under the section, over the plate", async () => {
     for (const stage of [1, 2, 3])
       for (const height of [230, 360, 560]) {
