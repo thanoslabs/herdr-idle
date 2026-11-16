@@ -64,6 +64,8 @@ Alternatively, ask your agent inside Herdr to read `~/.config/herdr-app/AGENTS.m
 - Edit the files in this repo, then run `./install.sh` to copy them into Herdr. Herdr reloads layouts and mods as they change; if a mod edit does not show, switch layouts away and back.
 - Run `herdr-app check mods/idle-rpg` after every mod change, and `herdr-app status` to see errors.
 - All the pixel art is generated: edit the grids in `tools/idle-rpg-sprites.py` and run `python3 tools/idle-rpg-sprites.py mods/idle-rpg/art`. It writes `art/` in folders by what a picture shows, then by what it is doing (`scene/`, `classes/<class>/<look>/walk/l.png`, `weapons/<class>/<weapon>/`, `hats/`, `monsters/<kind>/roar/`, `attacks/<what>/<variant>/`, `stations/`, `campfire/`, `light/`, `status/`, `icons/`, `effects/`, `font/`); `RECIPE.md` lists them. Re-running `./install.sh` replaces the installed `art/` whole, so no picture from an older install lingers.
+- Run the tests with `node --test 'tests/**/*.test.mjs'` (Node 22, no dependencies; CI runs them on every pull request). They include a harness that runs the real `main.js` under Node, so a view change can be tested without the app; see [`tests/README.md`](tests/README.md).
+- `node tools/sim.mjs` simulates the game's balance (time to clear each stage for a party and a way of playing; `--help` for the options).
 - Herdr writes `gpui-kit.d.ts` and `jsconfig.json` into each mod folder; they are git-ignored.
 - See [CONTRIBUTING.md](CONTRIBUTING.md) for branch, commit and release conventions.
 
@@ -72,7 +74,8 @@ Alternatively, ask your agent inside Herdr to read `~/.config/herdr-app/AGENTS.m
 ```
 .
 ├── install.sh       # copies the layout into ~/.config/herdr-app
-├── tools/           # idle-rpg-sprites.py: draws every PNG in art/
+├── tools/           # idle-rpg-sprites.py: draws every PNG in art/; sim.mjs: the balance simulation
+├── tests/           # node --test: the rules, and the view through a harness
 ├── layouts/         # idle-rpg.json (the window), idle-rpg.svg (settings preview)
 ├── mods/            # idle-rpg/ (main.js, rules.js, mod.json, art/<entity>/…)
 ├── themes/          # idle-rpg.json

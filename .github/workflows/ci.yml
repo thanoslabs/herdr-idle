@@ -225,3 +225,10 @@ jobs:
           test ! -L "$home/mods/idle-rpg/art"
           test -f "$outside/keep.png"
           diff -r mods/idle-rpg/art "$home/mods/idle-rpg/art"
+
+      - name: Run the tests
+        run: |
+          # Node's built-in runner, no dependencies (tests/README.md). The runner's
+          # Node must be 22 or later (.tool-versions pins the version used locally).
+          node -e 'const [major] = process.versions.node.split("."); if (+major < 22) { console.error(`Node ${process.version}: the tests need 22 or later`); process.exit(1); }'
+          node --test --test-reporter=spec 'tests/**/*.test.mjs'

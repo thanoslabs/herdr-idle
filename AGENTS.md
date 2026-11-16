@@ -7,6 +7,7 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 ## Tech stack
 
 - **Herdr layouts** (`layouts/*.json`), **themes** (`themes/*.json`) and **mods** (`mods/<name>/main.js`, JavaScript against gpui-kit; no HTML, CSS or Node APIs)
+- **Node** (22, built-in test runner, no dependencies) for `tests/` and `tools/sim.mjs`
 - **Python 3** (standard library only) for `tools/idle-rpg-sprites.py`, which draws the art, and a POSIX `sh` installer
 - **Renovate** and **GitHub Actions** (CI, release)
 - **MIT License**
@@ -22,7 +23,8 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 ├── PLAN.md                   # Planning notes for growing it into an idle RPG
 ├── preview.png               # Still, for Herdr's gallery
 ├── battle.gif                # Battle mode in motion, for the README
-├── tools/                    # idle-rpg-sprites.py: generates every PNG in art/ (the whole folder tree)
+├── tools/                    # idle-rpg-sprites.py: generates every PNG in art/ (the whole folder tree); sim.mjs: the balance simulation
+├── tests/                    # Node tests (node --test), with a harness that runs the real main.js; see tests/README.md
 ├── install.sh                # Copies the layout into ~/.config/herdr-app
 ├── .github/                  # CODEOWNERS, Renovate config, workflows (CI, release, Renovate)
 ├── .tool-versions            # Pinned tool versions (asdf/mise)
@@ -42,6 +44,14 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 - Art is original. Do not copy characters or artwork from existing games or products.
 - `art/` is organised by entity, then by animation, with short names inside (`classes/<class>/<look>/walk/l.png`, `monsters/dragon/roar/top.png`); the generator's header and `RECIPE.md` list the folders. A picture whose path depends on the state or an agent gets it from a builder in `rules.js` (`lookArt`, `weaponArt`, `hatArt`, `attackArt`, `monsterArt`, `glyphArt`, `letterArt`) or `effects.js` (`effectIconArt`, `markArt`, `overlayArt`), never from string concatenation in `main.js`; the rest are quoted paths passed to `src()` in `main.js`. A new picture goes in the generator, in the folder of what it shows.
 - `gpui-kit.d.ts` and `jsconfig.json` inside mod folders are written by Herdr and git-ignored.
+
+## Tests
+
+- The tests live in `tests/` and run with Node's built-in runner, no dependencies: `node --test 'tests/**/*.test.mjs'` from the repo root (a few seconds; CI runs it on every pull request). `HERDR_TESTS_THOROUGH=1` sweeps every width, size and combination (minutes). `tests/README.md` says how they are laid out.
+- `tests/harness/` runs the real, unmodified `main.js` under Node with stand-ins for `herdr`, `gpui-kit` and `gpui-base`, a fake clock and a seeded `Math.random`: a test mounts the view, advances time, clicks by id and reads back the pixel text, pictures and boxes it drew. **A change to the view needs a harness test** (a few lines: see the example in `tests/README.md`), as a change to `rules.js`, `party.js` or `effects.js` needs one in their suites.
+- A known bug is a test of the correct behaviour marked `{ todo: "why" }`, so CI stays green; fixing the bug means removing the `todo`.
+- `tools/sim.mjs` is the balance simulation: it plays the real rules the way `main.js` runs a fight and prints time to first clear per stage (`node tools/sim.mjs --help`). Use it before changing a number in `rules.js`, `party.js` or `effects.js`, and record what it says in `PLAN.md`. `tests/view/parity.test.mjs` fails when `main.js`'s fight and the simulation's part ways: change the simulation's `Fight` to match.
+- Rules about to change have their expectations in one place in `tests/view/expect.mjs`.
 
 ## Conventions
 
