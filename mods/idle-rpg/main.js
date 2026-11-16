@@ -297,6 +297,9 @@ const HUD_H = 42; // a frame's height: the gear's chip (34) or a row of chips an
 const HUD_GAP = 8;
 const HUD_NARROW = 640;
 const FRAME = 4; // a frame's edge: a px of outline and a px of bevel, at 2 screen px each
+const STAGE_SHARE = 0.3; // the stage section's width as a share of the scene's
+const STAGE_MAX_W = 520; // and the most it grows to on a wide scene
+const STAGE_GAP = 6; // between an arrow at one end and what is written beside it
 const FRAME_COLOURS = { outline: "#141a26", light: "#56657e", dark: "#1d2534", fill: "#2b3649" }; // as FRAME in the generator
 const CHIP_H = 22; // a chip (a count on the sign, the gear, a stage arrow) and the raid button: a 2px edge round 18px
 const SIGN_PAD = 6; // inside the sign's frame, left and right of what it holds
@@ -2542,14 +2545,17 @@ export default class RaidParty extends View {
     return { w: 2 * left + widest, h: 2 * FRAME + (rows.length + 1) * 2 + rows.length * CHIP_H, rows: rows.length, places };
   }
 
-  // The stage section's width: the frame and its padding round the arrows,
-  // "STAGE N", the farm mark while farming and room for the longest time
-  // ("10:00"), so it keeps its size as the seconds turn.
-  stageWidth() {
-    const farm = this.progress.farming ? 6 + letterW(LABELS.farm) : 0;
-    // while nobody attacks a living boss the time stands still, and says so
-    const paused = this.monster?.hp > 0 && this.attackers().length === 0 ? letterW(LABELS.paused) + 6 : 0;
-    return 2 * FRAME + 2 * 4 + 18 + 2 + letterW(LABELS.stage(this.progress.stage)) + farm + 2 + 18 + 10 + paused + letterW("00:00");
+  // The stage section's width in a scene `W` wide: a share of the scene
+  // (STAGE_SHARE), never less than its fullest line needs (an arrow at each
+  // end, "STAGE N" with room for three digits or the best stage's, the farm
+  // mark, "(PAUSED)" and the longest time, "10:00") and never more than
+  // STAGE_MAX_W. It does not depend on what is showing, so the section keeps
+  // its size as farming and the pause come and go and as the seconds turn.
+  stageWidth(W) {
+    const digits = "8".repeat(Math.max(3, String(this.progress.best).length));
+    const need =
+      2 * FRAME + 2 * 4 + 2 * (18 + STAGE_GAP) + letterW(LABELS.stage(digits)) + 6 + letterW(LABELS.farm) + 10 + letterW(LABELS.paused) + 6 + letterW("00:00");
+    return Math.max(need, Math.min(Math.round(W * STAGE_SHARE), STAGE_MAX_W));
   }
 
   // Where the HUD's frames go, in scene px from the top left: { sign, strip,
@@ -2574,7 +2580,7 @@ export default class RaidParty extends View {
     const counts = tally(list);
     const spec = this.signSpec(list);
     const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + 34 + 2;
-    const stageW = fight ? this.stageWidth() : 0;
+    const stageW = fight ? this.stageWidth(W) : 0;
     const box = (x, y, w, h = HUD_H) => ({ x, y, w, h });
     const across = (b, y, h) => b.y < y + h && y < b.y + b.h; // shares rows with y..y+h
     const apart = (a, b) => !across(a, b.y, b.h) || a.x + a.w + HUD_GAP <= b.x || b.x + b.w + HUD_GAP <= a.x;
@@ -2745,8 +2751,10 @@ export default class RaidParty extends View {
           }),
         );
     };
+    // an arrow at each end of the section, the stage and the time between them
     const words = LABELS.stage(stage);
-    let x = x0 + 18 + 2;
+    let x = x0 + 18 + STAGE_GAP;
+    const right = b.w - x0 - 18 - STAGE_GAP; // where the time ends, left of the next arrow
     const kids = [arrow("prev", stage - 1, x0), div().absolute().left(x).top(y0 + 4).child(letterText(words, "gold"))];
     x += letterW(words) + 2;
     // farming after a failed attempt: kills repeat this stage until the next arrow is pressed
@@ -2760,9 +2768,8 @@ export default class RaidParty extends View {
           .tooltip("Farming: kills repeat this stage. The arrow tries the next again.")
           .child(letterText(LABELS.farm, "green")),
       );
-      x += 6 + letterW(LABELS.farm);
     }
-    kids.push(arrow("next", stage + 1, x));
+    kids.push(arrow("next", stage + 1, b.w - x0 - 18));
     const clock = dead ? "" : clockText(this.left);
     const barW = b.w - 2 * x0;
     // the time only runs while someone attacks: standing still, it says so
@@ -2771,14 +2778,14 @@ export default class RaidParty extends View {
         div()
           .id("idle-rpg-stage-paused")
           .absolute()
-          .left(b.w - x0 - letterW("00:00") - 6 - letterW(LABELS.paused))
+          .left(right - letterW("00:00") - 6 - letterW(LABELS.paused))
           .top(y0 + 4)
           .tooltip("The time runs only while an agent is working and attacking.")
           .child(letterText(LABELS.paused, "grey")),
       );
     }
     kids.push(
-      div().id("idle-rpg-stage-clock").absolute().left(b.w - x0 - letterW(clock)).top(y0 + 4).child(letterText(clock, running ? "white" : "grey")),
+      div().id("idle-rpg-stage-clock").absolute().left(right - letterW(clock)).top(y0 + 4).child(letterText(clock, running ? "white" : "grey")),
       div()
         .id("idle-rpg-stage-time")
         .absolute()
