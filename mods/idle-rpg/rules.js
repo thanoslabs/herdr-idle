@@ -356,6 +356,61 @@ export function glyphArt(colour, ch) {
   return `font/${colour}/${GLYPH_NAMES[ch] ?? ch}.png`;
 }
 
+// The lettering: a second pixel face, for the words and numbers of the HUD
+// (the sign, the stage section and its notes), drawn by
+// tools/idle-rpg-sprites.py into lettering/<colour>/. The same height as the
+// font, with the same digits and signs, but letters as wide as they need (M
+// and W 5 art px, N 4; the font's M stays 3 wide for shortNumber). Capitals
+// only: lower case is drawn as capitals. A space has no picture, only its
+// width. LETTERS is every character it can draw, the space included.
+export const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+!.:'/-() ";
+// white and gold for words and numbers, grey for the time standing still,
+// red for a failed attempt, green for the stage being farmed
+export const LETTER_COLOURS = ["white", "gold", "grey", "red", "green"];
+const LETTER_NAMES = { "+": "plus", "!": "bang", ".": "point", ":": "colon", "'": "quote", "/": "slash", "-": "dash", "(": "open", ")": "close" };
+const LETTER_WIDTHS = { M: 5, W: 5, N: 4, "!": 1, ".": 1, ":": 1, "'": 1, "(": 2, ")": 2, " ": 1 };
+// Upper case, for ASCII letters only (so no character turns into two).
+const capitalOf = (ch) => (typeof ch === "string" && ch.length === 1 && ch >= "a" && ch <= "z" ? ch.toUpperCase() : ch);
+// How many art px wide a character of the lettering is without its outline
+// (a space 1, so with the art px every character is set after the last it
+// leaves a 3 px gap between words), or 0 for one it cannot draw.
+export function letterWidth(ch) {
+  const c = capitalOf(ch);
+  return typeof c === "string" && c.length === 1 && LETTERS.includes(c) ? (LETTER_WIDTHS[c] ?? 3) : 0;
+}
+// The path in art/ of one character of the lettering in `colour`
+// ("lettering/gold/s.png", "lettering/red/quote.png"), or null for a space, a
+// character it does not have or a colour it is not drawn in, so no other
+// string can end up in a path.
+export function letterArt(colour, ch) {
+  const c = capitalOf(ch);
+  if (!LETTER_COLOURS.includes(colour) || !letterWidth(c) || c === " ") return null;
+  return `lettering/${colour}/${LETTER_NAMES[c] ?? c.toLowerCase()}.png`;
+}
+// Whether every character of `text` is one the lettering draws (a space
+// included), so a label loses nothing.
+export const letterable = (text) => typeof text === "string" && [...text].every((ch) => letterWidth(ch) > 0);
+
+// Every label the HUD sets in the lettering, as text (main.js draws them in
+// capitals; CI and the tests check each can be drawn): the sign's title, its
+// button, its line while nobody is in; the stage section's stage and farm
+// mark; a failed attempt's note (fail() in main.js: why, then where it went
+// back to) and the countdown to the next stage. The numbers beside them are
+// shortNumber's and clockText's.
+export const LABELS = {
+  title: "Raid Party",
+  start: "Start Raid",
+  stop: "Return to town",
+  empty: "nobody in yet",
+  farm: "farm",
+  paused: "(paused)", // by the time, while nobody is attacking
+  stage: (n) => `Stage ${n}`,
+  timesUp: "Time's up!",
+  wiped: "Wiped!",
+  back: (why, n) => `${why} Back to stage ${n}`,
+  moving: (n, s) => `Moving to stage ${n} in ${s}`,
+};
+
 const MAX = Number.MAX_SAFE_INTEGER;
 
 // A count read back from disk: a whole number from 0 up, else 0.
@@ -633,10 +688,12 @@ export function selectStage(progress, s) {
 // tried again. Returns the stage the fight is now at.
 export function failStage(progress) {
   const stage = stageOf(progress.stage);
-  if (stage > 1) {
-    progress.stage = stage - 1;
-    progress.farming = true;
-  }
+  // never further back than the stage before the highest reached, which the
+  // party has cleared: a failure there, or lower down where the player chose
+  // to go, repeats that stage
+  const back = Math.max(1, stageOf(progress.best) - 1);
+  if (stage > back) progress.stage = back;
+  if (stageOf(progress.best) > 1) progress.farming = true;
   return progress.stage;
 }
 

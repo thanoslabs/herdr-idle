@@ -18,11 +18,11 @@
 // and everyone else at range. Every working agent attacks in its own way (a
 // swing, an arrow or bolt, a spell, a thrown potion, each looking like the
 // weapon its class holds) on its own rhythm, every 3 seconds or less. Each
-// attempt has a time limit, shown on the name plate, that runs only while
+// attempt has a time limit, shown in the stage section, that runs only while
 // someone attacks (10 minutes, shown as "9:42"): a kill in time clears the
 // stage (and, with the "Advance after a kill" setting, moves on to the next);
 // time running out, or the party being wiped, sends it back a stage to farm.
-// Arrows on the plate pick any stage reached. Turning battle mode off sends
+// Arrows in the stage section (top centre) pick any stage reached. Turning battle mode off sends
 // everyone back to their spots.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
@@ -46,6 +46,8 @@
 // In the top-right corner, how many agents are in each status (an icon with a
 // count on its corner, hidden at none), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
+// The sign (top left), the stage section (top centre, in a raid) and that
+// corner are pixel frames with their words in a pixel lettering (see hudLayout).
 // Layout props: { inset } = left edge of the sign (84 leaves room for macOS buttons).
 
 import { View, div, image } from "gpui-kit";
@@ -54,6 +56,7 @@ import { agents, props, run, setShared, shared, spaces } from "herdr";
 import {
   ATTACK_PHASES,
   CLASSES,
+  LABELS,
   CLASS_SKILLS,
   MAX_RANK,
   POWER_BONUS,
@@ -86,6 +89,8 @@ import {
   healOf,
   healthBonus,
   loadState,
+  letterArt,
+  letterWidth,
   lookArt,
   maxHpOf,
   monsterArt,
@@ -177,6 +182,7 @@ const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
 // item picked: what a weapon does), 3px apart: 167px, so under the sign (top
 // 54) it ends at 221 in the lowest scene (230px). The kinds down the left are
 // 22 each, with a 13px line under them, shorter than that.
+const PANEL_MAX_H = 167; // the tallest panel under the sign: the shop (the skills panel is 165, the codex less)
 const SHOP_ROW = { nav: 22, about: 26, tab: 80 }; // tab: the class picked, its sprite and name ("Warrior" is 33px at 9px)
 // The skills and training panel is built from rows of fixed height, its text
 // on a 13px line, so its height is known: a 1px border and 6px of padding
@@ -201,9 +207,9 @@ const MONSTERS = {
 const WATCH_MS = 1000; // how often to look for a monster due, or someone ready to attack
 const RESPAWN_MS = 3000; // how long a fallen boss lies there before the next (its fade takes 1.6s)
 // after the kill that first clears a stage and moves on to a new one, the wait
-// is longer, with "Moving to stage N in 3" counting it down over the plate
+// is longer, with "Moving to stage N in 3" counting it down under the stage section
 const ADVANCE_MS = 5000;
-const TIMES_UP_FRESH = 1000; // the "Time's up!" note over the plate shows this long,
+const TIMES_UP_FRESH = 1000; // the "Time's up!" note under the stage section shows this long,
 const TIMES_UP_MS = 2600; // then fades out until this long after the attempt ran out
 // Monsters fighting back (party.js runs it). Where what each kind's attack
 // sends flying sets off (its mouth or club, px from its picture's top-left, in
@@ -229,10 +235,10 @@ const ATTACK_SIZE = {
 const sizeOf = (part) => ATTACK_SIZE[part.replace(/\/[lr]$/, "")] ?? [40, 40];
 const MONSTER_Y = 108; // where its feet are on the floor
 const BAR_W = 136;
-const PLATE_H = 50; // the boss's name plate: the stage line, the name and HP, the health bar, the time bar
+const PLATE_H = 28; // the boss's name plate: the name and HP, and the health bar (the stage and the time are in the stage section)
 const PLATE_ICON_H = 18; // and under them, while the boss has a status or the party's hex on it, a row of icons (2 screen px an art px)
 // Weapon effects (effects.js). Damage over time is gathered tick by tick and
-// lands once a second (as the attempt's time shown turns, when the plate is
+// lands once a second (as the attempt's time shown turns, when the stage section is
 // drawn anyway; every DOT_TICKS ticks while it stands still), one sum per
 // class and status (plus the render on the next tick that starts its number's
 // fade, as for any blow); burn in ember, venom in green.
@@ -274,12 +280,36 @@ const CRIT_MS = 1200; // a critical blow's number rises and fades this long
 const DAMAGE_MS = 800;
 const DAMAGE_RISE = 36;
 const MAX_DAMAGE = 12;
-// The top-right corner: the status icons, then the gear, on a strip like the
-// sign's. Below 640px wide (where the fight is not shown either) there is no
-// room beside the sign, so the strip drops under it.
-const HUD_EDGE = 10; // from the scene's right edge
-const HUD_H = 36; // the strip's height: the icons (3 screen px per art px) and its padding
+// The HUD, three pixel frames along the top of the scene (see hudLayout): the
+// sign top left (the title, the counts as chips, the raid button), the stage
+// section top centre while the fight shows (the stage with its arrows, the
+// time left and its bar; the stage notes under it), and the strip top right
+// (the status icons, then the gear). Each is a dark slate panel with a bevel
+// (framePieces: frame/ corners over bands of FRAME_COLOURS), its words and
+// numbers in the lettering (letterText), everything at 2 screen px an art px.
+// They sit in one row HUD_H high from HUD_TOP, HUD_GAP apart; when they do not
+// fit the title goes, then the stage section or the strip drops to a second
+// row. Below 640px wide (where the fight is not shown either) the strip drops
+// under the sign.
+const HUD_TOP = 8;
+const HUD_EDGE = 10; // the strip from the scene's right edge
+const HUD_H = 42; // a frame's height: the gear's chip (34) or a row of chips and a button (22), inside the frame's edge and padding
+const HUD_GAP = 8;
 const HUD_NARROW = 640;
+const FRAME = 4; // a frame's edge: a px of outline and a px of bevel, at 2 screen px each
+const FRAME_COLOURS = { outline: "#141a26", light: "#56657e", dark: "#1d2534", fill: "#2b3649" }; // as FRAME in the generator
+const CHIP_H = 22; // a chip (a count on the sign, the gear, a stage arrow) and the raid button: a 2px edge round 18px
+const SIGN_PAD = 6; // inside the sign's frame, left and right of what it holds
+// The raid button's faces: red to go back to town, slate to start; lighter
+// under the pointer, darker while pressed.
+const RAID_BUTTON = {
+  on: { face: "#c94040", hover: "#e05555", down: "#9e2f2f", text: "white" },
+  off: { face: "#4a5870", hover: "#5d6d88", down: "#38445a", text: "white" },
+};
+// A chip's states: see-through until the pointer is over it (a lighter square),
+// sunk while pressed or while its panel is open (a darker square, outlined).
+const CHIP = { hover: "#ffffff26", edge: "#ffffff40", down: "#00000050" };
+const NOTE_H = 28; // a stage note: a line of lettering in a frame
 // What a class's skill ranks give, in words, for the skills panel.
 // `p` is the progress, `c` the class, `ranks` its ranks.
 const SKILL_TEXT = {
@@ -287,7 +317,7 @@ const SKILL_TEXT = {
   haste: (_p, _c, ranks) => `attacks every ${(attackTicksOf(ranks) * TICK_STEP) / 1000}s`,
   crit: (_p, _c, ranks) => `${Math.round(critChanceOf(ranks) * 100)}% crit`,
 };
-// The left and right arrows beside "Stage N" on the boss's name plate.
+// The left and right arrows beside "Stage N" in the stage section.
 const STAGE_ARROWS = { prev: "icons/prev.png", next: "icons/next.png" };
 // A multiplier as the training line shows it: "x1.12", "x24.5", "x1.2K".
 const times = (x) => `x${x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : shortNumber(x)}`;
@@ -337,6 +367,85 @@ function pixelText(text, colour, scale) {
     .h(GLYPH_H * scale)
     .children(parts);
 }
+
+// Words and numbers on the HUD in the lettering (LETTERS in rules.js: capitals,
+// digits and a few signs; lower case is drawn as capitals), as a row of
+// pictures at 2 screen px an art px in one of LETTER_COLOURS, set like
+// pixelText: each its width (letterWidth) plus 1 after the last, so neighbours
+// share an outline column; a space is only its width. Characters it does not
+// have are left out. letterW gives the width it takes up.
+const LETTER_H = GLYPH_H * 2;
+const letterW = (text) => ([...String(text)].reduce((x, ch) => x + (letterWidth(ch) ? letterWidth(ch) + 1 : 0), 0) + 1) * 2;
+function letterText(text, colour) {
+  const parts = [];
+  let x = 0;
+  for (const ch of String(text)) {
+    const w = letterWidth(ch);
+    if (!w) continue;
+    const art = letterArt(colour, ch);
+    if (art) parts.push(div().absolute().left(x * 2).top(0).child(image(src(art)).w((w + 2) * 2).h(LETTER_H)));
+    x += w + 1;
+  }
+  return div()
+    .relative()
+    .flex_none()
+    .w((x + 1) * 2)
+    .h(LETTER_H)
+    .children(parts);
+}
+
+// A pixel frame `w` x `h` px, as the pieces to lay first in a box that size
+// (behind what it holds): a fill, an edge band along each side (a px of
+// outline, then a px of bevel, light on the top and left, dark on the bottom
+// and right, at 2 screen px each) and over their ends the corners in frame/,
+// whose outer pixel is cut away. Bands of colour stretch to any size without
+// blurring; only the corners are pictures.
+function framePieces(w, h) {
+  const c = FRAME_COLOURS;
+  const band = (l, t, bw, bh) => div().absolute().left(l).top(t).w(bw).h(bh);
+  const corner = (art, l, t) => div().absolute().left(l).top(t).child(image(src(art)).w(6).h(6));
+  return [
+    band(FRAME, FRAME, w - 2 * FRAME, h - 2 * FRAME).bg(c.fill),
+    band(6, 0, w - 12, FRAME).bg(c.light).border_t(2).border_color(c.outline),
+    band(0, 6, FRAME, h - 12).bg(c.light).border_l(2).border_color(c.outline),
+    band(6, h - FRAME, w - 12, FRAME).bg(c.dark).border_b(2).border_color(c.outline),
+    band(w - FRAME, 6, FRAME, h - 12).bg(c.dark).border_r(2).border_color(c.outline),
+    corner("frame/tl.png", 0, 0),
+    corner("frame/tr.png", w - 6, 0),
+    corner("frame/bl.png", 0, h - 6),
+    corner("frame/br.png", w - 6, h - 6),
+  ];
+}
+
+// A chip on the HUD (a count on the sign, the gear, a stage arrow): `id`, `w`
+// px wide and CHIP_H high (or `h`), a 2px edge round what it holds, laid in a
+// row 2px apart inside `px` of padding. See-through until the pointer is over
+// it (a lighter square); sunk (a darker one, outlined) while pressed and while
+// `open`, its panel showing. A dead one (`live` false) does neither. A press
+// on it never reaches the floor; the caller adds what a click does.
+function chip(id, w, open, kids, { h = CHIP_H, px = 2, live = true } = {}) {
+  return h_flex()
+    .id(id)
+    .flex_none()
+    .w(w)
+    .h(h)
+    .px(px)
+    .gap(2)
+    .items_center()
+    .border(2)
+    .border_color(open ? FRAME_COLOURS.outline : "#00000000")
+    .bg(open ? CHIP.down : "#00000000")
+    .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // not a click on the floor
+    .when(live, (el) =>
+      el
+        .cursor_pointer()
+        .hover((st) => st.bg(open ? CHIP.down : CHIP.hover).border_color(open ? FRAME_COLOURS.outline : CHIP.edge))
+        .active((st) => st.bg(CHIP.down).border_color(FRAME_COLOURS.outline)),
+    )
+    .children(kids);
+}
+// A count's chip on the sign: its icon (18px) and its number in the lettering.
+const countW = (n) => 2 * 2 + 2 + 18 + 2 + letterW(shortNumber(n)) + 2;
 
 function ago(ms) {
   if (!ms) return "";
@@ -568,7 +677,7 @@ export default class RaidParty extends View {
       const best = this.progress.best;
       slay(this.progress, m, this.settings.advance, attackers);
       // a first clear that moves the fight on to a stage never fought before:
-      // the wait is ADVANCE_MS, counted down over the plate. Not while farming,
+      // the wait is ADVANCE_MS, counted down under the stage section. Not while farming,
       // with "Advance after a kill" off, or replaying a stage below the best.
       if (this.progress.best > best && this.progress.stage === this.progress.best && this.progress.stage !== m.stage) m.advancing = this.progress.stage;
       this.save();
@@ -633,10 +742,10 @@ export default class RaidParty extends View {
   // The attempt failed: its time ran out, or the party was wiped (`why`
   // "Wiped!", see tick): past stage 1 the fight goes back a stage, to farm it
   // (failStage in rules.js), with a fresh attempt there; at stage 1 the same boss is back
-  // at full HP with the full time. A note over the plate says which ("Time's
+  // at full HP with the full time. A note under the stage section says which ("Time's
   // up! Back to stage 8"). Nothing is lost but the attempt; the experience
   // its blows earned is saved, once.
-  fail(why = "Time's up!") {
+  fail(why = LABELS.timesUp) {
     const from = this.monster.stage;
     const to = failStage(this.progress);
     if (to !== from) this.newBoss();
@@ -647,11 +756,11 @@ export default class RaidParty extends View {
       this.clearEffects();
       resetParty(this.party, this.clock, Math.random); // a fresh attempt: everyone up at full HP (newBoss does it too)
     }
-    this.timesUp = { at: Date.now(), id: (this.cheerSeq += 1), text: to !== from ? `${why} Back to stage ${to}` : why };
+    this.timesUp = { at: Date.now(), id: (this.cheerSeq += 1), text: to !== from ? LABELS.back(why, to) : why };
     this.save();
   }
 
-  // Moves the fight to stage `s` (an arrow on the plate), if it is one
+  // Moves the fight to stage `s` (an arrow in the stage section), if it is one
   // reached: a fresh attempt at its boss, saved at once.
   toStage(s, cx) {
     if (!selectStage(this.progress, s)) return;
@@ -781,7 +890,7 @@ export default class RaidParty extends View {
   // falls into step). An attack runs ATTACK_PHASES ticks, then one of rest;
   // its blow lands on the last phase. Whoever stops attacking (stops working,
   // walks out of reach, the monster falls) loses their rhythm. Re-renders only
-  // while someone is mid-attack, the seconds shown change (the plate's, and
+  // while someone is mid-attack, the seconds shown change (the stage section's, and
   // the knocked out's countdowns, which turn on the same beat), or something
   // else changed. Returns whether to keep ticking: not once nobody is
   // attacking.
@@ -814,7 +923,7 @@ export default class RaidParty extends View {
     if (foe.pending && t === foe.pending.start + 1) changed = true; // what flies sets off
     if (foe.last && t - foe.last.lands >= 1 && t - foe.last.lands <= 2) changed = true; // the pose ends, impacts fade
     if (e.wiped) {
-      this.fail("Wiped!");
+      this.fail(LABELS.wiped);
       cx.notify();
       return true;
     }
@@ -906,8 +1015,8 @@ export default class RaidParty extends View {
     if (blows.length && this.fight(blows)) changed = true;
     // the knocked out's countdowns turn on that same beat, all at once (at most
     // once a second however many are resting), so they cost no render of their own
-    // while the plate's seconds turn; between beats each shows its seconds as of the last
-    // (a turn of the plate's seconds is always a beat, so a countdown never skips a
+    // while the stage section's seconds turn; between beats each shows its seconds as of the last
+    // (a turn of the stage section's seconds is always a beat, so a countdown never skips a
     // number when the time resumes; the every-4-ticks beat while it stands still
     // keeps a second from the last)
     const plateTurn = keys.length > 0 && this.monster.hp > 0 && turning;
@@ -919,7 +1028,7 @@ export default class RaidParty extends View {
     // (an attacker's rest draws it; damage over time can land with nobody mid-attack)
     if (this.damage.some((d) => d.tick === t - 1)) changed = true;
     // the attempt's time runs while the boss is alive and someone attacks it;
-    // the plate shows whole seconds, so it is drawn again as each one passes
+    // the stage section shows whole seconds, so it is drawn again as each one passes
     if (keys.length && this.monster.hp > 0) {
       const shown = Math.ceil(this.left / 1000);
       this.left -= TICK_STEP;
@@ -1102,13 +1211,19 @@ export default class RaidParty extends View {
         .left(0)
         .top(0)
         .child(image(src(monsterArt(m.kind, part))).w(kind.w).h(kind.h));
-    // the plate over its head, kept inside the scene when the wall is low; a
-    // row taller while it shows status icons
+    // the plate over its head, a row taller while it shows status icons, kept
+    // inside the scene when the wall is low and clear of the HUD's frames above
+    // it (the stage section, and on a narrow scene the sign or the strip; not a
+    // stage note, which is short-lived and drawn over it, so the plate never jumps)
     const icons = dead ? [] : plateIcons(this.statuses, this.auras());
-    this.plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
-    const plateTop = Math.max(top - this.plateH - 4, 4 - this.wallH);
-    const plate = this.plate(m, kind, left + Math.round(kind.w / 2), plateTop, icons);
-    const note = this.timesUpNote(left + Math.round(kind.w / 2), plateTop) ?? this.advanceNote(m, left + Math.round(kind.w / 2), plateTop);
+    const plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
+    const mid = left + Math.round(kind.w / 2);
+    const hud = this.hudBox ?? {};
+    const clear = [hud.sign, hud.strip, hud.stage]
+      .filter((b) => b && b.x < mid + BAR_W / 2 + 4 && mid - BAR_W / 2 - 4 < b.x + b.w)
+      .reduce((y, b) => Math.max(y, b.y + b.h + 4), 4);
+    const plateTop = Math.max(top - plateH - 4, clear - this.wallH);
+    const plate = this.plate(m, kind, mid, plateTop, icons);
     return [
       div()
         .id(`idle-rpg-monster-${m.id}`)
@@ -1150,7 +1265,6 @@ export default class RaidParty extends View {
             .when(!dead, (el) => el.children(this.marks(m.kind, kind))),
         ),
       plate,
-      ...(note ? [note] : []),
     ];
   }
 
@@ -1190,47 +1304,15 @@ export default class RaidParty extends View {
     return out;
   }
 
-  // The boss's name plate, over its head (kept inside the scene when the wall
-  // is low): the stage, with an arrow either side to pick another one reached
-  // (dimmed and dead at stage 1 and at the highest reached; while farming
-  // after a failed attempt a small green "farm" by the number, and the next
-  // arrow pulsing), and the minutes and seconds
-  // left of the attempt ("9:42"), dim while its time stands still (nobody attacking);
-  // the boss's name and HP; its health bar; and a thin bar of the time left.
-  // The bars glide between renders, which come at least once a second while
-  // the time runs (see tick), so nothing renders just to move them.
-  // `icons` (plateIcons in effects.js): a last row of icons for the statuses
-  // on it (burn, chill, venom with its stacks) and the party's hex.
+  // The boss's name plate, over its head (kept inside the scene, and clear of
+  // the HUD, when the wall is low): the boss's name and HP, and its health bar
+  // (the stage and the time left are in the stage section, see stageSection).
+  // The bar glides between renders. `icons` (plateIcons in effects.js): a last
+  // row of icons for the statuses on it (burn, chill, venom with its stacks)
+  // and the party's hex.
   plate(m, kind, x, top, icons = []) {
     const dead = m.hp <= 0;
-    const { stage, best } = this.progress;
     const tone = m.hp > m.maxHp / 2 ? "#4cd47b" : m.hp > m.maxHp / 5 ? "#ffd166" : "#ff5d5d";
-    const limit = stageTime(m.stage);
-    const running = !dead && this.attackers().length > 0;
-    const farming = Boolean(this.progress.farming);
-    const arrow = (dir, to) => {
-      const live = to >= 1 && to <= best && to !== stage;
-      return div()
-        .id(`idle-rpg-stage-${dir}`)
-        .flex_none()
-        .px(2)
-        .py(1)
-        .rounded(3)
-        .opacity(live ? 1 : 0.3)
-        // while farming, the way forward pulses (a native loop: no renders)
-        .when(live && farming && dir === "next", (el) => el.loop("opacity", { from: 0.45, to: 1, period: 900 }))
-        .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // not a click on the floor
-        .when(live, (el) =>
-          el
-            .cursor_pointer()
-            .hover((st) => st.bg("#ffffff30"))
-            .on_click((_e, cx) => {
-              this.toStage(to, cx);
-              cx.notify();
-            }),
-        )
-        .child(image(src(STAGE_ARROWS[dir])).w(10).h(14));
-    };
     return v_flex()
       .id("idle-rpg-plate")
       .absolute()
@@ -1240,34 +1322,6 @@ export default class RaidParty extends View {
       .p(3)
       .gap(2)
       .bg("#000000a0")
-      .child(
-        h_flex()
-          .gap(2)
-          .items_center()
-          .text_size(10)
-          .font_semibold()
-          .text_color(GOLD)
-          .child(arrow("prev", stage - 1))
-          .child(div().child(`Stage ${stage}`))
-          // farming after a failed attempt: kills repeat this stage until the next arrow is pressed
-          .when(farming, (el) =>
-            el.child(
-              div()
-                .id("idle-rpg-stage-farm")
-                .flex_none()
-                .px(2)
-                .rounded(3)
-                .bg("#4cd47b40")
-                .text_size(8)
-                .text_color("#9ff0bd")
-                .tooltip("Farming: kills repeat this stage. The arrow tries the next again.")
-                .child("farm"),
-            ),
-          )
-          .child(arrow("next", stage + 1))
-          .child(div().flex_1())
-          .child(div().text_color(running ? CREAM : "#8ea3bb").child(dead ? "" : clockText(this.left))),
-      )
       .child(
         h_flex()
           .justify_between()
@@ -1284,20 +1338,6 @@ export default class RaidParty extends View {
           .h(8)
           .bg("#1b2233")
           .child(div().id("idle-rpg-monster-hp").h(8).w(Math.round((BAR_W * m.hp) / m.maxHp)).bg(tone).transition("width", { duration: 150, easing: "ease-out" })),
-      )
-      .child(
-        div()
-          .w(BAR_W)
-          .h(3)
-          .bg("#1b2233")
-          .child(
-            div()
-              .id("idle-rpg-monster-time")
-              .h(3)
-              .w(Math.round((BAR_W * clamp(this.left, 0, limit)) / limit))
-              .bg(running ? "#5cc8ff" : "#5d7088")
-              .transition("width", { duration: TICK_STEP, easing: "linear" }),
-          ),
       )
       .when(icons.length > 0, (el) =>
         el.child(
@@ -1394,42 +1434,6 @@ export default class RaidParty extends View {
       }
     }
     return { under, over };
-  }
-
-  // "Moving to stage 13 in 3" over the plate while a boss that first cleared
-  // its stage lies there (see ADVANCE_MS): whole seconds to the next boss,
-  // drawn again by the watch once a second (no timer of its own). Picking a
-  // stage brings a fresh boss at once, so it goes with it.
-  advanceNote(m, x, top) {
-    if (!m.advancing || m.hp > 0) return null;
-    const secs = Math.max(1, Math.ceil((m.slainAt + ADVANCE_MS - Date.now()) / 1000));
-    return h_flex()
-      .id(`idle-rpg-advance-${m.id}`)
-      .absolute()
-      .left(x - 90)
-      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + (this.plateH ?? PLATE_H) + 4) // under the plate when there is no room over it
-      .w(180)
-      .justify_center()
-      .child(div().px(5).rounded(6).bg("#000000a0").text_size(10).font_semibold().text_color(GOLD).child(`Moving to stage ${m.advancing} in ${secs}`));
-  }
-
-  // "Time's up!" over the plate, after an attempt ran out of time: it pops
-  // in, then on the render tick() asks for once it has shown TIMES_UP_FRESH
-  // (marking it `fading`) fades natively. Gone after TIMES_UP_MS.
-  timesUpNote(x, top) {
-    const t = this.timesUp;
-    if (!t || Date.now() - t.at > TIMES_UP_MS) return null;
-    const fresh = !t.fading;
-    return h_flex()
-      .id(`idle-rpg-timesup-${t.id}`)
-      .absolute()
-      .left(x - 90)
-      .top(top - 20 >= 4 - this.wallH ? top - 20 : top + (this.plateH ?? PLATE_H) + 4) // under the plate when there is no room over it
-      .w(180)
-      .justify_center()
-      .opacity(fresh ? 1 : 0)
-      .transition("opacity", { duration: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-in" })
-      .child(div().px(5).rounded(6).bg("#000000a0").text_size(10).font_semibold().text_color("#ff7b7b").child(t.text ?? "Time's up!"));
   }
 
   // A pointer event on the root, as a point in floor coordinates.
@@ -2302,16 +2306,19 @@ export default class RaidParty extends View {
       actors.push({ y: this.at[a.address].y, draw: () => this.critter(a) });
       if (this.fighting && a.status === "working" && this.monster.hp > 0) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: a.address, cls: this.sprites[a.address], ...this.at[a.address] }, W, foeKind) });
     }
+    // level-up notes and critical blows' numbers, drawn after the HUD with the
+    // damage numbers (they rise high enough in a short scene to meet it)
+    const pops = [];
     for (const [key, c] of Object.entries(this.cheers)) {
       if (Date.now() - c.at > CHEER_MS + 1000) delete this.cheers[key];
     }
     for (const key of Object.keys(this.cheers)) {
       const s = key === YOU ? !this.walking && you : list.some((a) => a.address === key && this.drag?.address !== key) && this.at[key];
-      if (s) actors.push({ y: FLOOR_H + 1, draw: () => [this.cheerNote(key, s.x, s.y)] });
+      if (s) pops.push(() => this.cheerNote(key, s.x, s.y));
     }
     for (const [key, c] of Object.entries(this.crits)) {
       if (Date.now() - c.at > CRIT_MS + 1000) delete this.crits[key];
-      else if (foeKind) actors.push({ y: FLOOR_H + 1, draw: () => [this.critNote(key, W, foeKind)] });
+      else if (foeKind) pops.push(() => this.critNote(key, W, foeKind));
     }
     // Damage numbers go once they have faded, when the fight is not shown
     // (battle mode off, or too narrow), when their monster has gone, and all
@@ -2320,23 +2327,14 @@ export default class RaidParty extends View {
       foeKind && this.settings.damageNumbers ? this.damage.filter((d) => d.monster === this.monster.id && Date.now() - d.at <= TICK_STEP + DAMAGE_MS + 250) : [];
     actors.sort((p, q) => p.y - q.y);
 
-    const { slain, gold } = this.progress;
-    const spare = pointsLeftAll(this.progress); // skill points to spend, all classes together
-    // the star opens the skills and training: once there is a point or gold to spend, or anything trained
-    const earned = gold > 0 || CLASSES.some((c) => pointsEarned(this.progress.xp[c]) > 0 || TRAINING.some(({ key }) => trainingOf(this.progress, c, key) > 0));
-    // one count on the sign: a small icon and its number
-    const stat = (art, w, h, n) =>
-      h_flex()
-        .gap(3)
-        .items_center()
-        .child(image(src(art)).w(w).h(h))
-        .child(div().child(shortNumber(n)));
+    // where the sign, the stage section (and its note) and the strip go: worked
+    // out before anything is drawn, since the boss's plate keeps clear of them
+    const hud = (this.hudBox = this.hudLayout(W, list, Boolean(foeKind)));
     const scenery = this.scenery(W); // also works out how dark it is
     const boards = Array.from({ length: Math.ceil(W / 128) }, (_, i) =>
       div().absolute().left(i * 128).top(0).child(image(src("scene/floor.png")).w(128).h(FLOOR_H)),
     );
     const carried = this.drag && list.find((a) => a.address === this.drag.address);
-    const hudTop = W < HUD_NARROW ? 54 : 8; // from the top of the scene: beside the sign, or under it
     const carded = this.card && !carried && list.find((a) => a.address === this.card);
 
     const floor = div()
@@ -2359,9 +2357,15 @@ export default class RaidParty extends View {
           .children(foeAttack.under)
           .children(actors.flatMap((p) => p.draw()))
           .child(this.gloom(W, fire))
-          // over the night's dark, so they read at any hour, and under the cards
+          // the HUD: drawn over the night's dark, so it reads at any hour, and under the cards
+          .child(this.hud(hud.counts, hud.strip))
+          .child(this.sign(list, hud))
+          .when(Boolean(hud.stage), (el) => el.child(this.stageSection(hud.stage)))
+          .when(Boolean(hud.note), (el) => el.child(this.stageNote(hud.note)))
+          // over the night's dark and the HUD (in a short scene a number rising off a
+          // big boss reaches the stage section), and under the cards; none has a handler
           .when(Boolean(foeKind), (el) => el.children(this.damage.map((d) => this.damageNote(d, W, foeKind))))
-          .child(this.hud(tally(list), hudTop - this.wallH))
+          .children(pops.map((draw) => draw()))
           .when(list.length === 0, (el) =>
             el.child(
               v_flex()
@@ -2437,11 +2441,11 @@ export default class RaidParty extends View {
           this.skillsOpen = this.shopOpen = null;
           this.card = this.card === pr.address ? null : pr.address;
           this.picking = false;
-        } else if (still) {
+        } else if (pr.kind === "frame" || still) {
           this.card = null;
           this.codex = this.settingsOpen = false;
           this.skillsOpen = this.shopOpen = null;
-          this.walkTo(this.point(e), W, cx);
+          if (pr.kind !== "frame") this.walkTo(this.point(e), W, cx);
         }
         this.press = null;
         cx.notify();
@@ -2450,169 +2454,419 @@ export default class RaidParty extends View {
         if (!hovered && this.press) drop(cx);
       })
       .children(scenery)
-      .child(
-        h_flex()
-          .absolute()
-          .left(props()?.inset ?? 84)
-          .top(8)
-          .gap(8)
-          .items_center()
-          .px(6)
-          .py(2)
-          .rounded(6)
-          .bg("#00000050")
-          .child(
-            v_flex()
-              .child(div().text_size(13).font_semibold().text_color(CREAM).child("Raid Party"))
-              .child(
-                h_flex()
-                  .gap(8)
-                  .items_center()
-                  .text_size(10)
-                  .text_color("#d5e3f0")
-                  // the counts of agents by status are in the top-right corner (see hud)
-                  .when(list.length === 0, (el) => el.child(div().child("nobody in yet")))
-                  .when(this.battle && (slain > 0 || gold > 0), (el) =>
-                    el
-                      .child(
-                        // the kill count opens the codex
-                        stat("icons/skull.png", 18, 18, slain)
-                          .id("idle-rpg-slain")
-                          .px(3)
-                          .rounded(4)
-                          .bg(this.codex ? "#ffffff30" : "#ffffff00")
-                          .cursor_pointer()
-                          .hover((st) => st.bg("#ffffff30"))
-                          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                          .on_click((_e, cx) => {
-                            this.openCodex(!this.codex);
-                            cx.notify();
-                          }),
-                      )
-                      .child(
-                        // the gold opens the shop, on your own class
-                        stat("icons/coin.png", 18, 18, gold)
-                          .id("idle-rpg-gold")
-                          .px(3)
-                          .rounded(4)
-                          .bg(this.shopOpen ? "#ffffff30" : "#ffffff00")
-                          .cursor_pointer()
-                          .hover((st) => st.bg("#ffffff30"))
-                          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                          .on_click((_e, cx) => {
-                            this.openShop(this.shopOpen ? null : this.sprites[YOU]);
-                            cx.notify();
-                          }),
-                      ),
-                  )
-                  // once there is a point or gold to spend, a star with the points
-                  // to spend opens the skills and training; gold while there are
-                  // points, dim when not
-                  .when(earned, (el) =>
-                    el.child(
-                      stat("icons/star.png", 18, 18, spare)
-                        .id("idle-rpg-points")
-                        .px(3)
-                        .rounded(4)
-                        .opacity(spare > 0 || this.skillsOpen ? 1 : 0.55)
-                        .text_color(spare > 0 ? GOLD : "#d5e3f0")
-                        .bg(this.skillsOpen ? "#ffffff30" : spare > 0 ? "#ffd16630" : "#ffffff00")
-                        .cursor_pointer()
-                        .hover((st) => st.bg("#ffffff30"))
-                        .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-                        .on_click((_e, cx) => {
-                          // on the first class with points to spend, else your own
-                          this.openSkills(this.skillsOpen ? null : (CLASSES.find((c) => pointsLeft(this.progress, c) > 0) ?? this.sprites[YOU]));
-                          cx.notify();
-                        }),
-                    ),
-                  ),
-              ),
-          )
-          .child(
-            div()
-              .id("idle-rpg-battle-toggle")
-              .px(6)
-              .py(2)
-              .rounded(5)
-              .text_size(10)
-              .font_semibold()
-              .bg(this.battle ? "#c94040" : "#ffffff1c")
-              .text_color(this.battle ? "#ffffff" : "#d5e3f0")
-              .cursor_pointer()
-              .hover((st) => st.bg(this.battle ? "#e05555" : "#ffffff30"))
-              .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-              .on_click((_e, cx) => {
-                this.battle = !this.battle;
-                this.clearEffects(); // statuses stay with the fight they were put on
-                // the panels open from different places in a raid and out of one
-                this.codex = this.settingsOpen = false;
-                this.skillsOpen = this.shopOpen = null;
-                if (this.battle) this.fight(); // someone to fight straight away
-                this.save();
-                this.wake(cx);
-                cx.notify();
-              })
-              .child(this.battle ? "Return to town" : "Start Raid"),
-          ),
-      )
       .child(floor)
       // last, so they lie over the floor and everyone on it
-      .when(this.codex, (el) => el.child(this.codexCard(props()?.inset ?? 84)))
-      .when(CLASSES.includes(this.skillsOpen), (el) => el.child(this.skillsCard(props()?.inset ?? 84)))
-      .when(CLASSES.includes(this.shopOpen), (el) => el.child(this.shopCard(props()?.inset ?? 84)))
-      .when(this.settingsOpen, (el) => el.child(this.settingsCard(hudTop)));
+      .when(this.codex, (el) => el.child(this.codexCard(hud.inset, hud.panelTop)))
+      .when(CLASSES.includes(this.skillsOpen), (el) => el.child(this.skillsCard(hud.inset, hud.panelTop)))
+      .when(CLASSES.includes(this.shopOpen), (el) => el.child(this.shopCard(hud.inset, hud.panelTop)))
+      .when(this.settingsOpen, (el) => el.child(this.settingsCard(hud.strip.y)));
   }
 
-  // The top-right corner, on a strip like the sign's: an icon for each status
-  // with agents in it, in the order of tally, with how many on a badge at its
-  // bottom-right corner in the pixel font, then the gear, which opens the
-  // settings menu. Drawn on the floor over the night's dark (unlike the sign,
-  // which is under it at the lowest scene heights), and under the cards.
-  // `top` is the strip's top in floor coordinates: beside the sign, or under
-  // it below HUD_NARROW wide.
-  hud(counts, top) {
-    const icon = ({ status, art, w, h, n }) => {
+  // A press on a HUD frame's empty part (its chips and buttons stop their own):
+  // not one on the floor, so you do not walk there, but like one it closes an
+  // open panel or card when it comes up (see the root's on_mouse_up).
+  framePress(cx) {
+    cx.stop_propagation();
+    if (!this.press) this.press = { kind: "frame" };
+  }
+
+  // What the sign holds (see sign): "nobody in yet" while there are no agents;
+  // in a raid, once anything has been slain or earned, the kill count (it
+  // opens the codex) and the gold (the shop); once there is a point or gold to
+  // spend or anything trained, the star with the skill points left to spend
+  // across all classes (the skills and training); and the raid button. With
+  // how wide each is, for hudLayout.
+  signSpec(list) {
+    const { slain, gold } = this.progress;
+    const spare = pointsLeftAll(this.progress);
+    const earned = gold > 0 || CLASSES.some((c) => pointsEarned(this.progress.xp[c]) > 0 || TRAINING.some(({ key }) => trainingOf(this.progress, c, key) > 0));
+    const counts = [];
+    if (this.battle && (slain > 0 || gold > 0)) counts.push({ id: "slain", art: "icons/skull.png", n: slain }, { id: "gold", art: "icons/coin.png", n: gold });
+    if (earned) counts.push({ id: "points", art: "icons/star.png", n: spare });
+    const empty = list.length === 0;
+    const label = this.battle ? LABELS.stop : LABELS.start;
+    const parts = [...(empty ? [letterW(LABELS.empty)] : []), ...counts.map((c) => countW(c.n))];
+    const countsW = parts.reduce((x, w) => x + w, 0) + 4 * Math.max(0, parts.length - 1);
+    return { counts, empty, spare, label, countsW, buttonW: letterW(label) + 12, titleW: letterW(LABELS.title) };
+  }
+
+  // Where each thing on the sign goes, and the sign's size: { w, h, rows,
+  // places: [{ what: "title" | "empty" | <count's id> | "button", x, y }] }
+  // in px from the sign's top left (a chip's or the button's top; a line of
+  // lettering's is 4px lower). In one row (`wrap` null): the title, "nobody in
+  // yet" and the counts from the left, the button at the right. Otherwise
+  // wrapped into as many rows as it takes, each CHIP_H high, so no row is
+  // wider than `wrap` px (inside the frame and its padding), the button last.
+  signPlan(spec, titled, wrap = null) {
+    const items = [
+      ...(titled ? [{ what: "title", w: spec.titleW, gap: 10 }] : []),
+      ...(spec.empty ? [{ what: "empty", w: letterW(LABELS.empty), gap: 4 }] : []),
+      ...spec.counts.map((c) => ({ what: c.id, w: countW(c.n), gap: 4 })),
+    ];
+    const left = FRAME + SIGN_PAD;
+    if (wrap === null) {
+      const rowY = Math.round((HUD_H - CHIP_H) / 2);
+      const places = [];
+      let x = left;
+      for (const it of items) {
+        places.push({ what: it.what, x, y: rowY });
+        x += it.w + it.gap;
+      }
+      const w = 2 * left + (titled ? spec.titleW + 10 : 0) + (spec.countsW ? spec.countsW + 8 : 0) + spec.buttonW;
+      places.push({ what: "button", x: w - left - spec.buttonW, y: rowY });
+      return { w, h: HUD_H, rows: 1, places };
+    }
+    const rows = [[]];
+    let used = 0;
+    for (const it of [...items, { what: "button", w: spec.buttonW }]) {
+      if (rows.at(-1).length && used + 6 + it.w > wrap) {
+        rows.push([]);
+        used = 0;
+      }
+      used += (rows.at(-1).length ? 6 : 0) + it.w;
+      rows.at(-1).push(it);
+    }
+    const places = [];
+    let widest = 0;
+    rows.forEach((row, r) => {
+      let x = left;
+      for (const it of row) {
+        places.push({ what: it.what, x, y: FRAME + 2 + r * (CHIP_H + 2) });
+        x += it.w + 6;
+      }
+      widest = Math.max(widest, x - 6 - left);
+    });
+    return { w: 2 * left + widest, h: 2 * FRAME + (rows.length + 1) * 2 + rows.length * CHIP_H, rows: rows.length, places };
+  }
+
+  // The stage section's width: the frame and its padding round the arrows,
+  // "STAGE N", the farm mark while farming and room for the longest time
+  // ("10:00"), so it keeps its size as the seconds turn.
+  stageWidth() {
+    const farm = this.progress.farming ? 6 + letterW(LABELS.farm) : 0;
+    // while nobody attacks a living boss the time stands still, and says so
+    const paused = this.monster?.hp > 0 && this.attackers().length === 0 ? letterW(LABELS.paused) + 6 : 0;
+    return 2 * FRAME + 2 * 4 + 18 + 2 + letterW(LABELS.stage(this.progress.stage)) + farm + 2 + 18 + 10 + paused + letterW("00:00");
+  }
+
+  // Where the HUD's frames go, in scene px from the top left: { sign, strip,
+  // stage, note } boxes { x, y, w, h } (stage and note null while the fight
+  // does not show), whether the sign has its title and where its things go
+  // (signPlan), the
+  // panels' top, and what the sign and the strip hold. They never overlap: the
+  // sign keeps the layout's inset and the strip HUD_EDGE from the right; the
+  // stage section is centred, moved aside as far as it must be. Tried in turn
+  // until one fits: all in a row with the title; without it; the stage section
+  // in a second row (with the title, then without); the strip in a second row
+  // (the stage section in the first, then beside it in the second). Below
+  // HUD_NARROW the strip is always under the sign, which drops its title and
+  // then wraps into rows as the scene narrows (and as a last resort above it
+  // too). The stage note goes under the stage section, or lower should the
+  // sign or the strip be in its row. The panels open under the sign (raised
+  // just enough for the tallest to fit, should a wrapped sign leave too
+  // little room).
+  hudLayout(W, list, fight) {
+    const inset = props()?.inset ?? 84;
+    const right = W - HUD_EDGE;
+    const counts = tally(list);
+    const spec = this.signSpec(list);
+    const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + 34 + 2;
+    const stageW = fight ? this.stageWidth() : 0;
+    const box = (x, y, w, h = HUD_H) => ({ x, y, w, h });
+    const across = (b, y, h) => b.y < y + h && y < b.y + b.h; // shares rows with y..y+h
+    const apart = (a, b) => !across(a, b.y, b.h) || a.x + a.w + HUD_GAP <= b.x || b.x + b.w + HUD_GAP <= a.x;
+    const wrap = Math.max(0, right - inset - 2 * (FRAME + SIGN_PAD)); // the room a wrapped sign has
+    const tries =
+      W < HUD_NARROW
+        ? [{ titled: true, strip: 2 }, { titled: false, strip: 2 }, { titled: true, strip: 2, wrap: true }, { titled: false, strip: 2, wrap: true }]
+        : [
+            { titled: true, strip: 1, stage: 1 },
+            { titled: false, strip: 1, stage: 1 },
+            ...(fight ? [{ titled: true, strip: 1, stage: 2 }, { titled: false, strip: 1, stage: 2 }] : []),
+            { titled: true, strip: 2, stage: 1 },
+            { titled: false, strip: 2, stage: 1 },
+            { titled: false, strip: 2, stage: 2 },
+            { titled: false, strip: 2, stage: 2, wrap: true },
+          ];
+    const place = (t, force) => {
+      const plan = this.signPlan(spec, t.titled, t.wrap ? wrap : null);
+      const sign = box(inset, HUD_TOP, plan.w, plan.h);
+      const strip = box(right - stripW, t.strip === 1 ? HUD_TOP : sign.y + sign.h + 4, stripW);
+      if (!force && (sign.x + sign.w > right || !apart(sign, strip))) return null;
+      let stage = null;
+      if (fight) {
+        const y = t.stage === 1 ? HUD_TOP : Math.max(sign.y + sign.h, t.strip === 1 ? strip.y + strip.h : 0) + 4;
+        const lo = across(sign, y, HUD_H) ? sign.x + sign.w + HUD_GAP : HUD_EDGE;
+        const hi = across(strip, y, HUD_H) ? strip.x - HUD_GAP : right;
+        if (!force && hi - lo < stageW) return null;
+        stage = box(Math.round(clamp(W / 2 - stageW / 2, lo, Math.max(lo, hi - stageW))), y, stageW);
+      }
+      return { sign, strip, stage, titled: t.titled, plan };
+    };
+    const got = tries.reduce((found, t) => found ?? place(t, false), null) ?? place(tries[tries.length - 1], true);
+    // the stage notes (a failed attempt, the countdown to the next stage) under the stage section
+    let note = null;
+    const m = this.monster;
+    const t = this.timesUp;
+    if (got.stage && t && Date.now() - t.at <= TIMES_UP_MS) note = { id: `idle-rpg-timesup-${t.id}`, text: t.text ?? LABELS.timesUp, colour: "red", fading: Boolean(t.fading) };
+    else if (got.stage && m?.advancing && m.hp <= 0) {
+      const secs = Math.max(1, Math.ceil((m.slainAt + ADVANCE_MS - Date.now()) / 1000));
+      note = { id: `idle-rpg-advance-${m.id}`, text: LABELS.moving(m.advancing, secs), colour: "gold" };
+    }
+    if (note) {
+      const w = letterW(note.text) + 2 * FRAME + 16;
+      note.box = box(Math.round(clamp(got.stage.x + got.stage.w / 2 - w / 2, HUD_EDGE, right - w)), got.stage.y + HUD_H + 4, w, NOTE_H);
+      // and lower, should the sign or the strip be in its row
+      for (let moved = true; moved; ) {
+        moved = false;
+        for (const b of [got.sign, got.strip])
+          if (!apart(note.box, b)) {
+            note.box.y = b.y + b.h + 4;
+            moved = true;
+          }
+      }
+    }
+    const under = got.sign.y + got.sign.h + 4;
+    const panelTop = Math.max(HUD_TOP, Math.min(under, Math.max(FLOOR_H, this.size.height) - PANEL_MAX_H - 2));
+    return { ...got, note, inset, counts, spec, panelTop };
+  }
+
+  // The sign, top left (see signSpec, hudLayout): a pixel frame holding the
+  // title in gold, the counts as chips (an icon and a number in the lettering,
+  // each opening its panel and sunk while it is open; the star gold on a faint
+  // gold square while there are points to spend, dimmed when there are none)
+  // and the raid button, red "Return to town" in a raid and slate "Start Raid"
+  // out of one. In a row, or wrapped into rows on a narrow scene (signPlan).
+  // Drawn on the floor, over the night's dark, like the strip.
+  sign(list, hud) {
+    const { spec, sign: b, plan } = hud;
+    const at = (el, x, y) => el.absolute().left(x).top(y);
+    const place = Object.fromEntries(plan.places.map((p) => [p.what, p]));
+    const kids = [];
+    if (place.title) kids.push(at(div(), place.title.x, place.title.y + 4).child(letterText(LABELS.title, "gold")));
+    if (place.empty) kids.push(at(div(), place.empty.x, place.empty.y + 4).child(letterText(LABELS.empty, "grey")));
+    const acts = {
+      slain: [this.codex, (cx) => this.openCodex(!this.codex)],
+      gold: [Boolean(this.shopOpen), () => this.openShop(this.shopOpen ? null : this.sprites[YOU])],
+      // on the first class with points to spend, else your own
+      points: [Boolean(this.skillsOpen), () => this.openSkills(this.skillsOpen ? null : (CLASSES.find((c) => pointsLeft(this.progress, c) > 0) ?? this.sprites[YOU]))],
+    };
+    for (const c of spec.counts) {
+      const [open, act] = acts[c.id];
+      const star = c.id === "points";
+      const gilt = star && spec.spare > 0;
+      kids.push(
+        at(chip(`idle-rpg-${c.id}`, countW(c.n), open, [image(src(c.art)).w(18).h(18), letterText(shortNumber(c.n), gilt ? "gold" : "white")]), place[c.id].x, place[c.id].y)
+          .when(gilt && !open, (el) => el.bg("#ffd16630").border_color("#ffd16650"))
+          .when(star && !gilt && !open, (el) => el.opacity(0.55))
+          .on_click((_e, cx) => {
+            act(cx);
+            cx.notify();
+          }),
+      );
+    }
+    const tone = this.battle ? RAID_BUTTON.on : RAID_BUTTON.off;
+    const button = div()
+      .id("idle-rpg-battle-toggle")
+      .w(spec.buttonW)
+      .h(CHIP_H)
+      .border(2)
+      .border_color(FRAME_COLOURS.outline)
+      .bg(tone.face)
+      .cursor_pointer()
+      .hover((st) => st.bg(tone.hover))
+      .active((st) => st.bg(tone.down))
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_click((_e, cx) => {
+        this.battle = !this.battle;
+        this.clearEffects(); // statuses stay with the fight they were put on
+        // the panels open from different places in a raid and out of one
+        this.codex = this.settingsOpen = false;
+        this.skillsOpen = this.shopOpen = null;
+        if (this.battle) this.fight(); // someone to fight straight away
+        this.save();
+        this.wake(cx);
+        cx.notify();
+      })
+      // a lighter top edge and a darker bottom one over the face, so they follow it under the pointer
+      .child(
+        div()
+          .size_full()
+          .border_t(2)
+          .border_color("#ffffff40")
+          .child(h_flex().size_full().border_b(2).border_color("#00000040").items_center().justify_center().child(letterText(spec.label, tone.text))),
+      );
+    kids.push(at(button, place.button.x, place.button.y));
+    return div()
+      .id("idle-rpg-sign")
+      .absolute()
+      .left(b.x)
+      .top(b.y - this.wallH)
+      .w(b.w)
+      .h(b.h)
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
+      .children([...framePieces(b.w, b.h), ...kids]);
+  }
+
+  // The stage section, top centre while the fight shows (see hudLayout): in a
+  // pixel frame, the stage in gold with an arrow either side to pick another
+  // one reached (dimmed and dead at stage 1 and at the highest reached; while
+  // farming after a failed attempt a green "FARM" after the number, and the
+  // next arrow pulsing), and the minutes and seconds left of the attempt
+  // ("9:42"), white while the time runs and grey while it stands still (nobody
+  // attacking; none while the boss is down); under them a bar of the time
+  // left, gliding between renders, which come at least once a second while
+  // the time runs (see tick), so nothing renders just to move it.
+  stageSection(b) {
+    const m = this.monster;
+    const dead = m.hp <= 0;
+    const { stage, best } = this.progress;
+    const farming = Boolean(this.progress.farming);
+    const limit = stageTime(m.stage);
+    const running = !dead && this.attackers().length > 0;
+    const x0 = FRAME + 4;
+    const y0 = FRAME + 1;
+    const arrow = (dir, to, x) => {
+      const live = to >= 1 && to <= best && to !== stage;
+      return chip(`idle-rpg-stage-${dir}`, 18, false, [image(src(STAGE_ARROWS[dir])).w(10).h(14)], { live })
+        .absolute()
+        .left(x)
+        .top(y0)
+        .opacity(live ? 1 : 0.3)
+        // while farming, the way forward pulses (a native loop: no renders)
+        .when(live && farming && dir === "next", (el) => el.loop("opacity", { from: 0.45, to: 1, period: 900 }))
+        .when(live, (el) =>
+          el.on_click((_e, cx) => {
+            this.toStage(to, cx);
+            cx.notify();
+          }),
+        );
+    };
+    const words = LABELS.stage(stage);
+    let x = x0 + 18 + 2;
+    const kids = [arrow("prev", stage - 1, x0), div().absolute().left(x).top(y0 + 4).child(letterText(words, "gold"))];
+    x += letterW(words) + 2;
+    // farming after a failed attempt: kills repeat this stage until the next arrow is pressed
+    if (farming) {
+      kids.push(
+        div()
+          .id("idle-rpg-stage-farm")
+          .absolute()
+          .left(x + 4)
+          .top(y0 + 4)
+          .tooltip("Farming: kills repeat this stage. The arrow tries the next again.")
+          .child(letterText(LABELS.farm, "green")),
+      );
+      x += 6 + letterW(LABELS.farm);
+    }
+    kids.push(arrow("next", stage + 1, x));
+    const clock = dead ? "" : clockText(this.left);
+    const barW = b.w - 2 * x0;
+    // the time only runs while someone attacks: standing still, it says so
+    if (!dead && !running) {
+      kids.push(
+        div()
+          .id("idle-rpg-stage-paused")
+          .absolute()
+          .left(b.w - x0 - letterW("00:00") - 6 - letterW(LABELS.paused))
+          .top(y0 + 4)
+          .tooltip("The time runs only while an agent is working and attacking.")
+          .child(letterText(LABELS.paused, "grey")),
+      );
+    }
+    kids.push(
+      div().id("idle-rpg-stage-clock").absolute().left(b.w - x0 - letterW(clock)).top(y0 + 4).child(letterText(clock, running ? "white" : "grey")),
+      div()
+        .id("idle-rpg-stage-time")
+        .absolute()
+        .left(x0)
+        .top(y0 + CHIP_H + 4)
+        .w(barW)
+        .h(4)
+        .bg(FRAME_COLOURS.outline)
+        .child(
+          div()
+            .id("idle-rpg-monster-time")
+            .h(4)
+            .w(Math.round((barW * clamp(this.left, 0, limit)) / limit))
+            .bg(running ? "#5cc8ff" : "#5d7088")
+            .transition("width", { duration: TICK_STEP, easing: "linear" }),
+        ),
+    );
+    return div()
+      .id("idle-rpg-stage")
+      .absolute()
+      .left(b.x)
+      .top(b.y - this.wallH)
+      .w(b.w)
+      .h(b.h)
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
+      .children([...framePieces(b.w, b.h), ...kids]);
+  }
+
+  // A stage note under the stage section, in a frame of its own (see
+  // hudLayout): after a failed attempt, "Time's up! Back to stage 8" or
+  // "Wiped! Back to stage 8" in red, which pops in, then on the render tick()
+  // asks for once it has shown TIMES_UP_FRESH (marking it `fading`) fades
+  // natively, gone after TIMES_UP_MS; or, while a boss that first cleared its
+  // stage lies there (see ADVANCE_MS), "Moving to stage 13 in 3" in gold,
+  // drawn again by the watch once a second (no timer of its own). Picking a
+  // stage brings a fresh boss at once, so it goes with it.
+  stageNote(n) {
+    const b = n.box;
+    return div()
+      .id(n.id)
+      .absolute()
+      .left(b.x)
+      .top(b.y - this.wallH)
+      .w(b.w)
+      .h(b.h)
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
+      .when(n.colour === "red", (el) => el.opacity(n.fading ? 0 : 1).transition("opacity", { duration: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-in" }))
+      .children([...framePieces(b.w, b.h), div().absolute().left(FRAME + 8).top(FRAME + 3).child(letterText(n.text, n.colour))]);
+  }
+
+  // The strip, top right (see hudLayout), in a frame like the sign's: an icon
+  // for each status with agents in it, in the order of tally, with how many on
+  // a badge at its bottom-right corner in the pixel font, then the gear, a chip
+  // that opens the settings menu. Drawn on the floor over the night's dark and
+  // under the cards. `b` is its box: beside the sign, or under it below
+  // HUD_NARROW wide.
+  hud(counts, b) {
+    let x = FRAME + 6;
+    const icons = counts.map(({ status, art, w, h, n }) => {
       const count = n > 99 ? "99+" : String(n);
-      return div()
+      const el = div()
         .id(`idle-rpg-status-${status}`)
-        .relative()
+        .absolute()
+        .left(x)
+        .top(FRAME + Math.floor((HUD_H - 2 * FRAME - h - 2) / 2))
         .w(w)
         .h(h)
         .tooltip(`${STATUS[status][0]}: ${n}`)
         .child(image(src(art)).w(w).h(h))
-        .child(div().absolute().left(w - textW(count, 2) + 4).top(h - GLYPH_H * 2 + 4).child(pixelText(count, "white", 2)));
-    };
-    return h_flex()
+        .child(div().absolute().left(w - textW(count, 2) + 2).top(h - GLYPH_H * 2 + 2).child(pixelText(count, "white", 2)));
+      x += w + 8;
+      return el;
+    });
+    const gear = chip("idle-rpg-gear", 34, this.settingsOpen, [image(src("icons/gear.png")).w(30).h(30)], { h: 34, px: 0 })
+      .absolute()
+      .left(b.w - FRAME - 2 - 34)
+      .top(FRAME)
+      .tooltip("Settings")
+      .on_click((_e, cx) => {
+        this.openSettings(!this.settingsOpen);
+        cx.notify();
+      });
+    return div()
       .id("idle-rpg-hud")
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // a click on the strip is not one on the floor
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
       .absolute()
       .right(HUD_EDGE)
-      .top(top)
-      .h(HUD_H)
-      .pl(6)
-      .pr(2)
-      .gap(8)
-      .items_center()
-      .rounded(6)
-      .bg("#00000050")
-      .children(counts.map(icon))
-      .child(
-        div()
-          .id("idle-rpg-gear")
-          .p(1)
-          .rounded(4)
-          .bg(this.settingsOpen ? "#ffffff30" : "#ffffff00")
-          .cursor_pointer()
-          .hover((st) => st.bg("#ffffff30"))
-          .tooltip("Settings")
-          .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
-          .on_click((_e, cx) => {
-            this.openSettings(!this.settingsOpen);
-            cx.notify();
-          })
-          .child(image(src("icons/gear.png")).w(30).h(30)),
-      );
+      .top(b.y - this.wallH)
+      .w(b.w)
+      .h(b.h)
+      .children([...framePieces(b.w, b.h), ...icons, gear]);
   }
 
   // Opens or closes the settings menu, closing the other panels and any card.
@@ -2843,7 +3097,7 @@ export default class RaidParty extends View {
   // The codex, under the sign: every kind of monster and how many have fallen.
   // A kind not yet slain is a dim shape with no name. Kills from before the
   // counts by kind began are in the total only, so they get a line of their own.
-  codexCard(left) {
+  codexCard(left, top) {
     const { slain, kills } = this.progress;
     const known = Object.keys(MONSTERS).reduce((sum, k) => sum + (kills[k] ?? 0), 0);
     const line = (picture, name, n) =>
@@ -2857,7 +3111,7 @@ export default class RaidParty extends View {
       .id("idle-rpg-codex")
       .absolute()
       .left(left)
-      .top(54)
+      .top(top)
       .w(176)
       .p(8)
       .gap(3)
@@ -2935,7 +3189,7 @@ export default class RaidParty extends View {
   // short. Buying saves at once. Its height is fixed by PANEL (147px, 165 with
   // a second kind of training), short enough for the scene at its lowest
   // (230px, the sign taking 54).
-  skillsCard(left) {
+  skillsCard(left, top) {
     const cls = this.skillsOpen;
     const ranks = this.progress.skills[cls];
     const spare = pointsLeft(this.progress, cls);
@@ -2990,7 +3244,7 @@ export default class RaidParty extends View {
       .id("idle-rpg-skills")
       .absolute()
       .left(left)
-      .top(54)
+      .top(top)
       .w(CARD_W)
       .p(PANEL.pad)
       .gap(PANEL.gap)
@@ -3059,7 +3313,7 @@ export default class RaidParty extends View {
   // status and the bosses weak to it or resisting it, a vial's aura), the
   // tiles being too narrow for it. Its height is fixed by PANEL and SHOP_ROW
   // (167px), short enough for the scene at its lowest (230px, the sign taking 54).
-  shopCard(left) {
+  shopCard(left, top) {
     const cls = this.shopOpen;
     const kind = SHOP_KINDS.includes(this.shopKind) ? this.shopKind : SHOP_KINDS[0];
     const items = catalogue(cls, kind);
@@ -3163,7 +3417,7 @@ export default class RaidParty extends View {
       .id("idle-rpg-shop")
       .absolute()
       .left(left)
-      .top(54)
+      .top(top)
       .w(SHOP_NAV_W + 8 + CARD_W)
       .p(PANEL.pad)
       .gap(PANEL.gap)
