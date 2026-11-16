@@ -4,9 +4,10 @@
 // run on their own.
 //
 // The party fights the boss of a stage, numbered from 1, against the clock:
-// killing it in time clears the stage and pays gold; running out of time only
-// restarts the attempt. Boss HP grows exponentially with the stage, and gold
-// more slowly, so the party has to keep growing to push on.
+// killing it in time clears the stage and pays gold; running out of time, or
+// being wiped, sends the party back a stage to farm (failStage). Boss HP grows
+// exponentially with the stage, and training's price faster than gold, so the
+// party has to keep growing to push on.
 //
 // Progress never belongs to an agent (agents come and go): it belongs to you
 // and to the four classes. Every blow that lands earns experience for the
@@ -32,14 +33,18 @@ export const KINDS = ["slime", "ogre", "dragon"];
 
 // Stages. Defaults chosen with a simulation (see PLAN.md) to be retuned; nothing
 // else depends on their values. Boss HP grows exponentially, by HP_GROWTH a
-// stage, times the stage number to HP_POWER, which makes the first stages
-// steeper (a fresh party has to start growing within a few stages, not hit a
-// wall at once); gold grows by GOLD_GROWTH, which is less: the further the
-// party gets, the longer the next stage takes.
-export const STAGE_HP = 50; // the stage 1 boss's HP
-export const HP_GROWTH = 1.175; // in the long run each stage's boss has this many times the HP of the one before
-export const HP_POWER = 0.75; // and early on more: HP also grows as the stage number to this power
-export const STAGE_MS = 30000; // the time limit of an attempt at any stage (see stageTime), counted only while someone attacks
+// stage, times the stage number to HP_POWER (0 since attempts last 10
+// minutes: early stages are the clock's, so they are kept long rather than
+// steep). Gold grows by GOLD_GROWTH, a little faster than HP, so farming far
+// below the party's limit (15 stages or more) pays less than nearer it, and a
+// party that only hits hard cannot outrun one that can also last by farming
+// low (gold a second is still best 3 to 5 stages below the limit); training's
+// price grows faster still, so the further the party gets, the longer the next
+// stage takes.
+export const STAGE_HP = 900; // the stage 1 boss's HP (a lone agent's untrained blows take about 4 minutes)
+export const HP_GROWTH = 1.175; // each stage's boss has this many times the HP of the one before (times the power below)
+export const HP_POWER = 0; // HP also grows as the stage number to this power (0: not at all)
+export const STAGE_MS = 600000; // the time limit of an attempt at any stage, 10 minutes (see stageTime), counted only while someone attacks
 // Gold for a kill grows with the party: more agents fighting means more gold,
 // so more of them means faster progress. A kill pays ATTACKER_GOLD per
 // attacker who took part, at stage 1, so the usual party of three agents and
@@ -47,9 +52,13 @@ export const STAGE_MS = 30000; // the time limit of an attempt at any stage (see
 export const ATTACKER_GOLD = 0.5; // gold for killing the stage 1 boss, per attacker
 export const MAX_GOLD_ATTACKERS = 20; // a crowd past this many pays as this many
 export const GOLD_ATTACKERS = 4; // the attackers a kill is reckoned with when not told (3 agents and you)
-export const GOLD_GROWTH = 1.12; // each stage's boss pays this many times the gold of the one before (rounded down)
-export const STAGE_XP = 60; // experience a whole kill at stage 1 earns, shared out by the damage each blow dealt
-export const XP_GROWTH = 1.04; // each stage's kill earns this many times the experience of the one before
+export const GOLD_GROWTH = 1.23; // each stage's boss pays this many times the gold of the one before (rounded down)
+// Experience grows with the party the same way: a kill at stage 1 earns
+// ATTACKER_XP per fighter (the attackers gold counts), shared out by the damage
+// each blow dealt, so more agents mean faster levels, not the same experience
+// spread thinner (one agent and you, 2, earn what a kill earned before).
+export const ATTACKER_XP = 200; // experience a whole kill at stage 1 earns, per attacker taking part
+export const XP_GROWTH = 1.03; // each stage's kill earns this many times the experience of the one before
 export const MAX_STAGE = 1000; // the furthest stage believed (a saved one past it is cut down)
 
 // Damage. A blow deals BASE_DAMAGE times the class's level bonus, training
@@ -68,24 +77,29 @@ export const TRAINING = [
   { key: "health", name: "Health" },
 ];
 export const TRAINING_BONUS = 1.12; // damage multiplier per level of Attack training (compounding)
-export const HEALTH_BONUS = 1.2; // max HP multiplier per level of Health training (compounding)
-export const TRAINING_PRICE = 3; // gold for the first level
-export const TRAINING_PRICE_GROWTH = 1.25; // each level costs this many times the one before (rounded down)
+export const HEALTH_BONUS = 1.12; // max HP multiplier per level of Health training (compounding)
+export const TRAINING_PRICE = 5; // gold for the first level
+export const TRAINING_PRICE_GROWTH = 1.45; // each level costs this many times the one before (rounded down)
 export const MAX_TRAINING = 1000; // the most levels believed (a saved number past it is cut down)
 
 // Monsters fight back (see party.js, which runs it). Every character fighting
 // has HP: its class's base (the warrior, at the monster's feet, the most) times
 // the class level's bonus (LEVEL_BONUS, as for damage) and its Health
-// training's. The boss's blows grow with the stage like its HP, more slowly:
-// STAGE_DAMAGE x DAMAGE_GROWTH^(s-1) x s^DAMAGE_POWER is one blow on a party of
-// PARTY_SIZE (party.js softens it for fewer). A healer holding the Heal Vial
-// heals HEAL_SHARE of its own max HP a throw. Defaults chosen with a
-// simulation (see PLAN.md), to be retuned.
+// training's. The boss's blows grow with the stage as its HP does (and as
+// Health training's levels do Attack's), so a party that trains both evenly
+// meets much the same fight at every stage and one that skips Health falls
+// behind: STAGE_DAMAGE x DAMAGE_GROWTH^(s-1) x s^DAMAGE_POWER is one blow on a
+// party of PARTY_SIZE (party.js softens it for fewer); the power keeps the
+// first stages' blows harmless. A healer holding the Heal Vial heals
+// HEAL_SHARE of its own max HP a throw: about one of the boss's blows on a
+// light class at the stage being pushed, so in a fight of several minutes it
+// keeps the party standing. Defaults chosen with a simulation (see PLAN.md),
+// to be retuned.
 export const CLASS_HP = { wizard: 100, healer: 100, warrior: 200, archer: 130 };
-export const STAGE_DAMAGE = 4;
-export const DAMAGE_GROWTH = 1.22;
-export const DAMAGE_POWER = 0.75;
-export const HEAL_SHARE = 0.25;
+export const STAGE_DAMAGE = 5;
+export const DAMAGE_GROWTH = 1.175;
+export const DAMAGE_POWER = 0.5;
+export const HEAL_SHARE = 1;
 
 // Skills. Every class has the same three for now; CLASS_SKILLS keeps a list per
 // class so one can get its own later. Ranks are per class, so a skill applies
@@ -326,6 +340,14 @@ export function shortNumber(n) {
   return `${m}E${e}`;
 }
 
+// An attempt's time left, `ms`, as the plate shows it: minutes and seconds,
+// the seconds rounded up so it reads "0:01" until the last moment ("9:42",
+// "10:00", "0:00"). Anything that is not a number from 0 up is "0:00".
+export function clockText(ms) {
+  const s = typeof ms === "number" && Number.isFinite(ms) && ms > 0 ? Math.ceil(ms / 1000) : 0;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
 // The path in art/ of one character of the pixel font in `colour`
 // ("font/gold/7.png", "font/white/plus.png"), or null for a character or
 // colour it does not have, so no other string can end up in a path.
@@ -405,17 +427,23 @@ export const stageKind = (s) => KINDS[(stageOf(s) - 1) % KINDS.length];
 // The HP of stage `s`'s boss: STAGE_HP x HP_GROWTH^(s-1) x s^HP_POWER, a real number.
 export const bossHp = (s) => STAGE_HP * HP_GROWTH ** (stageOf(s) - 1) * stageOf(s) ** HP_POWER;
 
+// How many attackers a kill's gold and experience are reckoned with: a whole
+// number from 1 to MAX_GOLD_ATTACKERS (anything else counts as 1, more as the most).
+const attackersOf = (n) => (typeof n === "number" && Number.isFinite(n) && n >= 1 ? Math.min(Math.floor(n), MAX_GOLD_ATTACKERS) : 1);
+
 // Gold for killing stage `s`'s boss with `attackers` taking part (a whole
 // number from 1 to MAX_GOLD_ATTACKERS; anything else counts as 1, more as
 // the most): ATTACKER_GOLD each, exponential in the stage but slower than HP,
 // rounded down and never under 1.
 export function stageGold(s, attackers = GOLD_ATTACKERS) {
-  const n = typeof attackers === "number" && Number.isFinite(attackers) && attackers >= 1 ? Math.min(Math.floor(attackers), MAX_GOLD_ATTACKERS) : 1;
+  const n = attackersOf(attackers);
   return Math.min(Math.max(1, Math.floor(ATTACKER_GOLD * n * GOLD_GROWTH ** (stageOf(s) - 1))), MAX);
 }
 
 // Experience a whole kill at stage `s` earns (each blow earns its share, see credit).
-export const stageXp = (s) => STAGE_XP * XP_GROWTH ** (stageOf(s) - 1);
+// ATTACKER_XP for each of `attackers` taking part (counted as for gold, see
+// stageGold), growing by XP_GROWTH a stage.
+export const stageXp = (s, attackers = GOLD_ATTACKERS) => ATTACKER_XP * attackersOf(attackers) * XP_GROWTH ** (stageOf(s) - 1);
 
 // How long an attempt at stage `s` has, in ms.
 export const stageTime = (_s) => STAGE_MS;
@@ -629,23 +657,24 @@ export function firstAttack(ranks, r) {
   return 1 + Math.min(base - 1, Math.floor(r * base));
 }
 
-// Experience earned by `hp` damage landing on `monster` ({ maxHp, stage }):
-// that share of its HP, of what a whole kill at its stage earns. So a class
-// earns by the share of the fight it carries, and levels do not run away as
-// damage grows.
-export function blowXp(hp, monster) {
+// Experience earned by `hp` damage landing on `monster` ({ maxHp, stage })
+// with `attackers` in the fight: that share of its HP, of what a whole kill at
+// its stage earns for that many (stageXp). So a class earns by the share of
+// the fight it carries, and levels do not run away as damage grows.
+export function blowXp(hp, monster, attackers = GOLD_ATTACKERS) {
   const maxHp = monster?.maxHp;
   if (!finite(hp) || hp <= 0 || !finite(maxHp) || maxHp <= 0) return 0;
-  return (Math.min(hp, maxHp) / maxHp) * stageXp(monster.stage);
+  return (Math.min(hp, maxHp) / maxHp) * stageXp(monster.stage, attackers);
 }
 
 // Credits `hp` points of damage that landed on `monster`, dealt by a
-// character of class `cls`: experience to that class and to you (see blowXp).
-// Returns the keys (the class, YOU) that went up a level on it, in that order.
-// Experience is a real number; levels count only whole points.
-export function credit(progress, cls, hp, monster) {
+// character of class `cls`, with `attackers` in the fight (as for a kill's
+// gold): experience to that class and to you (see blowXp). Returns the keys
+// (the class, YOU) that went up a level on it, in that order. Experience is a
+// real number; levels count only whole points.
+export function credit(progress, cls, hp, monster, attackers = GOLD_ATTACKERS) {
   const up = [];
-  const by = blowXp(hp, monster);
+  const by = blowXp(hp, monster, attackers);
   const gain = (key, add, levels) => {
     const before = levels(progress.xp[key]).level;
     const now = finite(progress.xp[key]) && progress.xp[key] > 0 ? progress.xp[key] : 0;

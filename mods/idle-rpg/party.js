@@ -58,20 +58,22 @@ export const FIRST_ATTACK_TICKS = 4; // the soonest the first attack of a fight 
 export const SINGLES_BETWEEN = [1, 2, 3];
 export const AREA_RADIUS = 70; // px either side of the spot an area attack is aimed at
 export const AREA_DEPTH = 0.5; // and this much of it up and down the floor, which is seen at a slant (foe/marker is drawn so)
-// A knocked-out character rests this long, then gets up at full HP. The owner
-// said "something like a 30s cooldown"; a third of an attempt (STAGE_MS, 30s)
-// is the default, so one knocked out does come back mid-fight.
-export const KO_TICKS = 10 * SECOND;
+// A knocked-out character rests this long, then gets up at full HP: 30
+// seconds, the owner's number, with a countdown by the character (main.js).
+// An attempt has 10 minutes (STAGE_MS), so one knocked out comes back
+// mid-fight.
+export const KO_TICKS = 30 * SECOND;
 // The monster's damage is the stage's (an input: see hitDamage), which is
-// what one blow does to a party of PARTY_SIZE attackers. With n attackers a
-// blow does (n / PARTY_SIZE) ** SCALE_POWER of it: softer for fewer, so one or
-// two attackers are not swept away by blows meant for a crowd. At a power of
-// 1 each attacker's share of the monster's damage would be the same however
-// many there are, but a lone attacker's first knockout is a wipe; above 1 the
-// few take a smaller share than the many, who can stand a knockout or two and
-// may have a healer.
+// what one blow does to a party of PARTY_SIZE attackers. With n attackers
+// standing a blow does (n / PARTY_SIZE) ** SCALE_POWER of it: softer for
+// fewer, so one or two attackers are not swept away by blows meant for a
+// crowd, and the last ones standing in a long fight take smaller blows while
+// the knocked out rest. At a power of 1 each attacker's share of the
+// monster's damage is the same however many there are (it was 1.5 while
+// attempts lasted 30 seconds; in 10-minute fights that made a small party
+// stronger per character than a big one).
 export const PARTY_SIZE = 4;
-export const SCALE_POWER = 1.5;
+export const SCALE_POWER = 1;
 // Healing: a healer holding a potion of HEAL_POTION heals instead of attacking
 // while any attacker (itself included) is below HEAL_BELOW of its max HP, the
 // one with the least HP for its max (by healOf in rules.js).
@@ -312,6 +314,15 @@ export function healParty(party, key, amount, tick) {
   m.hp += got;
   m.healedAt = tick;
   return got;
+}
+
+// The whole seconds of rest a knocked-out character has left as of tick
+// `tick` (rounded up, at most KO_TICKS' worth), for the number counting down
+// by it; 0 for anyone standing or not in the fight.
+export function restSeconds(party, key, tick) {
+  const m = Object.prototype.hasOwnProperty.call(party.members, key) ? party.members[key] : null;
+  if (!m || m.down === null || !finite(tick)) return 0;
+  return Math.min(KO_TICKS / SECOND, Math.max(0, Math.ceil((m.down - tick) / SECOND)));
 }
 
 // How much of its rest a knocked-out character has left, from 1 (just
