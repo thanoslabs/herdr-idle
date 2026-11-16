@@ -212,9 +212,10 @@ describe("letterFit: any text, as the lettering draws it", () => {
     assert.ok(ok(got) && R.lettersWidth(got) <= 38);
     // characters that take no room never fill it, so reading stops by count
     for (const pad of ["\u0301", "\u200b", " ", "\u200d"]) {
+      const text = `a${pad.repeat(1e7)}b`; // read to its end, this takes most of a second
       const t1 = performance.now();
-      const out = R.letterFit(`a${pad.repeat(1e6)}b`, 38);
-      assert.ok(performance.now() - t1 < 20, `${JSON.stringify(pad)} is not read to the end`);
+      const out = R.letterFit(text, 38);
+      assert.ok(performance.now() - t1 < 100, `${JSON.stringify(pad)} is not read to the end`);
       assert.equal(out, `A${R.ELLIPSIS}`);
     }
     // every code point in a sweep of the planes, alone and among letters, gives only characters of the face
