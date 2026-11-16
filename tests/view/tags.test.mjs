@@ -82,24 +82,28 @@ describe("an agent's tag", () => {
   test("never overlaps a neighbour at the default spacing, for names up to the most a tag shows", async () => {
     // the widest a tag can be: wide letters, and names cut to the maximum
     const widest = [["MMMMMMMMMMMM", "WWW"], ["W".repeat(40), ""], ["#@#@#@#@", "x"], ["MW MW MW MW", "MW"]];
+    // 20 fit on the default spots from 1280px; on a narrower scene they are a crowd (crowd.test.mjs), whose tags never overlap either
     for (const W of THOROUGH ? [640, 800, 1024, 1280, 1920] : [1280, 1920]) {
-      const names = Array.from({ length: 24 }, (_, i) => widest[i % widest.length]);
+      const names = Array.from({ length: 20 }, (_, i) => widest[i % widest.length]);
       const v = await named(names, { width: W });
-      const tags = names.map((_, i) => ({ key: `n${i}`, at: v.view.at[`n${i}`], box: v.box(`idle-rpg-label-n${i}`) }));
+      const tags = names.map((_, i) => ({ key: `n${i}`, at: v.view.at[`n${i}`], box: v.has(`idle-rpg-label-n${i}`) ? v.box(`idle-rpg-label-n${i}`) : null })).filter((t) => t.box);
       let pairs = 0;
       for (let i = 0; i < tags.length; i++)
         for (let j = i + 1; j < tags.length; j++) {
           const [a, b] = [tags[i], tags[j]];
-          // neighbours in a row on default spots (place(): 250 + 88k), 88px or more apart; not
-          // an agent the campfire pushed aside (or a crowd stacked on one spot, a known todo)
+          assert.ok(!overlap(a.box, b.box), `${a.key} and ${b.key} overlap at ${W}: ${JSON.stringify(a.box)} ${JSON.stringify(b.box)}`);
+          // neighbours in a row on default spots (place(): 250 + 88k), 88px or more apart; not an
+          // agent the campfire pushed aside
           const spot = (t) => (t.at.x - 250) % 88 === 0;
           if (a.at.y !== b.at.y || Math.abs(a.at.x - b.at.x) < 88 || !spot(a) || !spot(b)) continue;
           pairs += 1;
-          assert.ok(!overlap(a.box, b.box), `${a.key} and ${b.key} overlap at ${W}: ${JSON.stringify(a.box)} ${JSON.stringify(b.box)}`);
           const gap = Math.max(b.box.x - (a.box.x + a.box.w), a.box.x - (b.box.x + b.box.w));
           assert.ok(gap >= 4, `${a.key} and ${b.key} only ${gap}px apart at ${W}`);
         }
-      assert.ok(pairs >= 5, `only ${pairs} pairs of neighbours at ${W}`);
+      if (W >= 1280) {
+        assert.equal(v.view.pitch, null, `the default spots at ${W}`);
+        assert.ok(pairs >= 5, `only ${pairs} pairs of neighbours at ${W}`);
+      }
       for (const t of tags) assert.ok(t.box.w >= TAG_MAX_W - 10, `${t.key} is about as wide as a tag gets: ${t.box.w}`);
     }
   });
@@ -162,19 +166,24 @@ describe("your tag and the stations'", () => {
   });
 });
 
-describe("what 100 tags cost", () => {
+describe("what tags cost", () => {
   test("each tag is 5 elements and 2 a character; 100 agents in town render in a bounded count", async () => {
-    const names = Array.from({ length: 100 }, (_, i) => [`workspace-${String(i).padStart(2, "0")}`, "cd"]); // 15 characters, cut to 8 glyphs
-    const v = await named(names);
+    const name = (i) => [`workspace-${String(i).padStart(2, "0")}`, "cd"]; // 15 characters, cut to 8 glyphs
+    // a small party: every tag
+    const v = await named(Array.from({ length: 20 }, (_, i) => name(i)));
     let inTags = 0;
-    for (let i = 0; i < 100; i++) {
+    for (let i = 0; i < 20; i++) {
       const el = v.get(`idle-rpg-label-n${i}`);
       const glyphs = v.images(`idle-rpg-label-n${i}`).length;
       assert.equal(count(el), 5 + 2 * glyphs);
       inTags += count(el);
     }
-    const total = v.all(() => true).length;
-    assert.equal(inTags, 2100);
+    assert.equal(inTags, 420);
+    // 100 (a crowd, its tags thinned: see crowd.test.mjs): each drawn tag the same, and the whole in a bounded count
+    const crowd = await named(Array.from({ length: 100 }, (_, i) => name(i)));
+    const drawn = crowd.ids("idle-rpg-label-");
+    for (const id of drawn) assert.equal(count(crowd.get(id)), 21);
+    const total = crowd.all(() => true).length;
     assert.ok(total <= 4000, `${total} elements for 100 agents`);
     // the most a tag can hold is 18 glyphs (1 art px wide, 2 apart, in 38): 41 elements
     const thin = await named([["!".repeat(18), ""]]);

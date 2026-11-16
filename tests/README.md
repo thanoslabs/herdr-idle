@@ -17,7 +17,7 @@ Quote the glob: Node expands it (`node --test tests/` does not work on Node 22, 
 |---|---|
 | `rules*.test.mjs`, `party.test.mjs`, `effects.test.mjs` | the plain modules (`rules.js`; its shop, art paths and `loadState`; `party.js`; `effects.js`) |
 | `view/*.test.mjs` | the real `main.js` through the harness: loading, fights, failures (only by the clock; everyone down at once), the boss's attacks, healers (working and standing by), weapon effects, panels, the HUD and `hudLayout`, the name tags and the boss's plate, screen sizes, saves, render discipline, every picture, the simulation's parity |
-| `crowd.test.mjs` | 50–400 agents: today's quadratic `place()`, as a baseline |
+| `crowd.test.mjs` | crowds: small parties pinned against the old spots and formation, 100–2,000 agents laid out in linear time (render ms printed), no two on one spot below the stated counts, stations, campfire and boss kept clear, dragged spots kept, the tag rule |
 | `sim.test.mjs` | `tools/sim.mjs --smoke` and its player |
 | `harness.test.mjs` | the harness itself |
 | `harness/` | the harness (below); `view/expect.mjs` holds the rules about to change (the drop-back on a failure, the stage section's text and when its time runs) in one place each |
