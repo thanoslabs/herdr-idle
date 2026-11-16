@@ -1213,12 +1213,13 @@ export default class RaidParty extends View {
         .child(image(src(monsterArt(m.kind, part))).w(kind.w).h(kind.h));
     // the plate over its head, a row taller while it shows status icons, kept
     // inside the scene when the wall is low and clear of the HUD's frames above
-    // it (the stage section and its note, and on a narrow scene the sign or the strip)
+    // it (the stage section, and on a narrow scene the sign or the strip; not a
+    // stage note, which is short-lived and drawn over it, so the plate never jumps)
     const icons = dead ? [] : plateIcons(this.statuses, this.auras());
     const plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
     const mid = left + Math.round(kind.w / 2);
     const hud = this.hudBox ?? {};
-    const clear = [hud.sign, hud.strip, hud.stage, hud.note?.box]
+    const clear = [hud.sign, hud.strip, hud.stage]
       .filter((b) => b && b.x < mid + BAR_W / 2 + 4 && mid - BAR_W / 2 - 4 < b.x + b.w)
       .reduce((y, b) => Math.max(y, b.y + b.h + 4), 4);
     const plateTop = Math.max(top - plateH - 4, clear - this.wallH);
@@ -2305,16 +2306,19 @@ export default class RaidParty extends View {
       actors.push({ y: this.at[a.address].y, draw: () => this.critter(a) });
       if (this.fighting && a.status === "working" && this.monster.hp > 0) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: a.address, cls: this.sprites[a.address], ...this.at[a.address] }, W, foeKind) });
     }
+    // level-up notes and critical blows' numbers, drawn after the HUD with the
+    // damage numbers (they rise high enough in a short scene to meet it)
+    const pops = [];
     for (const [key, c] of Object.entries(this.cheers)) {
       if (Date.now() - c.at > CHEER_MS + 1000) delete this.cheers[key];
     }
     for (const key of Object.keys(this.cheers)) {
       const s = key === YOU ? !this.walking && you : list.some((a) => a.address === key && this.drag?.address !== key) && this.at[key];
-      if (s) actors.push({ y: FLOOR_H + 1, draw: () => [this.cheerNote(key, s.x, s.y)] });
+      if (s) pops.push(() => this.cheerNote(key, s.x, s.y));
     }
     for (const [key, c] of Object.entries(this.crits)) {
       if (Date.now() - c.at > CRIT_MS + 1000) delete this.crits[key];
-      else if (foeKind) actors.push({ y: FLOOR_H + 1, draw: () => [this.critNote(key, W, foeKind)] });
+      else if (foeKind) pops.push(() => this.critNote(key, W, foeKind));
     }
     // Damage numbers go once they have faded, when the fight is not shown
     // (battle mode off, or too narrow), when their monster has gone, and all
@@ -2353,13 +2357,15 @@ export default class RaidParty extends View {
           .children(foeAttack.under)
           .children(actors.flatMap((p) => p.draw()))
           .child(this.gloom(W, fire))
-          // over the night's dark, so they read at any hour, and under the cards
-          .when(Boolean(foeKind), (el) => el.children(this.damage.map((d) => this.damageNote(d, W, foeKind))))
           // the HUD: drawn over the night's dark, so it reads at any hour, and under the cards
           .child(this.hud(hud.counts, hud.strip))
           .child(this.sign(list, hud))
           .when(Boolean(hud.stage), (el) => el.child(this.stageSection(hud.stage)))
           .when(Boolean(hud.note), (el) => el.child(this.stageNote(hud.note)))
+          // over the night's dark and the HUD (in a short scene a number rising off a
+          // big boss reaches the stage section), and under the cards; none has a handler
+          .when(Boolean(foeKind), (el) => el.children(this.damage.map((d) => this.damageNote(d, W, foeKind))))
+          .children(pops.map((draw) => draw()))
           .when(list.length === 0, (el) =>
             el.child(
               v_flex()
@@ -2435,11 +2441,11 @@ export default class RaidParty extends View {
           this.skillsOpen = this.shopOpen = null;
           this.card = this.card === pr.address ? null : pr.address;
           this.picking = false;
-        } else if (still) {
+        } else if (pr.kind === "frame" || still) {
           this.card = null;
           this.codex = this.settingsOpen = false;
           this.skillsOpen = this.shopOpen = null;
-          this.walkTo(this.point(e), W, cx);
+          if (pr.kind !== "frame") this.walkTo(this.point(e), W, cx);
         }
         this.press = null;
         cx.notify();
@@ -2454,6 +2460,14 @@ export default class RaidParty extends View {
       .when(CLASSES.includes(this.skillsOpen), (el) => el.child(this.skillsCard(hud.inset, hud.panelTop)))
       .when(CLASSES.includes(this.shopOpen), (el) => el.child(this.shopCard(hud.inset, hud.panelTop)))
       .when(this.settingsOpen, (el) => el.child(this.settingsCard(hud.strip.y)));
+  }
+
+  // A press on a HUD frame's empty part (its chips and buttons stop their own):
+  // not one on the floor, so you do not walk there, but like one it closes an
+  // open panel or card when it comes up (see the root's on_mouse_up).
+  framePress(cx) {
+    cx.stop_propagation();
+    if (!this.press) this.press = { kind: "frame" };
   }
 
   // What the sign holds (see sign): "nobody in yet" while there are no agents;
@@ -2476,6 +2490,55 @@ export default class RaidParty extends View {
     return { counts, empty, spare, label, countsW, buttonW: letterW(label) + 12, titleW: letterW(LABELS.title) };
   }
 
+  // Where each thing on the sign goes, and the sign's size: { w, h, rows,
+  // places: [{ what: "title" | "empty" | <count's id> | "button", x, y }] }
+  // in px from the sign's top left (a chip's or the button's top; a line of
+  // lettering's is 4px lower). In one row (`wrap` null): the title, "nobody in
+  // yet" and the counts from the left, the button at the right. Otherwise
+  // wrapped into as many rows as it takes, each CHIP_H high, so no row is
+  // wider than `wrap` px (inside the frame and its padding), the button last.
+  signPlan(spec, titled, wrap = null) {
+    const items = [
+      ...(titled ? [{ what: "title", w: spec.titleW, gap: 10 }] : []),
+      ...(spec.empty ? [{ what: "empty", w: letterW(LABELS.empty), gap: 4 }] : []),
+      ...spec.counts.map((c) => ({ what: c.id, w: countW(c.n), gap: 4 })),
+    ];
+    const left = FRAME + SIGN_PAD;
+    if (wrap === null) {
+      const rowY = Math.round((HUD_H - CHIP_H) / 2);
+      const places = [];
+      let x = left;
+      for (const it of items) {
+        places.push({ what: it.what, x, y: rowY });
+        x += it.w + it.gap;
+      }
+      const w = 2 * left + (titled ? spec.titleW + 10 : 0) + (spec.countsW ? spec.countsW + 8 : 0) + spec.buttonW;
+      places.push({ what: "button", x: w - left - spec.buttonW, y: rowY });
+      return { w, h: HUD_H, rows: 1, places };
+    }
+    const rows = [[]];
+    let used = 0;
+    for (const it of [...items, { what: "button", w: spec.buttonW }]) {
+      if (rows.at(-1).length && used + 6 + it.w > wrap) {
+        rows.push([]);
+        used = 0;
+      }
+      used += (rows.at(-1).length ? 6 : 0) + it.w;
+      rows.at(-1).push(it);
+    }
+    const places = [];
+    let widest = 0;
+    rows.forEach((row, r) => {
+      let x = left;
+      for (const it of row) {
+        places.push({ what: it.what, x, y: FRAME + 2 + r * (CHIP_H + 2) });
+        x += it.w + 6;
+      }
+      widest = Math.max(widest, x - 6 - left);
+    });
+    return { w: 2 * left + widest, h: 2 * FRAME + (rows.length + 1) * 2 + rows.length * CHIP_H, rows: rows.length, places };
+  }
+
   // The stage section's width: the frame and its padding round the arrows,
   // "STAGE N", the farm mark while farming and room for the longest time
   // ("10:00"), so it keeps its size as the seconds turn.
@@ -2486,7 +2549,8 @@ export default class RaidParty extends View {
 
   // Where the HUD's frames go, in scene px from the top left: { sign, strip,
   // stage, note } boxes { x, y, w, h } (stage and note null while the fight
-  // does not show), whether the sign has its title and is in two rows, the
+  // does not show), whether the sign has its title and where its things go
+  // (signPlan), the
   // panels' top, and what the sign and the strip hold. They never overlap: the
   // sign keeps the layout's inset and the strip HUD_EDGE from the right; the
   // stage section is centred, moved aside as far as it must be. Tried in turn
@@ -2494,9 +2558,11 @@ export default class RaidParty extends View {
   // in a second row (with the title, then without); the strip in a second row
   // (the stage section in the first, then beside it in the second). Below
   // HUD_NARROW the strip is always under the sign, which drops its title and
-  // then puts its button in a second row as the scene narrows. The panels
-  // open under the sign (raised just enough for the tallest to fit, should a
-  // two-row sign leave too little room).
+  // then wraps into rows as the scene narrows (and as a last resort above it
+  // too). The stage note goes under the stage section, or lower should the
+  // sign or the strip be in its row. The panels open under the sign (raised
+  // just enough for the tallest to fit, should a wrapped sign leave too
+  // little room).
   hudLayout(W, list, fight) {
     const inset = props()?.inset ?? 84;
     const right = W - HUD_EDGE;
@@ -2507,14 +2573,10 @@ export default class RaidParty extends View {
     const box = (x, y, w, h = HUD_H) => ({ x, y, w, h });
     const across = (b, y, h) => b.y < y + h && y < b.y + b.h; // shares rows with y..y+h
     const apart = (a, b) => !across(a, b.y, b.h) || a.x + a.w + HUD_GAP <= b.x || b.x + b.w + HUD_GAP <= a.x;
-    const signW = (titled, twoRows) => {
-      const title = titled ? spec.titleW + 10 : 0;
-      if (twoRows) return 2 * FRAME + 2 * SIGN_PAD + Math.max(title + spec.countsW, spec.buttonW);
-      return 2 * FRAME + 2 * SIGN_PAD + title + (spec.countsW ? spec.countsW + 8 : 0) + spec.buttonW;
-    };
+    const wrap = Math.max(0, right - inset - 2 * (FRAME + SIGN_PAD)); // the room a wrapped sign has
     const tries =
       W < HUD_NARROW
-        ? [{ titled: true, strip: 2 }, { titled: false, strip: 2 }, { titled: true, strip: 2, twoRows: true }, { titled: false, strip: 2, twoRows: true }]
+        ? [{ titled: true, strip: 2 }, { titled: false, strip: 2 }, { titled: true, strip: 2, wrap: true }, { titled: false, strip: 2, wrap: true }]
         : [
             { titled: true, strip: 1, stage: 1 },
             { titled: false, strip: 1, stage: 1 },
@@ -2522,9 +2584,11 @@ export default class RaidParty extends View {
             { titled: true, strip: 2, stage: 1 },
             { titled: false, strip: 2, stage: 1 },
             { titled: false, strip: 2, stage: 2 },
+            { titled: false, strip: 2, stage: 2, wrap: true },
           ];
     const place = (t, force) => {
-      const sign = box(inset, HUD_TOP, signW(t.titled, t.twoRows), t.twoRows ? 2 * FRAME + 3 * 2 + 2 * CHIP_H : HUD_H);
+      const plan = this.signPlan(spec, t.titled, t.wrap ? wrap : null);
+      const sign = box(inset, HUD_TOP, plan.w, plan.h);
       const strip = box(right - stripW, t.strip === 1 ? HUD_TOP : sign.y + sign.h + 4, stripW);
       if (!force && (sign.x + sign.w > right || !apart(sign, strip))) return null;
       let stage = null;
@@ -2535,7 +2599,7 @@ export default class RaidParty extends View {
         if (!force && hi - lo < stageW) return null;
         stage = box(Math.round(clamp(W / 2 - stageW / 2, lo, Math.max(lo, hi - stageW))), y, stageW);
       }
-      return { sign, strip, stage, titled: t.titled, twoRows: Boolean(t.twoRows) };
+      return { sign, strip, stage, titled: t.titled, plan };
     };
     const got = tries.reduce((found, t) => found ?? place(t, false), null) ?? place(tries[tries.length - 1], true);
     // the stage notes (a failed attempt, the countdown to the next stage) under the stage section
@@ -2550,6 +2614,15 @@ export default class RaidParty extends View {
     if (note) {
       const w = letterW(note.text) + 2 * FRAME + 16;
       note.box = box(Math.round(clamp(got.stage.x + got.stage.w / 2 - w / 2, HUD_EDGE, right - w)), got.stage.y + HUD_H + 4, w, NOTE_H);
+      // and lower, should the sign or the strip be in its row
+      for (let moved = true; moved; ) {
+        moved = false;
+        for (const b of [got.sign, got.strip])
+          if (!apart(note.box, b)) {
+            note.box.y = b.y + b.h + 4;
+            moved = true;
+          }
+      }
     }
     const under = got.sign.y + got.sign.h + 4;
     const panelTop = Math.max(HUD_TOP, Math.min(under, Math.max(FLOOR_H, this.size.height) - PANEL_MAX_H - 2));
@@ -2561,22 +2634,15 @@ export default class RaidParty extends View {
   // each opening its panel and sunk while it is open; the star gold on a faint
   // gold square while there are points to spend, dimmed when there are none)
   // and the raid button, red "Return to town" in a raid and slate "Start Raid"
-  // out of one. In a row, or with the button in a second row on a narrow scene.
+  // out of one. In a row, or wrapped into rows on a narrow scene (signPlan).
   // Drawn on the floor, over the night's dark, like the strip.
   sign(list, hud) {
-    const { spec, sign: b, titled, twoRows } = hud;
-    const rowY = twoRows ? FRAME + 2 : Math.round((HUD_H - CHIP_H) / 2);
+    const { spec, sign: b, plan } = hud;
     const at = (el, x, y) => el.absolute().left(x).top(y);
+    const place = Object.fromEntries(plan.places.map((p) => [p.what, p]));
     const kids = [];
-    let x = FRAME + SIGN_PAD;
-    if (titled) {
-      kids.push(at(div(), x, rowY + 4).child(letterText(LABELS.title, "gold")));
-      x += spec.titleW + 10;
-    }
-    if (spec.empty) {
-      kids.push(at(div(), x, rowY + 4).child(letterText(LABELS.empty, "grey")));
-      x += letterW(LABELS.empty) + 4;
-    }
+    if (place.title) kids.push(at(div(), place.title.x, place.title.y + 4).child(letterText(LABELS.title, "gold")));
+    if (place.empty) kids.push(at(div(), place.empty.x, place.empty.y + 4).child(letterText(LABELS.empty, "grey")));
     const acts = {
       slain: [this.codex, (cx) => this.openCodex(!this.codex)],
       gold: [Boolean(this.shopOpen), () => this.openShop(this.shopOpen ? null : this.sprites[YOU])],
@@ -2587,9 +2653,8 @@ export default class RaidParty extends View {
       const [open, act] = acts[c.id];
       const star = c.id === "points";
       const gilt = star && spec.spare > 0;
-      const w = countW(c.n);
       kids.push(
-        at(chip(`idle-rpg-${c.id}`, w, open, [image(src(c.art)).w(18).h(18), letterText(shortNumber(c.n), gilt ? "gold" : "white")]), x, rowY)
+        at(chip(`idle-rpg-${c.id}`, countW(c.n), open, [image(src(c.art)).w(18).h(18), letterText(shortNumber(c.n), gilt ? "gold" : "white")]), place[c.id].x, place[c.id].y)
           .when(gilt && !open, (el) => el.bg("#ffd16630").border_color("#ffd16650"))
           .when(star && !gilt && !open, (el) => el.opacity(0.55))
           .on_click((_e, cx) => {
@@ -2597,7 +2662,6 @@ export default class RaidParty extends View {
             cx.notify();
           }),
       );
-      x += w + 4;
     }
     const tone = this.battle ? RAID_BUTTON.on : RAID_BUTTON.off;
     const button = div()
@@ -2630,7 +2694,7 @@ export default class RaidParty extends View {
           .border_color("#ffffff40")
           .child(h_flex().size_full().border_b(2).border_color("#00000040").items_center().justify_center().child(letterText(spec.label, tone.text))),
       );
-    kids.push(twoRows ? at(button, FRAME + SIGN_PAD, rowY + CHIP_H + 2) : at(button, b.w - FRAME - SIGN_PAD - spec.buttonW, rowY));
+    kids.push(at(button, place.button.x, place.button.y));
     return div()
       .id("idle-rpg-sign")
       .absolute()
@@ -2638,7 +2702,7 @@ export default class RaidParty extends View {
       .top(b.y - this.wallH)
       .w(b.w)
       .h(b.h)
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // a press on the sign is not one on the floor
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
       .children([...framePieces(b.w, b.h), ...kids]);
   }
 
@@ -2722,7 +2786,7 @@ export default class RaidParty extends View {
       .top(b.y - this.wallH)
       .w(b.w)
       .h(b.h)
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // a press on it is not one on the floor
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
       .children([...framePieces(b.w, b.h), ...kids]);
   }
 
@@ -2743,7 +2807,7 @@ export default class RaidParty extends View {
       .top(b.y - this.wallH)
       .w(b.w)
       .h(b.h)
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
       .when(n.colour === "red", (el) => el.opacity(n.fading ? 0 : 1).transition("opacity", { duration: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-in" }))
       .children([...framePieces(b.w, b.h), div().absolute().left(FRAME + 8).top(FRAME + 3).child(letterText(n.text, n.colour))]);
   }
@@ -2782,7 +2846,7 @@ export default class RaidParty extends View {
       });
     return div()
       .id("idle-rpg-hud")
-      .on_mouse_down("left", (_e, cx) => cx.stop_propagation()) // a click on the strip is not one on the floor
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
       .absolute()
       .right(HUD_EDGE)
       .top(b.y - this.wallH)
