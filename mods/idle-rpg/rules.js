@@ -561,6 +561,9 @@ export const LABELS = {
   shop: "Shop",
   // the stage picker (the map in the top-right strip): its title, the stages
   // of the page it shows, a biome's stages beside its name, and the names
+  // the line in the empty scene while no agent is in: in town, and in a raid's biome
+  quietTown: "The rampart is quiet",
+  quietRaid: "The raid is quiet",
   map: "Map",
   stages: (a, b) => `Stages ${a}-${b}`,
   range: (a, b) => `${a}-${b}`,

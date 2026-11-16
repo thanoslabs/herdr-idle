@@ -10,7 +10,7 @@
 // the scene at every size is in sizes.test.mjs, with the rampart's.)
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { BIOMES, BIOME_ART, biomeArt, biomeOf, canSelectStage } from "../../mods/idle-rpg/rules.js";
+import { BIOMES, BIOME_ART, LABELS, MAX_STAGE, biomeArt, biomeOf, canSelectStage } from "../../mods/idle-rpg/rules.js";
 import { pixels } from "../harness/png.mjs";
 import { agent, mountRaid, mountView, raid, walk } from "../harness/view.mjs";
 
@@ -52,6 +52,16 @@ describe("where a raid takes place", () => {
       assert.equal(backdrop(v), "rampart");
       v.click("idle-rpg-battle-toggle");
       assert.equal(backdrop(v), biomeOf(stage));
+    }
+  });
+
+  test("with nobody in, the empty scene's line names no rampart in a raid's biome", async () => {
+    const town = await mountView({ saved: raid({ battle: false }).saved, agents: [] });
+    assert.ok(town.text().includes(LABELS.quietTown));
+    for (const stage of [1, 21]) {
+      const v = await mountView({ saved: raid({ stage }).saved, agents: [] });
+      assert.ok(v.text().includes(LABELS.quietRaid), `stage ${stage}`);
+      assert.ok(!v.text().some((t) => /rampart/i.test(t)), `stage ${stage}`);
     }
   });
 
@@ -156,28 +166,57 @@ describe("the backdrop follows the stage", () => {
 });
 
 describe("the map in the strip", () => {
-  test("left of the gear, the gear's size, 4px apart, in a raid only", async () => {
-    for (const [W, statuses] of [[640, ["working"]], [800, ["blocked", "working", "done", "idle"]], [1280, ["working", "idle"]], [2400, []]]) {
-      const { saved } = raid({});
-      const v = await mountView({ saved, agents: statuses.map((s, i) => agent(`a${i}`, s)), width: W });
-      const map = v.box("idle-rpg-map");
-      const gear = v.box("idle-rpg-gear");
-      const strip = v.box("idle-rpg-hud");
-      assert.deepEqual([map.y, map.w, map.h], [gear.y, gear.w, gear.h], `at ${W}`);
-      assert.equal(map.x + map.w + 4, gear.x, `at ${W}`);
-      assert.ok(map.x >= strip.x && gear.x + gear.w <= strip.x + strip.w, "inside the strip");
-      // every status icon left of it
-      for (const id of v.ids("idle-rpg-status-")) assert.ok(v.box(id).x + v.box(id).w <= map.x, id);
-      assert.ok(v.images("idle-rpg-map").some((p) => p.endsWith("icons/map.png")));
-      assert.equal(v.get("idle-rpg-map").tip, "Stages");
-      v.click("idle-rpg-battle-toggle");
-      assert.ok(!v.has("idle-rpg-map"), "not in town");
+  test("left of the gear, the gear's size, 4px apart, in a raid and in town", async () => {
+    for (const [W, statuses] of [[640, ["working"]], [800, ["blocked", "working", "done", "idle"]], [1280, ["working", "idle"]], [2400, []]])
+      for (const battle of [true, false]) {
+        const { saved } = raid({ battle });
+        const v = await mountView({ saved, agents: statuses.map((s, i) => agent(`a${i}`, s)), width: W });
+        const map = v.box("idle-rpg-map");
+        const gear = v.box("idle-rpg-gear");
+        const strip = v.box("idle-rpg-hud");
+        assert.deepEqual([map.y, map.w, map.h], [gear.y, gear.w, gear.h], `at ${W}`);
+        assert.equal(map.x + map.w + 4, gear.x, `at ${W}`);
+        assert.ok(map.x >= strip.x && gear.x + gear.w <= strip.x + strip.w, "inside the strip");
+        // every status icon left of it
+        for (const id of v.ids("idle-rpg-status-")) assert.ok(v.box(id).x + v.box(id).w <= map.x, id);
+        assert.ok(v.images("idle-rpg-map").some((p) => p.endsWith("icons/map.png")));
+        assert.equal(v.get("idle-rpg-map").tip, "Stages");
+      }
+  });
+
+  test("not on a scene under 640px wide (its card needs the room), in town or a raid", async () => {
+    for (const battle of [true, false]) {
+      const v = await mountRaid({ battle }, { width: 639 });
+      assert.ok(!v.has("idle-rpg-map"));
+      assert.equal(v.view.hudBox.map, false);
     }
   });
 
-  test("not while the scene is too narrow for the fight (under 640px)", async () => {
-    const v = await mountRaid({}, { width: 600 });
-    assert.ok(!v.has("idle-rpg-map"));
+  test("the HUD still fits with the map in town: no frame overlaps or leaves the scene, 640px up, any counts", async () => {
+    const widths = THOROUGH ? Array.from({ length: 1441 }, (_, i) => 640 + i) : Array.from({ length: 91 }, (_, i) => 640 + i * 16);
+    const v = await mountRaid({ battle: false });
+    const view = v.view;
+    const problems = [];
+    for (const sts of [[], ["working"], ["blocked", "working", "done", "idle"]])
+      for (const big of [false, true]) {
+        const list = sts.flatMap((st) => Array.from({ length: big ? 150 : 3 }, (_, i) => agent(`${st}${i}`, st)));
+        Object.assign(view.progress, big ? { gold: 9.9e15, slain: 9.9e15 } : { gold: 0, slain: 0 });
+        view.progress.xp.wizard = big ? 9e15 : 0;
+        for (const inset of [0, 84, 120]) {
+          v.world.props = { inset };
+          for (const W of widths) {
+            view.size = { width: W, height: 230 };
+            const h = view.hudLayout(W, list, false);
+            const tag = `${W}px inset ${inset} ${sts.length} statuses${big ? " big" : ""}`;
+            if (!h.map) problems.push(`no map at ${tag}`);
+            for (const [k, b] of Object.entries({ sign: h.sign, strip: h.strip })) if (b.x < 0 || b.x + b.w > W || b.y < 0) problems.push(`${k} outside at ${tag}`);
+            const a = h.sign;
+            const b = h.strip;
+            if (a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h) problems.push(`sign and strip overlap at ${tag}`);
+          }
+        }
+      }
+    assert.deepEqual(problems.slice(0, 5), []);
   });
 });
 
@@ -212,7 +251,7 @@ describe("opening and closing the picker", () => {
     v.release("critter-t1");
     assert.ok(!v.has(CARD), "an agent's card closes it");
   });
-  test("a pick closes it; a click inside it does not; the floor, a frame or ending the raid does", async () => {
+  test("a pick closes it; a click inside it does not; the floor, a frame or starting or ending the raid does", async () => {
     const v = await mountRaid({ stage: 3, best: 7 });
     v.click("idle-rpg-map");
     v.click(CARD);
@@ -220,13 +259,50 @@ describe("opening and closing the picker", () => {
     assert.deepEqual(open(v), [CARD]);
     v.click("idle-rpg-map-stage-5");
     assert.deepEqual(open(v), []);
-    for (const close of [() => v.clickFloor(500, 100), () => v.click("idle-rpg-sign"), () => v.click("idle-rpg-battle-toggle")]) {
+    for (const close of [() => v.clickFloor(500, 100), () => v.click("idle-rpg-sign"), () => v.click("idle-rpg-battle-toggle"), () => v.click("idle-rpg-battle-toggle")]) {
       v.click("idle-rpg-map");
       assert.deepEqual(open(v), [CARD]);
       close();
       assert.deepEqual(open(v), []);
     }
-    assert.ok(!v.has("idle-rpg-map"), "in town");
+    // ending the raid with it open, then starting one again: still closed
+    v.click("idle-rpg-map");
+    v.click("idle-rpg-battle-toggle");
+    assert.equal(v.view.battle, false);
+    v.click("idle-rpg-battle-toggle");
+    assert.equal(v.view.battle, true);
+    assert.deepEqual(open(v), []);
+  });
+
+  test("opening it closes an agent's card (and the card closes it)", async () => {
+    const v = await mountRaid({ stage: 3, best: 7 });
+    v.click("critter-t1");
+    v.release("critter-t1");
+    assert.ok(v.has("idle-rpg-card"));
+    v.click("idle-rpg-map");
+    assert.ok(!v.has("idle-rpg-card"), "the card closed");
+    assert.deepEqual(open(v), [CARD]);
+  });
+
+  test("too narrow a scene closes it, and it stays closed once wider again, with no render loop", async () => {
+    for (const battle of [true, false]) {
+      const v = await mountRaid({ stage: 3, best: 7, battle });
+      v.click("idle-rpg-map");
+      assert.ok(v.has(CARD));
+      const renders = v.renders;
+      v.resize(600);
+      assert.ok(!v.has(CARD) && !v.has("idle-rpg-map"));
+      assert.equal(v.view.mapOpen, false);
+      assert.ok(v.renders - renders <= 2, `${v.renders - renders} renders for one resize`);
+      v.resize(1280);
+      assert.ok(v.has("idle-rpg-map"));
+      assert.ok(!v.has(CARD), "not back by itself");
+      // and opened with the scene narrow by other code, it is not drawn
+      v.resize(600);
+      v.view.mapOpen = true;
+      v.setAgents([...v.world.agents]);
+      assert.ok(!v.has(CARD));
+    }
   });
 });
 
@@ -328,31 +404,107 @@ describe("what the picker shows", () => {
     assert.deepEqual(v.text("idle-rpg-map-page"), ["STAGES 1-40"], "it opens on the page of the stage fought");
   });
 
-  test("with a best stage in the thousands it holds no more than with a few: one page, ten stages", async () => {
+  test("at the furthest stage (MAX_STAGE, 1000: 25 pages) it holds no more than with a few: one page, ten stages", async () => {
     const count = async (stage, best) => {
-      const v = await mountRaid({ stage: Math.min(stage, 1000), best: Math.min(best, 1000) });
-      Object.assign(v.view.progress, { stage, best }); // past what a save keeps (MAX_STAGE), to be sure
+      const v = await mountRaid({ stage, best });
       v.click("idle-rpg-map");
-      const n = [...walk(v.get(CARD))].length;
-      return { v, n };
+      return { v, n: [...walk(v.get(CARD))].length };
     };
     // (only the numbers' digits, each a picture, make one page larger than another)
     const few = await count(12, 45);
-    const many = await count(4321, 5000);
+    const many = await count(MAX_STAGE - 39, MAX_STAGE);
     assert.ok(few.n < 250 && many.n < 320, `${few.n} and ${many.n} elements`);
     assert.equal(many.v.ids("idle-rpg-map-stage-").length, 10);
-    assert.deepEqual(many.v.text("idle-rpg-map-page"), ["STAGES 4321-4360"]);
-    for (let i = 0; i < 20; i++) many.v.click("idle-rpg-map-next");
-    assert.deepEqual(many.v.text("idle-rpg-map-page"), ["STAGES 4961-5000"]);
-    assert.ok(!many.v.get("idle-rpg-map-next").handlers.click);
+    assert.deepEqual(many.v.text("idle-rpg-map-page"), ["STAGES 961-1000"]);
+    assert.ok(!many.v.get("idle-rpg-map-next").handlers.click, "the 25th page is the last");
+    let pages = 1;
+    while (many.v.get("idle-rpg-map-prev").handlers.click) {
+      many.v.click("idle-rpg-map-prev");
+      pages += 1;
+    }
+    assert.equal(pages, 25);
+    assert.deepEqual(many.v.text("idle-rpg-map-page"), ["STAGES 1-40"]);
   });
 
-  test("it stays inside the scene, at every size the fight shows", async () => {
-    const widths = THOROUGH ? Array.from({ length: 141 }, (_, i) => 640 + i * 32) : [640, 700, 800, 1024, 1280, 1920, 3456];
+  test("odd values in memory never make an odd page: the stage and best read as the rules read them, the page and biome kept to those reached", async () => {
+    for (const [stage, best] of [[NaN, NaN], [5, Infinity], [-3, 1e9], [2.5, 7.5], ["9", "x"]]) {
+      const v = await mountRaid({ stage: 3, best: 7 });
+      Object.assign(v.view.progress, { stage, best });
+      v.click("idle-rpg-map");
+      const ids = v.ids("idle-rpg-map-");
+      assert.equal(new Set(ids).size, ids.length, `no duplicate ids at ${stage}/${best}`);
+      assert.match(v.text("idle-rpg-map-page")[0], /^STAGES \d+-\d+$/, `${stage}/${best}`);
+      for (const id of v.ids("idle-rpg-map-stage-")) assert.match(id, /^idle-rpg-map-stage-\d+$/);
+    }
+    // a page or biome past those reached (set by other code) shows the last reached instead
+    const v = await mountRaid({ stage: 50, best: 95 });
+    v.click("idle-rpg-map");
+    Object.assign(v.view, { mapPage: 99, mapBiome: 3 });
+    v.setAgents([...v.world.agents]);
+    assert.deepEqual(v.text("idle-rpg-map-page"), ["STAGES 81-120"], "the last page reached");
+    assert.deepEqual(v.ids("idle-rpg-map-stage-")[0], "idle-rpg-map-stage-91", "its last biome reached, the hills");
+    Object.assign(v.view, { mapPage: -4, mapBiome: -1 });
+    v.setAgents([...v.world.agents]);
+    assert.deepEqual(v.text("idle-rpg-map-page"), ["STAGES 1-40"]);
+    assert.deepEqual(v.ids("idle-rpg-map-stage-")[0], "idle-rpg-map-stage-1");
+  });
+
+  test("it follows the stage while open: an arrow, a kill moving on, a drop-back", async () => {
+    // the arrow: 40 to 41, the next page
+    const a = await mountRaid({ stage: 40, best: 45 });
+    a.click("idle-rpg-map");
+    assert.deepEqual(a.text("idle-rpg-map-page"), ["STAGES 1-40"]);
+    a.click("idle-rpg-stage-next");
+    assert.ok(a.has(CARD), "still open");
+    assert.deepEqual(a.text("idle-rpg-map-page"), ["STAGES 41-80"]);
+    assert.deepEqual(a.runs("idle-rpg-map-stage-41").map((r) => r.colours[0]), ["gold"]);
+    // a first clear moving on: 10 to 11, the hills
+    const k = await mountRaid({ classes: ["warrior", "archer"], you: "wizard", stage: 10, best: 10, level: 20, health: 30 });
+    k.click("idle-rpg-map");
+    k.view.monster.hp = 1;
+    k.until((h) => h.view.progress.stage === 11, 30000);
+    k.advance(1000);
+    assert.ok(k.has(CARD));
+    assert.deepEqual(k.ids("idle-rpg-map-stage-")[0], "idle-rpg-map-stage-11");
+    // a drop-back after a time-out: 41 to 40, back a page
+    const d = await mountRaid({ classes: ["warrior"], you: "healer", stage: 41, best: 41, health: 40 });
+    d.click("idle-rpg-map");
+    assert.deepEqual(d.text("idle-rpg-map-page"), ["STAGES 41-80"]);
+    d.view.left = 1000;
+    d.view.monster.hp = 1e12;
+    d.until((h) => h.view.timesUp, 5000);
+    assert.ok(d.has(CARD));
+    assert.deepEqual(d.text("idle-rpg-map-page"), ["STAGES 1-40"]);
+    assert.deepEqual(d.ids("idle-rpg-map-stage-")[0], "idle-rpg-map-stage-31");
+    // but a page turned by hand stays while the stage does not change
+    d.click("idle-rpg-map-next");
+    d.advance(3000);
+    assert.deepEqual(d.text("idle-rpg-map-page"), ["STAGES 41-80"]);
+    assert.deepEqual(d.ids("idle-rpg-map-stage-")[0], "idle-rpg-map-stage-41");
+  });
+
+  test("in town: picking sets the stage as the arrows would in a raid, without starting one; the raid then starts there", async () => {
+    const v = await mountRaid({ stage: 6, best: 25, farming: true, battle: false });
+    const saves = v.saves.length;
+    v.click("idle-rpg-map");
+    v.click("idle-rpg-map-biome-2");
+    v.click("idle-rpg-map-stage-23");
+    assert.deepEqual([v.view.progress.stage, v.view.progress.farming, v.view.battle, v.saves.length - saves], [23, false, false, 1]);
+    assert.equal(v.stored.stage, 23);
+    assert.equal(backdrop(v), "rampart", "the town stays the rampart");
+    assert.equal(v.view.ticking, false, "nothing fights");
+    v.click("idle-rpg-battle-toggle");
+    assert.deepEqual([v.view.monster.stage, v.view.monster.hp], [23, v.view.monster.maxHp]);
+    assert.equal(backdrop(v), "caves");
+  });
+
+  test("it stays inside the scene, under the strip (never over its chips), at every size it shows, in a raid and in town", async () => {
+    const widths = THOROUGH ? Array.from({ length: 141 }, (_, i) => 640 + i * 32) : [640, 656, 700, 800, 1024, 1280, 1920, 3456];
     const heights = THOROUGH ? Array.from({ length: 34 }, (_, i) => 230 + i * 10) : [230, 296, 360, 560];
     const problems = [];
-    for (const [stage, best, statuses] of [[12, 45, ["working"]], [999, 1000, ["blocked", "working", "done", "idle"]]]) {
-      const { saved } = raid({ stage, best });
+    let lowStrip = 0; // sizes where the strip is in the second row (the 640x230 case)
+    for (const [stage, best, statuses, battle, gold] of [[12, 45, ["working"], true, 0], [999, 1000, ["blocked", "working", "done", "idle"], true, 1234], [999, 1000, ["blocked", "working", "done", "idle"], false, 9.9e15]]) {
+      const { saved } = raid({ stage, best, battle, gold, slain: gold });
       const v = await mountView({ saved, agents: statuses.map((s, i) => agent(`a${i}`, s)) });
       for (const h of heights)
         for (const w of widths) {
@@ -360,6 +512,9 @@ describe("what the picker shows", () => {
           if (!v.has(CARD)) v.click("idle-rpg-map");
           const b = v.box(CARD);
           if (b.x < 0 || b.y < 0 || b.x + b.w > w || b.y + b.h > h) problems.push(`${w}x${h} best ${best}: ${JSON.stringify(b)}`);
+          const strip = v.box("idle-rpg-hud");
+          if (b.y < strip.y + strip.h + 4) problems.push(`${w}x${h}: the card (y ${b.y}) over the strip (to ${strip.y + strip.h})`);
+          if (strip.y > 8) lowStrip += 1;
           for (const id of v.ids("idle-rpg-map-")) {
             if (id === CARD || id === "idle-rpg-map") continue;
             const k = v.box(id);
@@ -368,6 +523,7 @@ describe("what the picker shows", () => {
         }
     }
     assert.deepEqual(problems.slice(0, 5), []);
+    assert.ok(lowStrip > 0, "the strip in the second row was among the sizes");
   });
 });
 

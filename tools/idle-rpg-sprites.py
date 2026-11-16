@@ -2340,12 +2340,12 @@ def caves_ground():
     # flagstones of every shape: each pixel takes the tone of the nearest of a
     # few seeded points (wrapping round the tile), with a joint where two are about as near
     g, rnd = wrapped(32, 38, 44)
-    tones = ["#8a8798", "#827f91", "#918ea0", "#878495"]
+    tones = ["#918ea0", "#89869a", "#9895a7", "#8e8b9d"]
     seeds = [(rnd.uniform(0, 32), rnd.uniform(0, 38), tones[i % len(tones)]) for i in range(11)]
     for y in range(38):
         for x in range(32):
             d = sorted((math.hypot(min(abs(x + 0.5 - sx), 32 - abs(x + 0.5 - sx)), (y + 0.5 - sy) * 1.3), t) for sx, sy, t in seeds)
-            g[y][x] = "#6c6a7c" if d[1][0] - d[0][0] < 1.1 else d[0][1]
+            g[y][x] = "#737184" if d[1][0] - d[0][0] < 1.1 else d[0][1]
     speckle(g, rnd, 12, ["#a19eaf"], range(1, 38), lambda c: c in tones)  # lit grit
     speckle(g, rnd, 6, ["#76738a"], range(1, 38), lambda c: c in tones)   # chips
     speckle(g, rnd, 2, [CAVE["c"]], range(3, 36), lambda c: c in tones)   # a shard of crystal
@@ -2462,7 +2462,7 @@ for biome, rows, pal in (                                                # the s
     ("hills", ["bbbbbbb", "bbbbbbb", "bbhhbbb", "bhhhhbH", "hhhhHHH", "hhHHHHH", "ddddddd"],
      {"b": "#6db6ee", "h": "#86b08a", "H": "#5e9a4e", "d": "#c29a64"}),
     ("caves", ["rrrrrrr", "rkrkkrk", "kkkkkkk", "kkkkckk", "kckkCck", "kCckCck", "sssssss"],
-     {"r": "#3c3749", "k": "#16141f", "c": "#5fd0e6", "C": "#b8f4ff", "s": "#8a8798"}),
+     {"r": "#3c3749", "k": "#16141f", "c": "#5fd0e6", "C": "#b8f4ff", "s": "#918ea0"}),
     ("hell", ["rrrrrrr", "rkrkkrk", "kkkkkkk", "kkkokkk", "kkoyokk", "koyyyok", "aaaaaaa"],
      {"r": "#3a1612", "k": "#1c0807", "o": "#ff9d3c", "y": "#ffe27a", "a": "#a08376"}),
 ):

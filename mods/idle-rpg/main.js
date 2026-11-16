@@ -49,7 +49,7 @@
 // leaves (burn, chill, chain, venom), or for the healer's vials an aura over
 // the party (haste, might, hex).
 // In the top-right corner, how many agents are in each status (an icon with a
-// count on its corner, hidden at none), in a raid a map that opens the stage
+// count on its corner, hidden at none), a map that opens the stage
 // picker (see mapCard), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
 // The sign (top left), the stage section (top centre, in a raid), that corner
@@ -122,6 +122,7 @@ import {
   shortNumber,
   slay,
   stageDamage,
+  stageOf,
   stageTime,
   train,
   trainingBonus,
@@ -167,7 +168,7 @@ const FLOOR = "#b9834f";
 const BIOME_PAINT = {
   forest: { ground: "#7aa84c" },
   hills: { ground: "#c29a64" },
-  caves: { ground: "#8a8798", sky: "#16141f", glow: "#5fe0ff40", light: { part: "crystal", w: 32, h: 48 } },
+  caves: { ground: "#918ea0", sky: "#16141f", glow: "#5fe0ff40", light: { part: "crystal", w: 32, h: 48 } },
   hell: { ground: "#a08376", sky: "#1c0807", glow: "#ff6a3050", light: { part: "vent", w: 32, h: 48 } },
 };
 // Whether a biome (or the rampart, null) is under the sky, with its day and night.
@@ -377,7 +378,7 @@ const STAGE_ARROWS = { prev: "icons/prev.png", next: "icons/next.png" };
 // reached a row, the open one's stages in a grid MAP_COLS wide beside them.
 const MAP_PAGE = BIOMES.length * BIOME_STAGES;
 const MAP_COLS = 5;
-const MAP_PAD = 6; // inside the frame, round what it holds
+const MAP_PAD = 4; // inside the frame, round what it holds
 const MAP_GAP = 4; // between the map and the gear in the strip
 // A multiplier as the training line shows it: "x1.12", "x24.5", "x1.2K".
 const times = (x) => `x${x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : shortNumber(x)}`;
@@ -686,6 +687,7 @@ export default class RaidParty extends View {
     this.mapOpen = false; // the stage picker under the map is open (see mapCard)
     this.mapPage = 0; // the page it shows: a round of the biomes, from 0
     this.mapBiome = 0; // and the biome open on it, by its place in BIOMES
+    this.mapAt = null; // the stage they were turned to (see mapFollow)
     this.picking = false; // the open card is showing the class choices
     this.walking = false;
     this.walkTask = null;
@@ -2570,6 +2572,8 @@ export default class RaidParty extends View {
     // where the sign, the stage section (and its note) and the strip go: worked
     // out before anything is drawn, since the boss's plate keeps clear of them
     const hud = (this.hudBox = this.hudLayout(W, list, Boolean(foeKind)));
+    // too narrow for the map: its picker closes (and stays closed once wider again)
+    if (!hud.map) this.mapOpen = false;
     // a raid is in its stage's biome, the town on the rampart
     const biome = this.backdrop();
     const scenery = this.scenery(W, biome); // also works out how dark it is
@@ -2619,7 +2623,7 @@ export default class RaidParty extends View {
                 .top(50)
                 .gap(4)
                 .text_color("#5a3d22")
-                .child(div().text_size(13).font_semibold().child("The rampart is quiet"))
+                .child(div().text_size(13).font_semibold().child(biome ? LABELS.quietRaid : LABELS.quietTown))
                 .child(div().text_size(11).child("Start an agent from the + in the tab bar")),
             ),
           )
@@ -2705,7 +2709,7 @@ export default class RaidParty extends View {
       .when(CLASSES.includes(this.skillsOpen), (el) => el.child(this.skillsCard(hud.inset, hud.panelTop)))
       .when(CLASSES.includes(this.shopOpen), (el) => el.child(this.shopCard(hud.inset, hud.panelTop)))
       .when(this.settingsOpen, (el) => el.child(this.settingsCard(hud.strip.y)))
-      .when(this.mapOpen && hud.map, (el) => el.child(this.mapCard(hud.strip)));
+      .when(this.mapOpen, (el) => el.child(this.mapCard(hud.strip)));
   }
 
   // A press on a HUD frame's empty part (its chips and buttons stop their own):
@@ -2819,8 +2823,9 @@ export default class RaidParty extends View {
     const right = W - HUD_EDGE;
     const counts = tally(list);
     const spec = this.signSpec(list);
-    // the map (the stage picker) only while the fight shows, left of the gear
-    const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + (fight ? 34 + MAP_GAP : 0) + 34 + 2;
+    // the map (the stage picker), left of the gear, in town or a raid, from HUD_NARROW wide (its card needs the room)
+    const map = W >= HUD_NARROW;
+    const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + (map ? 34 + MAP_GAP : 0) + 34 + 2;
     const stageW = fight ? this.stageWidth(W) : 0;
     const box = (x, y, w, h = HUD_H) => ({ x, y, w, h });
     const across = (b, y, h) => b.y < y + h && y < b.y + b.h; // shares rows with y..y+h
@@ -2878,7 +2883,7 @@ export default class RaidParty extends View {
     }
     const under = got.sign.y + got.sign.h + 4;
     const panelTop = Math.max(HUD_TOP, Math.min(under, Math.max(FLOOR_H, this.size.height) - PANEL_MAX_H - 2));
-    return { ...got, note, inset, counts, spec, panelTop, map: fight };
+    return { ...got, note, inset, counts, spec, panelTop, map };
   }
 
   // The sign, top left (see signSpec, hudLayout): a pixel frame holding the
@@ -3079,8 +3084,8 @@ export default class RaidParty extends View {
 
   // The strip, top right (see hudLayout), in a frame like the sign's: an icon
   // for each status with agents in it, in the order of tally, with how many on
-  // a badge at its bottom-right corner in the pixel font, then while the fight
-  // shows (`map`) the map, a chip that opens the stage picker, and the gear, a
+  // a badge at its bottom-right corner in the pixel font, then from HUD_NARROW
+  // wide (`map`) the map, a chip that opens the stage picker, and the gear, a
   // chip that opens the settings menu. Drawn on the floor over the night's dark and
   // under the cards. `b` is its box: beside the sign, or under it below
   // HUD_NARROW wide.
@@ -3131,23 +3136,32 @@ export default class RaidParty extends View {
   }
 
   // Opens or closes the stage picker, closing the other panels and any card;
-  // it opens on the page and the biome of the stage being fought.
+  // it opens on the page and the biome of the stage being fought (mapFollow).
   openMap(open) {
     this.mapOpen = open;
     if (!open) return;
     this.codex = this.settingsOpen = false;
     this.skillsOpen = this.shopOpen = this.card = null;
     this.picking = false;
-    const s = this.progress.stage - 1;
+    this.mapFollow();
+  }
+
+  // Turns the stage picker to the page and the biome of the stage being
+  // fought, and notes that stage (`mapAt`): mapCard does it again whenever
+  // the stage has changed since (an arrow, a kill moving on, a drop-back).
+  mapFollow() {
+    const s = stageOf(this.progress.stage) - 1;
+    this.mapAt = this.progress.stage;
     this.mapPage = Math.floor(s / MAP_PAGE);
     this.mapBiome = Math.floor((s % MAP_PAGE) / BIOME_STAGES);
   }
 
-  // The stage picker, under the map at the scene's right edge (`strip` is the
-  // strip's box; raised, should a short scene leave too little room under it),
+  // The stage picker, 4px under the strip at the scene's right edge (`strip`
+  // is the strip's box; never over the strip's chips, so packed tight enough
+  // to fit under a strip in the second row of the lowest scene, 230px),
   // in a HUD frame with its words in the lettering. A page per round of the
-  // biomes (MAP_PAGE stages), so it holds as much for a best stage in the
-  // thousands as in the tens: at the top the map and its title, and the
+  // biomes (MAP_PAGE stages), so it holds as much at the furthest stage
+  // (MAX_STAGE, 25 pages) as in the tens: at the top the map and its title, and the
   // page's stages ("STAGES 41-80") between arrows to the page before and
   // after (dead past the first and the last page reached); down the left
   // each biome of the page reached so far, a row with its swatch, its name
@@ -3155,14 +3169,18 @@ export default class RaidParty extends View {
   // ten stages, a grid of numbered chips, the stage being fought in gold and
   // sunk, a stage the arrows could go to white, and one they could not grey
   // and dead (canSelectStage, the arrows' own rule). Picking one does what the
-  // arrows do (toStage) and closes it.
+  // arrows do (toStage) and closes it; in town that sets the stage the next
+  // raid starts at (toStage needs no fight: the boss is fresh, nothing ticks).
   mapCard(strip) {
-    const { stage, best } = this.progress;
-    const last = Math.max(0, Math.floor((best - 1) / MAP_PAGE)); // the last page with a stage reached
-    const page = clamp(this.mapPage, 0, last);
+    if (this.mapAt !== this.progress.stage) this.mapFollow(); // the stage changed under it: follow it
+    // (read as the rules read them, so no odd value in memory makes an odd page)
+    const stage = stageOf(this.progress.stage);
+    const best = stageOf(this.progress.best);
+    const last = Math.floor((best - 1) / MAP_PAGE); // the last page with a stage reached
+    const page = Number.isInteger(this.mapPage) ? clamp(this.mapPage, 0, last) : 0;
     const first = page * MAP_PAGE + 1;
     const reached = BIOMES.filter((_b, i) => first + i * BIOME_STAGES <= best).length;
-    const open = clamp(this.mapBiome, 0, reached - 1);
+    const open = Number.isInteger(this.mapBiome) ? clamp(this.mapBiome, 0, reached - 1) : 0;
     // the numbers' room: as wide as the widest stage any page has, so it keeps its size from page to page
     const digits = "8".repeat(Math.max(3, String((last + 1) * MAP_PAGE).length));
     const rangeW = letterW(LABELS.range(digits, digits));
@@ -3171,12 +3189,12 @@ export default class RaidParty extends View {
     const cellW = letterW(digits) + 8;
     const gridW = MAP_COLS * cellW + (MAP_COLS - 1) * 2;
     const rows = Math.ceil(BIOME_STAGES / MAP_COLS);
-    const bodyH = Math.max(reached * (CHIP_H + 2) - 2, rows * (CHIP_H + 2) - 2);
+    const bodyH = Math.max(reached, rows) * CHIP_H; // rows of chips, edge to edge
     const pageW = letterW(LABELS.stages(digits, digits));
     const headW = 24 + letterW(LABELS.map) + 8 + 18 + 4 + pageW + 4 + 18; // the map and its title, the page between its arrows
     const w = 2 * (FRAME + MAP_PAD) + Math.max(rowW + 8 + gridW, headW);
-    const h = 2 * (FRAME + MAP_PAD) + CHIP_H + 6 + bodyH;
-    const top = Math.max(HUD_TOP, Math.min(strip.y + strip.h + 4, Math.max(FLOOR_H, this.size.height) - h - 2));
+    const h = 2 * (FRAME + MAP_PAD) + CHIP_H + 4 + bodyH;
+    const top = strip.y + strip.h + 4;
     const x0 = FRAME + MAP_PAD;
     const y0 = FRAME + MAP_PAD;
     const at = (el, x, y) => el.absolute().left(x).top(y);
@@ -3207,7 +3225,7 @@ export default class RaidParty extends View {
         .child(letterText(pageText, "white")),
       turn("next", page + 1, navX + 22 + pageW + 4),
     ];
-    const bodyY = y0 + CHIP_H + 6;
+    const bodyY = y0 + CHIP_H + 4;
     BIOMES.slice(0, reached).forEach((b, i) => {
       const from = first + i * BIOME_STAGES;
       const here = Math.floor((stage - 1) / BIOME_STAGES) === Math.floor((from - 1) / BIOME_STAGES);
@@ -3219,7 +3237,7 @@ export default class RaidParty extends View {
             letterText(LABELS.range(from, from + BIOME_STAGES - 1), "grey"),
           ]),
           x0,
-          bodyY + i * (CHIP_H + 2),
+          bodyY + i * CHIP_H,
         )
           .gap(6)
           .on_click((_e, cx) => {
@@ -3235,7 +3253,7 @@ export default class RaidParty extends View {
       const live = canSelectStage(this.progress, s);
       const current = s === stage;
       kids.push(
-        at(chip(`idle-rpg-map-stage-${s}`, cellW, current, [letterText(String(s), current ? "gold" : live ? "white" : "grey")], { live }), gridX + (k % MAP_COLS) * (cellW + 2), bodyY + Math.floor(k / MAP_COLS) * (CHIP_H + 2))
+        at(chip(`idle-rpg-map-stage-${s}`, cellW, current, [letterText(String(s), current ? "gold" : live ? "white" : "grey")], { live }), gridX + (k % MAP_COLS) * (cellW + 2), bodyY + Math.floor(k / MAP_COLS) * CHIP_H)
           .justify_center()
           .when(!live && !current, (el) => el.opacity(0.5))
           .when(live, (el) =>
