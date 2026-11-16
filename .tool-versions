@@ -2,3 +2,4 @@
 # Humans and AI agents should use these versions for all builds, tests, and tooling.
 # Install with `asdf install` or `mise install`.
 python 3.13.5
+nodejs 22.23.3
