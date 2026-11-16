@@ -127,6 +127,26 @@ describe("a healer standing by", () => {
     assert.equal(v.find("idle-rpg-hp-t3"), null);
     assert.equal(v.find("idle-rpg-vitals-t3"), null);
     assert.equal("t3" in v.view.party.members, false);
+    // once the splash has faded it holds its own vial again (the Might Vial), not the Heal Vial for good
+    v.advance(1000);
+    assert.equal(v.view.held("t3"), "might");
+    assert.ok(v.images("idle-rpg-shot-t3").some((i) => i.endsWith("attacks/potion/might.png")), v.images("idle-rpg-shot-t3").join());
+  });
+
+  test("two healers whose heals fall due on one tick heal two different allies", async () => {
+    const v = await mountRaid({ classes: ["warrior", "archer", "healer", "healer"], statuses: ["working", "working", "idle", "idle"], you: "archer", stage: 6, health: 4 });
+    v.advance(3000);
+    freeze(v);
+    const p = v.view.party.members;
+    for (const m of Object.values(p)) m.hp = m.maxHp;
+    p.t1.hp = p.t1.maxHp * 0.2;
+    p.t2.hp = p.t2.maxHp * 0.5;
+    const t = v.view.clock + 1;
+    v.view.rhythm.t3.mend = v.view.rhythm.t4.mend = t;
+    v.advance(250);
+    assert.deepEqual([v.view.rhythm.t3.heal, v.view.rhythm.t4.heal], ["t1", "t2"]);
+    v.until((h) => h.view.phaseOf("t3") === ATTACK_PHASES, 2000, 250);
+    assert.deepEqual([p.t1.healedAt, p.t2.healedAt], [v.view.clock, v.view.clock]);
   });
 
   test("never targeted, no aura, and not one of the fighters (gold, experience shares, the clock)", async () => {
@@ -245,6 +265,21 @@ describe("a working healer", () => {
     const seen = starts(v, "t2", 2000);
     assert.deepEqual(seen.attack, [t + ATTACK_PHASES + 1], "the attack as soon as the heal's rest is drawn");
     assert.equal(v.view.rhythm.t2.heal, null);
+  });
+
+  test("on an aura vial it holds the Heal Vial only for a heal, then its own vial again", async () => {
+    const v = await mountRaid({ classes: ["warrior", "healer"], you: "archer", stage: 6, health: 4, weapons: { healer: "hex" } });
+    v.advance(3000);
+    freeze(v);
+    v.until((h) => h.view.rhythm.t2.start === null, 3000, 250);
+    v.view.party.members.t1.hp = 10;
+    v.view.rhythm.t2.mend = v.view.clock + 1;
+    v.advance(250);
+    assert.equal(v.view.held("t2"), "default", "the heal's wind-up");
+    assert.ok(v.images("critter-t2").some((i) => i.includes("/windup/")));
+    v.advance(2000); // the heal landed and its splash faded; no attack yet (frozen)
+    assert.equal(v.view.rhythm.t2.heal, "t1", "still the last thing it did");
+    assert.equal(v.view.held("t2"), "hex");
   });
 
   test("an attack under way makes a due heal wait for it", async () => {

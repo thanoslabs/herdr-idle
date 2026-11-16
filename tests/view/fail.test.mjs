@@ -126,6 +126,72 @@ describe("everyone down at once", () => {
   });
 });
 
+describe("no free revive: leaving and coming back within the attempt", () => {
+  const allDown = (h) => Object.keys(h.view.party.members).length > 0 && up(h.view.party).length === 0;
+  // Each knocked-out member's rest left, in ticks.
+  const rests = (v) => Object.fromEntries(Object.entries(v.view.party.members).map(([k, m]) => [k, m.down - v.view.clock]));
+
+  test("Return to town and Start Raid again: still down, with the rest they had left, the boss and the clock as they were", async () => {
+    const v = await mountRaid(DOOMED);
+    v.until(allDown, 120000, 250);
+    const before = rests(v);
+    const [hp, left] = [v.view.monster.hp, v.view.left];
+    v.click("idle-rpg-battle-toggle");
+    v.advance(5000);
+    assert.deepEqual(Object.keys(v.view.party.members), [], "out of the raid nobody is in the fight");
+    assert.deepEqual([v.view.monster.hp, v.view.left], [hp, left], "the boss and the time as they were");
+    v.click("idle-rpg-battle-toggle");
+    v.advance(1750);
+    assert.ok(allDown(v), "nobody got up");
+    const after = rests(v);
+    for (const [k, r] of Object.entries(before)) assert.ok(after[k] >= r - 8 && after[k] <= r, `${k}: ${after[k]} ticks left against ${r}`);
+    assert.equal(v.view.monster.hp, hp);
+    assert.ok(v.view.left < left && v.view.left >= left - 1750, "the time runs on with them back in the fight");
+  });
+
+  test("a scene too narrow for the fight, then wide again: still down", async () => {
+    const v = await mountRaid(DOOMED);
+    v.until(allDown, 120000, 250);
+    const before = rests(v);
+    v.resize(600, 360);
+    v.advance(5000);
+    assert.deepEqual(Object.keys(v.view.party.members), []);
+    v.resize(1280, 360);
+    v.advance(1750);
+    assert.ok(allDown(v), "nobody got up");
+    const after = rests(v);
+    for (const [k, r] of Object.entries(before)) assert.ok(after[k] >= r - 8 && after[k] <= r, `${k}: ${after[k]} against ${r}`);
+  });
+
+  test("an agent idle and back to working: still down, its rest frozen while it was away", async () => {
+    const v = await mountRaid({ classes: ["wizard", "warrior"], you: "warrior", youAt: { x: 640, y: 120 }, stage: 12, level: 1 });
+    v.view.progress.training.warrior.health = 40; // the warriors outlast it
+    v.until((h) => h.view.knocked("t1"), 120000, 250);
+    const rest = v.view.party.members.t1.down - v.view.clock;
+    const [a, b] = v.world.agents;
+    v.setAgents([{ ...a, status: "idle" }, b]);
+    v.advance(10000);
+    assert.equal("t1" in v.view.party.members, false);
+    v.setAgents([a, b]);
+    v.advance(250);
+    assert.ok(v.view.knocked("t1"), "back still knocked out");
+    const now = v.view.party.members.t1.down - v.view.clock;
+    assert.ok(now >= rest - 2 && now <= rest, `${now} ticks left against ${rest}`);
+    assert.ok(v.find("idle-rpg-rest-count-t1"), "its countdown shows again");
+  });
+
+  test("a new attempt forgets it: a fresh boss brings everyone back at full HP", async () => {
+    const v = await mountRaid({ ...DOOMED, best: 31 });
+    v.until(allDown, 120000, 250);
+    v.click("idle-rpg-battle-toggle");
+    v.advance(1000);
+    v.click("idle-rpg-battle-toggle");
+    v.click("idle-rpg-stage-next"); // a fresh attempt at stage 31
+    v.advance(1000);
+    for (const m of Object.values(v.view.party.members)) assert.deepEqual([m.down, m.hp === m.maxHp], [null, true]);
+  });
+});
+
 describe("farming", () => {
   test("kills repeat the stage whatever the setting says, and the next arrow pulses", async () => {
     const v = await mountRaid({ classes: ["warrior", "archer", "wizard"], you: "archer", stage: 3, best: 4, farming: true, level: 8 });

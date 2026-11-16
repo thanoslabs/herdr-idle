@@ -861,10 +861,13 @@ export default class RaidParty extends View {
 
   // The weapon someone has in hand: their class's, but a healer throwing a
   // heal holds the Heal Vial whatever it has equipped (the heal's green potion
-  // and splash; see tick).
+  // and splash; see tick), from its wind-up until its splash has faded (two
+  // ticks after the impact), then its own vial again.
   held(key) {
     const cls = this.sprites[key];
-    return cls === "healer" && this.rhythm[key]?.heal ? DEFAULT_LOOK : equipped(this.progress, cls, "weapon");
+    const r = this.rhythm[key];
+    const healing = cls === "healer" && r?.heal && this.clock - r.seed <= ATTACK_PHASES + 2;
+    return healing ? DEFAULT_LOOK : equipped(this.progress, cls, "weapon");
   }
 
   // The skill ranks of the class someone has on (undefined counts as all 0).

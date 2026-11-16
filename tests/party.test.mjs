@@ -36,13 +36,31 @@ describe("joining and leaving", () => {
     assert.equal(P.firstGap(() => 0), P.FIRST_ATTACK_TICKS);
     assert.equal(P.firstGap(() => 0.9999), P.MONSTER_ATTACK_TICKS);
   });
-  test("leavers go, and come back afresh", () => {
-    const p = party(2);
-    p.members.k1.hp = 3;
-    assert.deepEqual(P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }], 5, seeded(2)).left, ["k1"]);
+  test("leavers go, and come back within the attempt as they left: the HP lost kept, a rest not cut short", () => {
+    const p = party(3);
+    p.members.k1.hp = 30;
+    Object.assign(p.members.k2, { hp: 0, down: 5 + 80 });
+    const k0 = [{ key: "k0", maxHp: 100, x: 0, y: 60 }];
+    assert.deepEqual(P.syncParty(p, k0, 5, seeded(2)).left, ["k1", "k2"]);
     assert.equal("k1" in p.members, false);
-    P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }, { key: "k1", maxHp: 100, x: 9, y: 9 }], 6, seeded(2));
-    assert.equal(p.members.k1.hp, 100);
+    assert.deepEqual({ ...p.away.k1 }, { hp: 30, maxHp: 100, rest: null });
+    assert.deepEqual({ ...p.away.k2 }, { hp: 0, maxHp: 100, rest: 80 });
+    // away 200 ticks: the rest is frozen, not run down
+    const back = [...k0, { key: "k1", maxHp: 120, x: 9, y: 9 }, { key: "k2", maxHp: 100, x: 9, y: 9 }];
+    assert.deepEqual(P.syncParty(p, back, 205, seeded(2)).joined, ["k1", "k2"]);
+    assert.equal(p.members.k1.hp, 50, "the HP lost kept, a rise in max HP added");
+    assert.deepEqual([p.members.k2.hp, p.members.k2.down], [0, 205 + 80]);
+    assert.equal(P.standing(p, "k2"), false);
+    assert.deepEqual(Object.keys(p.away), [], "taken back");
+  });
+  test("a new attempt forgets who left: they come back fresh", () => {
+    const p = party(2);
+    Object.assign(p.members.k1, { hp: 0, down: 90 });
+    P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }], 5, seeded(2));
+    P.resetParty(p, 6, seeded(2));
+    P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }, { key: "k1", maxHp: 100, x: 9, y: 9 }], 7, seeded(2));
+    assert.deepEqual([p.members.k1.hp, p.members.k1.down], [100, null]);
+    assert.equal(Object.getPrototypeOf(p.away), null, "no prototype");
   });
   test("once nobody is left, the attack under way and the last one go with them", () => {
     const p = party(1);

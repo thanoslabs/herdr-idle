@@ -5,9 +5,10 @@
 // Only characters attacking the monster can be hit: the working agents in the
 // fight, and you while you fight beside them. Each has HP of its own, kept in
 // memory only (agents are short-lived; nothing here is saved): one who stops
-// attacking leaves the party, and one who comes back starts at full HP. The
-// monster attacks on its own rhythm: mostly a single blow at one attacker
-// picked at random, now and then an area attack, aimed at an attacker's spot
+// attacking leaves the party, and comes back as it left within the attempt
+// (see syncParty), fresh at the next. The monster attacks on its own rhythm:
+// mostly a single blow at one attacker picked at random, now and then an
+// area attack, aimed at an attacker's spot
 // and shown on the floor before it lands, that hits everyone attacking within
 // a ring around that spot (AREA_RADIUS, AREA_DEPTH). A character at 0 HP is
 // knocked out: it stops attacking (though it is still working) and rests
@@ -29,6 +30,7 @@
 // place, as rules.js changes the progress:
 //   {
 //     members: { <key>: { hp, maxHp, x, y, down, hitAt, healedAt } },  (no prototype)
+//     away: { <key>: { hp, maxHp, rest } },  (who left this attempt; rest: ticks of it left, or null)
 //     foe: { next, singles, pending, last, seq },
 //   }
 // A member's `down` is the tick it gets back up while it is knocked out, or
@@ -100,7 +102,7 @@ const pick = (random, n) => {
 export function newParty() {
   // no prototype, so no key (an agent's address) can reach one
   // `singles` is drawn as the first attack is set (syncParty, resetParty)
-  return { members: Object.create(null), foe: { next: null, singles: 0, pending: null, last: null, seq: 0 } };
+  return { members: Object.create(null), away: Object.create(null), foe: { next: null, singles: 0, pending: null, last: null, seq: 0 } };
 }
 
 // What one of the monster's blows does to each character it hits, when
@@ -148,7 +150,10 @@ export function down(party) {
 // `fighters` is every character attacking the monster or knocked out while
 // doing it (a knocked-out agent is still working, so it stays): a list of
 // { key, maxHp, x, y }. Newcomers join at full HP; anyone not in the list
-// leaves, and if they come back they start afresh. Positions are updated, and
+// leaves, remembered in `away` for the attempt: coming back within it they
+// have the HP they left with (a change of max HP as below) or, knocked out,
+// the rest they had left (frozen while away, so leaving never cuts a rest);
+// a new attempt (resetParty) forgets them. Positions are updated, and
 // a change of max HP keeps the HP lost: a rise adds to it, a fall cuts it to
 // the new max. Once someone is there, the monster's first attack is set within
 // a gap from now (firstGap), and how many single blows come before the
@@ -164,7 +169,12 @@ export function syncParty(party, fighters, tick, random) {
     const maxHp = Math.min(positive(f.maxHp) || 1, Number.MAX_VALUE);
     const m = Object.prototype.hasOwnProperty.call(party.members, f.key) ? party.members[f.key] : null;
     if (!m) {
-      party.members[f.key] = { hp: maxHp, maxHp, x: f.x, y: f.y, down: null, hitAt: null, healedAt: null };
+      // back within the attempt: as it left (its HP lost, its rest still to run), else fresh
+      const was = Object.prototype.hasOwnProperty.call(party.away, f.key) ? party.away[f.key] : null;
+      const down = was && was.rest !== null ? tick + was.rest : null;
+      const hp = !was ? maxHp : down !== null ? 0 : Math.min(maxHp, Math.max(Number.MIN_VALUE, was.hp + Math.max(0, maxHp - was.maxHp)));
+      if (was) delete party.away[f.key];
+      party.members[f.key] = { hp, maxHp, x: f.x, y: f.y, down, hitAt: null, healedAt: null };
       joined.push(f.key);
       continue;
     }
@@ -176,7 +186,12 @@ export function syncParty(party, fighters, tick, random) {
     m.y = f.y;
   }
   const left = Object.keys(party.members).filter((key) => !seen.has(key));
-  for (const key of left) delete party.members[key];
+  for (const key of left) {
+    // remembered for the attempt, so leaving and coming back neither heals nor cuts a rest
+    const m = party.members[key];
+    party.away[key] = { hp: m.hp, maxHp: m.maxHp, rest: m.down === null ? null : Math.max(0, m.down - tick) };
+    delete party.members[key];
+  }
   if (!Object.keys(party.members).length) {
     // nobody left to fight: the boss's attack under way, and what last landed, go with them
     party.foe.next = party.foe.pending = party.foe.last = null;
@@ -191,6 +206,7 @@ export function syncParty(party, fighters, tick, random) {
 // time runs out): everyone up at full HP, no attack under way, and the
 // monster's first attack within a gap of `tick` (firstGap).
 export function resetParty(party, tick, random) {
+  party.away = Object.create(null); // who left the last attempt hurt or resting comes back fresh
   for (const m of Object.values(party.members)) {
     m.hp = m.maxHp;
     m.down = m.hitAt = m.healedAt = null;
@@ -234,7 +250,8 @@ export function inArea(party, x, y) {
 // an attack due to land lands; a new one starts if it is time and anyone is
 // standing. With everyone knocked out the boss waits: its next attack is
 // kept at least FIRST_ATTACK_TICKS off, so it comes no sooner than that after
-// the last tick nobody stood (no draw, so it is the same in any fight). Returns what happened, for main.js to show:
+// the last tick nobody stood (no draw, so it is the same in any fight).
+// Returns what happened, for main.js to show:
 //   { back: [<key>], landed: Attack | null, hits: [{ key, damage, hp, down }],
 //     started: Attack | null }
 // `hits` holds each character the blow reached, the damage it took and the

@@ -36,7 +36,8 @@ function snapshot(x) {
 }
 
 // Plays `o` (raid() options) for `seconds` in both; returns the outcome (equal in both).
-async function both(o, seconds, seed) {
+// `poke(x, sec)`, if given, is applied to the view and to the simulation alike after each second (the same nudge to both).
+async function both(o, seconds, seed, poke = null) {
   const v = await mountRaid(o, { seed });
   const s = loadState(raid({ now: timeAt(), ...o }).saved);
   const progress = { stage: s.stage, best: s.best, farming: s.farming, slain: s.slain, gold: s.gold, kills: s.kills, xp: s.xp, skills: s.skills, training: s.training, looks: s.looks, hats: s.hats };
@@ -54,6 +55,10 @@ async function both(o, seconds, seed) {
   for (let sec = 1; sec <= seconds; sec++) {
     v.advance(1000);
     for (let i = 0; i < 4; i++) f.step();
+    if (poke) {
+      poke(v.view, sec);
+      poke(f, sec);
+    }
     assert.deepEqual(snapshot(f), snapshot(v.view), `the simulation and the view part at ${sec}s`);
   }
   return { view: v.view, fight: f };
@@ -101,6 +106,18 @@ describe("the simulation plays main.js's fight", () => {
   test("idle healers keeping a party alive from the side", async () => {
     const { fight } = await both({ classes: ["warrior", "healer", "archer", "healer"], statuses: ["working", "idle", "working", "done"], you: "wizard", stage: 14, level: 8 }, THOROUGH ? 900 : 300, 21);
     assert.ok(fight.stats.sideHeals >= 20, JSON.stringify(fight.stats));
+  });
+
+  test("a healer standing by after a kill, with someone down and someone hurt: it waits for the next boss", async () => {
+    // at 20s: t1 knocked out, t2 hurt, the boss on its last point
+    const poke = (x, sec) => {
+      if (sec !== 20) return;
+      Object.assign(x.party.members.t1, { hp: 0, down: x.clock + 60 });
+      x.party.members.t2.hp = x.party.members.t2.maxHp / 2;
+      x.monster.hp = Math.min(x.monster.hp, 1);
+    };
+    const { fight } = await both({ classes: ["wizard", "archer", "healer"], statuses: ["working", "working", "idle"], you: "archer", stage: 6, level: 6, health: 10 }, 40, 23, poke);
+    assert.ok(fight.stats.kills >= 1 && fight.stats.sideHeals >= 1, JSON.stringify(fight.stats));
   });
 
   test("a working healer on an aura vial that also heals", async () => {
