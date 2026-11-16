@@ -1932,7 +1932,7 @@ export default class RaidParty extends View {
   // those the dark is even, at half strength, so nothing is ever black, and
   // above the wall it thins out over 80px. The pictures hold all of that, so
   // this is a row of them: the candle's, one per torch, and a plain one
-  // stretched over what is left. While the campfire is out (`fire`, its x, see
+  // laid over what is left (never stretched). While the campfire is out (`fire`, its x, see
   // fireX) its own 320px picture, which also carries the torches' light that
   // reaches it, is cut into the row over it: the pictures it overlaps are
   // clipped short on either side, so every pixel is darkened exactly once.
@@ -1973,7 +1973,10 @@ export default class RaidParty extends View {
     lay(0, 272, "candle");
     let x = 272; // each torch's picture is 384px wide with the flame in the middle; see the torches in scenery
     for (; x + 276 <= W; x += 384) lay(x, 384, "torch");
-    if (x < W) lay(x, W - x, "fill");
+    // a plain picture as wide as a torch's, running on past the right edge like the
+    // last torch's can (the scene clips it): the app keeps a picture's proportions,
+    // so one stretched to fit would draw at its own narrow width and leave a gap
+    if (x < W) lay(x, 384, "fill");
     // the fire stands 16px steps along the torches' pictures; the generator draws one for each step
     if (cut) pieces.push(piece(cut[0], FIRE_LIGHT_W, `fire-${((fire - 272) / 16) % 24}`));
     return div()
