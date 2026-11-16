@@ -32,6 +32,23 @@ export const STATE_VERSION = 7;
 // pictures in MONSTER_ART below.
 export const KINDS = ["slime", "ogre", "dragon"];
 
+// Biomes: where a raid takes place. Every BIOME_STAGES stages the fight moves
+// to the next biome, in this order, and after the last the four repeat
+// (stages 1-10 forest, 11-20 hills, 21-30 caves, 31-40 hell, 41-50 forest
+// again, ...). The town (out of a raid) is always the castle rampart. Each
+// biome has its own backdrop (BIOME_ART, drawn by tools/idle-rpg-sprites.py
+// into scene/<id>/); `outdoors` biomes have the sky, its day and night and
+// the night's darkness, the others a fixed light of their own. The kinds of
+// monster still cycle by stage (KINDS); a biome's own monsters are to come.
+// Each name is a label (LABELS) the stage picker letters.
+export const BIOME_STAGES = 10;
+export const BIOMES = [
+  { id: "forest", name: "Forest", outdoors: true },
+  { id: "hills", name: "Hills", outdoors: true },
+  { id: "caves", name: "Caves", outdoors: false },
+  { id: "hell", name: "Hell", outdoors: false },
+];
+
 // Stages. Defaults chosen with a simulation (see PLAN.md) to be retuned; nothing
 // else depends on their values. Boss HP grows exponentially, by HP_GROWTH a
 // stage, times the stage number to HP_POWER (0 since attempts last 10
@@ -297,6 +314,33 @@ export function monsterArt(kind, part = "idle") {
   return KINDS.includes(kind) && MONSTER_ART[kind].includes(part) ? `monsters/${kind}/${part}.png` : null;
 }
 
+// Each biome's backdrop in scene/<id>/, without ".png": "far", the distance
+// (in place of the rampart's mountains), "mid", in front of it (in place of
+// the wall), "ground", the floor, and "swatch", its small icon in the stage
+// picker; a biome under a roof (not `outdoors`) also hangs a "ceiling" from
+// the top of the scene; and the caves and hell set a light along the mid
+// layer where the rampart has its torches ("crystal", "vent").
+export const BIOME_ART = {
+  forest: ["far", "mid", "ground", "swatch"],
+  hills: ["far", "mid", "ground", "swatch"],
+  caves: ["far", "mid", "ground", "swatch", "ceiling", "crystal"],
+  hell: ["far", "mid", "ground", "swatch", "ceiling", "vent"],
+};
+
+// The biome of stage `s` (BIOMES' id): BIOME_STAGES stages each, in turn,
+// repeating; anything that is not a stage counts as stage 1.
+export function biomeOf(s) {
+  const n = typeof s === "number" && Number.isFinite(s) && s >= 1 ? Math.floor(s) : 1;
+  return BIOMES[Math.floor((n - 1) / BIOME_STAGES) % BIOMES.length].id;
+}
+
+// The path in art/ of picture `part` of biome `id`'s backdrop
+// ("scene/caves/ceiling.png"), or null for a biome or a part it does not have.
+export function biomeArt(id, part) {
+  const b = BIOMES.find((x) => x.id === id);
+  return b && typeof part === "string" && BIOME_ART[b.id].includes(part) ? `scene/${b.id}/${part}.png` : null;
+}
+
 // The settings menu (the gear in the top-right corner): one switch per entry,
 // in this order, each { key, name, default }. A setting is a boolean saved under
 // `settings.<key>`; adding one is adding an entry here and reading it in main.js.
@@ -515,6 +559,15 @@ export const LABELS = {
   codex: "Codex",
   training: "Training",
   shop: "Shop",
+  // the stage picker (the map in the top-right strip): its title, the stages
+  // of the page it shows, a biome's stages beside its name, and the names
+  // the line in the empty scene while no agent is in: in town, and in a raid's biome
+  quietTown: "The rampart is quiet",
+  quietRaid: "The raid is quiet",
+  map: "Map",
+  stages: (a, b) => `Stages ${a}-${b}`,
+  range: (a, b) => `${a}-${b}`,
+  ...Object.fromEntries(BIOMES.map((b) => [b.id, b.name])),
 };
 
 const MAX = Number.MAX_SAFE_INTEGER;
@@ -774,12 +827,19 @@ export function train(progress, cls, key = "attack") {
   return true;
 }
 
+// Whether stage `s` can be picked (the stage section's arrows, the stage
+// picker): a whole number from 1 to `best`, the highest reached, and not the
+// one the fight is on. selectStage moves only to such a stage.
+export function canSelectStage(progress, s) {
+  return typeof s === "number" && Number.isInteger(s) && s >= 1 && s <= progress.best && s !== progress.stage;
+}
+
 // Moves the fight to stage `s` if it is one the party has reached (1 to
 // `best`) and not the one it is on. Choosing a stage ends farming (see
 // failStage): kills advance again as the setting says. Returns whether it
 // changed.
 export function selectStage(progress, s) {
-  if (typeof s !== "number" || !Number.isInteger(s) || s < 1 || s > progress.best || s === progress.stage) return false;
+  if (!canSelectStage(progress, s)) return false;
   progress.stage = s;
   progress.farming = false;
   return true;

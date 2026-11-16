@@ -22,8 +22,11 @@
 // an agent is working (10 minutes, shown as "9:42"): a kill in time clears the
 // stage (and, with the "Advance after a kill" setting, moves on to the next);
 // time running out, the only way to lose, sends it back a stage to farm.
-// Arrows in the stage section (top centre) pick any stage reached. Turning battle mode off sends
-// everyone back to their spots.
+// Arrows in the stage section (top centre) pick any stage reached, and so does
+// the map left of the gear (the stage picker). A raid takes place in its
+// stage's biome (forest, hills, caves, hell, ten stages each, repeating:
+// BIOMES in rules.js), each with its own backdrop; the town is the rampart.
+// Turning battle mode off sends everyone back to their spots.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
 // in it. At 0 HP a character is knocked out (lying down, stars circling, a
@@ -46,7 +49,8 @@
 // leaves (burn, chill, chain, venom), or for the healer's vials an aura over
 // the party (haste, might, hex).
 // In the top-right corner, how many agents are in each status (an icon with a
-// count on its corner, hidden at none), and a gear that opens the settings
+// count on its corner, hidden at none), a map that opens the stage
+// picker (see mapCard), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
 // The sign (top left), the stage section (top centre, in a raid), that corner
 // and the boss's plate are pixel frames with their words in a pixel lettering
@@ -58,6 +62,8 @@ import { h_flex, v_flex } from "gpui-base";
 import { agents, props, run, setShared, shared, spaces } from "herdr";
 import {
   ATTACK_PHASES,
+  BIOMES,
+  BIOME_STAGES,
   CLASSES,
   DEFAULT_LOOK,
   LABELS,
@@ -73,10 +79,13 @@ import {
   attackArt,
   attackPart,
   attackTicksOf,
+  biomeArt,
+  biomeOf,
   bossOf,
   buy,
   canBuy,
   canRaise,
+  canSelectStage,
   canTrain,
   catalogue,
   classLevel,
@@ -113,6 +122,7 @@ import {
   shortNumber,
   slay,
   stageDamage,
+  stageOf,
   stageTime,
   train,
   trainingBonus,
@@ -128,7 +138,7 @@ const ART = "mods/idle-rpg/art";
 // ".png" ("scene/wall.png"). The pictures are in folders by what they show,
 // then by what it is doing (see tools/idle-rpg-sprites.py); rules.js builds the
 // paths that depend on the state or an agent (lookArt, weaponArt, hatArt,
-// attackArt, monsterArt, glyphArt, letterArt), and the rest are named where they are drawn.
+// attackArt, monsterArt, biomeArt, glyphArt, letterArt), and the rest are named where they are drawn.
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
 //   seen, battle, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
@@ -151,6 +161,18 @@ const DAY = "#6db6ee";
 const DUSK = "#f2924e";
 const TINT = "#0a1030"; // laid over the scenery at night
 const FLOOR = "#b9834f";
+// Each biome's paint (BIOMES in rules.js; its pictures are BIOME_ART): the
+// ground's main colour (under its pictures), and under a roof the dark behind
+// everything (in place of the sky) and the glow of what lights it, flickering
+// round the picture standing where the rampart has a torch (`light`, its size).
+const BIOME_PAINT = {
+  forest: { ground: "#7aa84c" },
+  hills: { ground: "#c29a64" },
+  caves: { ground: "#918ea0", sky: "#16141f", glow: "#5fe0ff40", light: { part: "crystal", w: 32, h: 48 } },
+  hell: { ground: "#a08376", sky: "#1c0807", glow: "#ff6a3050", light: { part: "vent", w: 32, h: 48 } },
+};
+// Whether a biome (or the rampart, null) is under the sky, with its day and night.
+const outdoors = (biome) => BIOMES.find((b) => b.id === biome)?.outdoors !== false;
 const INK = "#1b2233";
 const CREAM = "#f4ecd8";
 
@@ -348,8 +370,16 @@ const SKILL_TEXT = {
   haste: (_p, _c, ranks) => `attacks every ${(attackTicksOf(ranks) * TICK_STEP) / 1000}s`,
   crit: (_p, _c, ranks) => `${Math.round(critChanceOf(ranks) * 100)}% crit`,
 };
-// The left and right arrows beside "Stage N" in the stage section.
+// The left and right arrows beside "Stage N" in the stage section (and the
+// stage picker's, between its pages).
 const STAGE_ARROWS = { prev: "icons/prev.png", next: "icons/next.png" };
+// The stage picker (the map left of the gear, see mapCard): a page per round
+// of the biomes (MAP_PAGE stages: BIOMES.length x BIOME_STAGES), each biome
+// reached a row, the open one's stages in a grid MAP_COLS wide beside them.
+const MAP_PAGE = BIOMES.length * BIOME_STAGES;
+const MAP_COLS = 5;
+const MAP_PAD = 4; // inside the frame, round what it holds
+const MAP_GAP = 4; // between the map and the gear in the strip
 // A multiplier as the training line shows it: "x1.12", "x24.5", "x1.2K".
 const times = (x) => `x${x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : shortNumber(x)}`;
 const GOLD = "#ffd166";
@@ -924,6 +954,10 @@ export default class RaidParty extends View {
     this.shopKind = SHOP_KINDS[0]; // the kind of item it shows: the one picked down its left side
     this.shopPick = null; // the item whose lines show under the items (see shopCard)
     this.settingsOpen = false; // the settings menu under the gear is open
+    this.mapOpen = false; // the stage picker under the map is open (see mapCard)
+    this.mapPage = 0; // the page it shows: a round of the biomes, from 0
+    this.mapBiome = 0; // and the biome open on it, by its place in BIOMES
+    this.mapAt = null; // the stage they were turned to (see mapFollow)
     this.picking = false; // the open card is showing the class choices
     this.walking = false;
     this.walkTask = null;
@@ -2062,10 +2096,21 @@ export default class RaidParty extends View {
     this.save();
   }
 
+  // Where the scene is: the biome of the stage being fought in a raid
+  // (biomeOf: its id in BIOMES), or null for the town's rampart.
+  backdrop() {
+    return this.battle ? biomeOf(this.monster?.stage ?? this.progress.stage) : null;
+  }
+
   // Everything behind the floor, back to front: stars, daylight, sunset glow,
   // sun and moon, clouds, mountains, then the wall with its banners and torches.
-  // The time of day comes from the clock, so every window agrees on it.
-  scenery(W) {
+  // The time of day comes from the clock, so every window agrees on it. In a
+  // biome (`biome`, see backdrop) its "far" picture stands in for the
+  // mountains and its "mid" for the wall, with no banners or torches; one
+  // under a roof (not outdoors) has no sky, day or night either: its dark,
+  // its ceiling hanging from the top, and a flickering light (a crystal, a
+  // fire vent) where the torches would be, always lit the same.
+  scenery(W, biome = null) {
     const turn = ((this.now % CYCLE_MS) / CYCLE_MS) * Math.PI * 2;
     const up = Math.sin(turn); // the sun's height: 1 at noon, -1 at midnight
     const day = clamp(up * 3 + 0.5, 0, 1);
@@ -2077,6 +2122,32 @@ export default class RaidParty extends View {
       Array.from({ length: Math.ceil(W / w) }, (_, i) => place(div().absolute().left(i * w)).child(image(src(art)).w(w).h(h)));
     const horizon = FLOOR_H + WALL_H;
     const sky = Math.max(40, this.wallH - WALL_H); // the room above the wall
+    const far = biome ? biomeArt(biome, "far") : "scene/mountains.png";
+    const mid = biome ? biomeArt(biome, "mid") : "scene/wall.png";
+    if (!outdoors(biome)) {
+      const paint = BIOME_PAINT[biome];
+      const lights = [];
+      for (let x = 256; x + 232 <= W - 60; x += 384) {
+        const { part, w, h } = paint.light;
+        lights.push(
+          div()
+            .absolute()
+            .left(x + 188)
+            .bottom(FLOOR_H + 30)
+            .w(48)
+            .h(48)
+            .child(div().size_full().rounded(24).bg(paint.glow).loop("opacity", { from: 0.55, to: 1, period: 900 })),
+          div().absolute().left(x + 212 - w / 2).bottom(FLOOR_H + 8).child(image(src(biomeArt(biome, part))).w(w).h(h)),
+        );
+      }
+      return [
+        div().id("idle-rpg-vault").absolute().left(0).top(0).bottom(0).w(W).bg(paint.sky),
+        ...tiles(biomeArt(biome, "ceiling"), 256, 64, (el) => el.top(0)),
+        ...tiles(far, 256, 80, (el) => el.bottom(horizon - 24)),
+        ...tiles(mid, 128, WALL_H, (el) => el.bottom(FLOOR_H)),
+        ...lights,
+      ];
+    }
 
     // The sun and moon ride one circle, half a turn apart, and set behind the wall.
     const orb = (id, art, a) =>
@@ -2107,7 +2178,7 @@ export default class RaidParty extends View {
     });
 
     const fittings = [];
-    for (let x = 256; x < W - 120; x += 384) {
+    for (let x = 256; !biome && x < W - 120; x += 384) {
       fittings.push(div().absolute().left(x).bottom(FLOOR_H + 2).child(image(src("scene/banner.png")).w(40).h(56)));
       if (x + 232 > W - 60) continue;
       fittings.push(
@@ -2133,9 +2204,9 @@ export default class RaidParty extends View {
         .child(orb("idle-rpg-sun", "scene/sun.png", turn))
         .child(orb("idle-rpg-moon", "scene/moon.png", turn + Math.PI))
         .children(clouds),
-      ...tiles("scene/mountains.png", 256, 80, (el) => el.bottom(horizon - 24)),
+      ...tiles(far, 256, 80, (el) => el.bottom(horizon - 24)),
       fade(div().absolute().left(0).top(0).bottom(FLOOR_H).w(W).bg(TINT), "idle-rpg-night-sky", night * 0.5),
-      ...tiles("scene/wall.png", 128, WALL_H, (el) => el.bottom(FLOOR_H)),
+      ...tiles(mid, 128, WALL_H, (el) => el.bottom(FLOOR_H)),
       ...fittings,
     ];
   }
@@ -2595,7 +2666,9 @@ export default class RaidParty extends View {
   // clipped short on either side, so every pixel is darkened exactly once.
   // (Its pool is dark again by the picture's edges, and those stay short of
   // the light of any torch past the last one there is, at every width.)
-  gloom(W, fire = null) {
+  // Out in a biome under the sky (`plain`), with no candle or torches, it is
+  // the plain picture alone, repeated across the width.
+  gloom(W, fire = null, plain = false) {
     const RISE = 80;
     const H = RISE + WALL_H + FLOOR_H;
     const cut = fire === null ? null : [fire - FIRE_LIGHT_W / 2, fire + FIRE_LIGHT_W / 2];
@@ -2627,9 +2700,11 @@ export default class RaidParty extends View {
       if (left < cut[0]) pieces.push(piece(left, w, art, left, cut[0]));
       if (left + w > cut[1]) pieces.push(piece(left, w, art, cut[1], left + w));
     };
-    lay(0, 272, "candle");
-    let x = 272; // each torch's picture is 384px wide with the flame in the middle; see the torches in scenery
-    for (; x + 276 <= W; x += 384) lay(x, 384, "torch");
+    let x = 0;
+    if (!plain) lay(0, 272, "candle");
+    if (!plain) x = 272; // each torch's picture is 384px wide with the flame in the middle; see the torches in scenery
+    for (; !plain && x + 276 <= W; x += 384) lay(x, 384, "torch");
+    for (; plain && x + 384 < W; x += 384) lay(x, 384, "fill");
     // a plain picture as wide as a torch's, running on past the right edge like the
     // last torch's can (the scene clips it): the app keeps a picture's proportions,
     // so one stretched to fit would draw at its own narrow width and leave a gap
@@ -2997,10 +3072,13 @@ export default class RaidParty extends View {
     // where the sign, the stage section (and its note) and the strip go: worked
     // out before anything is drawn, since the boss's plate keeps clear of them
     const hud = (this.hudBox = this.hudLayout(W, list, Boolean(foeKind)));
-    const scenery = this.scenery(W); // also works out how dark it is
-    const boards = Array.from({ length: Math.ceil(W / 128) }, (_, i) =>
-      div().absolute().left(i * 128).top(0).child(image(src("scene/floor.png")).w(128).h(FLOOR_H)),
-    );
+    // too narrow for the map: its picker closes (and stays closed once wider again)
+    if (!hud.map) this.mapOpen = false;
+    // a raid is in its stage's biome, the town on the rampart
+    const biome = this.backdrop();
+    const scenery = this.scenery(W, biome); // also works out how dark it is
+    const ground = biome ? biomeArt(biome, "ground") : "scene/floor.png";
+    const boards = Array.from({ length: Math.ceil(W / 128) }, (_, i) => div().absolute().left(i * 128).top(0).child(image(src(ground)).w(128).h(FLOOR_H)));
     const carried = this.drag && list.find((a) => a.address === this.drag.address);
     const carded = this.card && !carried && list.find((a) => a.address === this.card);
 
@@ -3010,16 +3088,19 @@ export default class RaidParty extends View {
       .bottom(0)
       .w(W)
       .h(FLOOR_H)
-      .bg(FLOOR)
+      .bg(biome ? BIOME_PAINT[biome].ground : FLOOR)
       .child(
         div()
           .relative()
           .w(W)
           .h(FLOOR_H)
           .children(boards)
-          // the table and the barrel stand at the back, clear of the monster's corner
-          .child(div().absolute().left(12).top(-34).child(image(src("stations/table/idle.png")).w(112).h(56)))
-          .child(div().absolute().left(136).top(-30).child(image(src("scene/barrel.png")).w(48).h(52)))
+          // on the rampart the table and the barrel stand at the back, clear of the monster's corner
+          .when(!biome, (el) =>
+            el
+              .child(div().absolute().left(12).top(-34).child(image(src("stations/table/idle.png")).w(112).h(56)))
+              .child(div().absolute().left(136).top(-30).child(image(src("scene/barrel.png")).w(48).h(52))),
+          )
           .when(!this.battle, (el) => el.children(this.stations()))
           .children(foeAttack.under)
           .children(actors.flatMap((p) => p.draw()))
@@ -3032,9 +3113,10 @@ export default class RaidParty extends View {
                 .map((a) => this.nameTag(a, W)),
             ),
           )
-          .child(this.gloom(W, fire))
+          // the night (under a roof the light is always the same)
+          .when(outdoors(biome), (el) => el.child(this.gloom(W, fire, Boolean(biome))))
           // the HUD: drawn over the night's dark, so it reads at any hour, and under the cards
-          .child(this.hud(hud.counts, hud.strip))
+          .child(this.hud(hud.counts, hud.strip, hud.map))
           .child(this.sign(list, hud))
           .when(Boolean(hud.stage), (el) => el.child(this.stageSection(hud.stage)))
           .when(Boolean(hud.note), (el) => el.child(this.stageNote(hud.note)))
@@ -3050,7 +3132,7 @@ export default class RaidParty extends View {
                 .top(50)
                 .gap(4)
                 .text_color("#5a3d22")
-                .child(div().text_size(13).font_semibold().child("The rampart is quiet"))
+                .child(div().text_size(13).font_semibold().child(biome ? LABELS.quietRaid : LABELS.quietTown))
                 .child(div().text_size(11).child("Start an agent from the + in the tab bar")),
             ),
           )
@@ -3107,19 +3189,19 @@ export default class RaidParty extends View {
         const still = Math.abs(e.position.x - pr.px) + Math.abs(e.position.y - pr.py) <= 4;
         if (pr.kind === YOU) {
           if (still) {
-            this.codex = this.settingsOpen = false;
+            this.codex = this.settingsOpen = this.mapOpen = false;
             this.skillsOpen = this.shopOpen = null;
             this.card = this.card === YOU ? null : YOU;
             this.picking = false;
           }
         } else if (pr.kind === "critter") {
-          this.codex = this.settingsOpen = false;
+          this.codex = this.settingsOpen = this.mapOpen = false;
           this.skillsOpen = this.shopOpen = null;
           this.card = this.card === pr.address ? null : pr.address;
           this.picking = false;
         } else if (pr.kind === "frame" || still) {
           this.card = null;
-          this.codex = this.settingsOpen = false;
+          this.codex = this.settingsOpen = this.mapOpen = false;
           this.skillsOpen = this.shopOpen = null;
           if (pr.kind !== "frame") this.walkTo(this.point(e), W, cx);
         }
@@ -3135,7 +3217,8 @@ export default class RaidParty extends View {
       .when(this.codex, (el) => el.child(this.codexCard(hud.inset, hud.panelTop)))
       .when(CLASSES.includes(this.skillsOpen), (el) => el.child(this.skillsCard(hud.inset, hud.panelTop)))
       .when(CLASSES.includes(this.shopOpen), (el) => el.child(this.shopCard(hud.inset, hud.panelTop)))
-      .when(this.settingsOpen, (el) => el.child(this.settingsCard(hud.strip.y)));
+      .when(this.settingsOpen, (el) => el.child(this.settingsCard(hud.strip.y)))
+      .when(this.mapOpen, (el) => el.child(this.mapCard(hud.strip)));
   }
 
   // A press on a HUD frame's empty part (its chips and buttons stop their own):
@@ -3249,7 +3332,9 @@ export default class RaidParty extends View {
     const right = W - HUD_EDGE;
     const counts = tally(list);
     const spec = this.signSpec(list);
-    const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + 34 + 2;
+    // the map (the stage picker), left of the gear, in town or a raid, from HUD_NARROW wide (its card needs the room)
+    const map = W >= HUD_NARROW;
+    const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + (map ? 34 + MAP_GAP : 0) + 34 + 2;
     const stageW = fight ? this.stageWidth(W) : 0;
     const box = (x, y, w, h = HUD_H) => ({ x, y, w, h });
     const across = (b, y, h) => b.y < y + h && y < b.y + b.h; // shares rows with y..y+h
@@ -3307,7 +3392,7 @@ export default class RaidParty extends View {
     }
     const under = got.sign.y + got.sign.h + 4;
     const panelTop = Math.max(HUD_TOP, Math.min(under, Math.max(FLOOR_H, this.size.height) - PANEL_MAX_H - 2));
-    return { ...got, note, inset, counts, spec, panelTop };
+    return { ...got, note, inset, counts, spec, panelTop, map };
   }
 
   // The sign, top left (see signSpec, hudLayout): a pixel frame holding the
@@ -3360,7 +3445,7 @@ export default class RaidParty extends View {
         this.battle = !this.battle;
         this.clearEffects(); // statuses stay with the fight they were put on
         // the panels open from different places in a raid and out of one
-        this.codex = this.settingsOpen = false;
+        this.codex = this.settingsOpen = this.mapOpen = false;
         this.skillsOpen = this.shopOpen = null;
         if (this.battle) this.fight(); // someone to fight straight away
         this.save();
@@ -3399,14 +3484,14 @@ export default class RaidParty extends View {
   stageSection(b) {
     const m = this.monster;
     const dead = m.hp <= 0;
-    const { stage, best } = this.progress;
+    const { stage } = this.progress;
     const farming = Boolean(this.progress.farming);
     const limit = stageTime(m.stage);
     const running = !dead && this.clockRuns();
     const x0 = FRAME + 4;
     const y0 = FRAME + 1;
     const arrow = (dir, to, x) => {
-      const live = to >= 1 && to <= best && to !== stage;
+      const live = canSelectStage(this.progress, to); // a stage reached, not this one: the stage picker's rule too
       return chip(`idle-rpg-stage-${dir}`, 18, false, [image(src(STAGE_ARROWS[dir])).w(10).h(14)], { live })
         .absolute()
         .left(x)
@@ -3508,11 +3593,12 @@ export default class RaidParty extends View {
 
   // The strip, top right (see hudLayout), in a frame like the sign's: an icon
   // for each status with agents in it, in the order of tally, with how many on
-  // a badge at its bottom-right corner in the pixel font, then the gear, a chip
-  // that opens the settings menu. Drawn on the floor over the night's dark and
+  // a badge at its bottom-right corner in the pixel font, then from HUD_NARROW
+  // wide (`map`) the map, a chip that opens the stage picker, and the gear, a
+  // chip that opens the settings menu. Drawn on the floor over the night's dark and
   // under the cards. `b` is its box: beside the sign, or under it below
   // HUD_NARROW wide.
-  hud(counts, b) {
+  hud(counts, b, map = false) {
     let x = FRAME + 6;
     const icons = counts.map(({ status, art, w, h, n }) => {
       const count = n > 99 ? "99+" : String(n);
@@ -3538,6 +3624,15 @@ export default class RaidParty extends View {
         this.openSettings(!this.settingsOpen);
         cx.notify();
       });
+    const picker = chip("idle-rpg-map", 34, this.mapOpen, [image(src("icons/map.png")).w(30).h(30)], { h: 34, px: 0 })
+      .absolute()
+      .left(b.w - FRAME - 2 - 34 - MAP_GAP - 34)
+      .top(FRAME)
+      .tooltip("Stages")
+      .on_click((_e, cx) => {
+        this.openMap(!this.mapOpen);
+        cx.notify();
+      });
     return div()
       .id("idle-rpg-hud")
       .on_mouse_down("left", (_e, cx) => this.framePress(cx))
@@ -3546,14 +3641,155 @@ export default class RaidParty extends View {
       .top(b.y - this.wallH)
       .w(b.w)
       .h(b.h)
-      .children([...framePieces(b.w, b.h), ...icons, gear]);
+      .children([...framePieces(b.w, b.h), ...icons, ...(map ? [picker] : []), gear]);
+  }
+
+  // Opens or closes the stage picker, closing the other panels and any card;
+  // it opens on the page and the biome of the stage being fought (mapFollow).
+  openMap(open) {
+    this.mapOpen = open;
+    if (!open) return;
+    this.codex = this.settingsOpen = false;
+    this.skillsOpen = this.shopOpen = this.card = null;
+    this.picking = false;
+    this.mapFollow();
+  }
+
+  // Turns the stage picker to the page and the biome of the stage being
+  // fought, and notes that stage (`mapAt`): mapCard does it again whenever
+  // the stage has changed since (an arrow, a kill moving on, a drop-back).
+  mapFollow() {
+    const s = stageOf(this.progress.stage) - 1;
+    this.mapAt = this.progress.stage;
+    this.mapPage = Math.floor(s / MAP_PAGE);
+    this.mapBiome = Math.floor((s % MAP_PAGE) / BIOME_STAGES);
+  }
+
+  // The stage picker, 4px under the strip at the scene's right edge (`strip`
+  // is the strip's box; never over the strip's chips, so packed tight enough
+  // to fit under a strip in the second row of the lowest scene, 230px),
+  // in a HUD frame with its words in the lettering. A page per round of the
+  // biomes (MAP_PAGE stages), so it holds as much at the furthest stage
+  // (MAX_STAGE, 25 pages) as in the tens: at the top the map and its title, and the
+  // page's stages ("STAGES 41-80") between arrows to the page before and
+  // after (dead past the first and the last page reached); down the left
+  // each biome of the page reached so far, a row with its swatch, its name
+  // and its stages (a chip: the open one sunk); beside them the open biome's
+  // ten stages, a grid of numbered chips, the stage being fought in gold and
+  // sunk, a stage the arrows could go to white, and one they could not grey
+  // and dead (canSelectStage, the arrows' own rule). Picking one does what the
+  // arrows do (toStage) and closes it; in town that sets the stage the next
+  // raid starts at (toStage needs no fight: the boss is fresh, nothing ticks).
+  mapCard(strip) {
+    if (this.mapAt !== this.progress.stage) this.mapFollow(); // the stage changed under it: follow it
+    // (read as the rules read them, so no odd value in memory makes an odd page)
+    const stage = stageOf(this.progress.stage);
+    const best = stageOf(this.progress.best);
+    const last = Math.floor((best - 1) / MAP_PAGE); // the last page with a stage reached
+    const page = Number.isInteger(this.mapPage) ? clamp(this.mapPage, 0, last) : 0;
+    const first = page * MAP_PAGE + 1;
+    const reached = BIOMES.filter((_b, i) => first + i * BIOME_STAGES <= best).length;
+    const open = Number.isInteger(this.mapBiome) ? clamp(this.mapBiome, 0, reached - 1) : 0;
+    // the numbers' room: as wide as the widest stage any page has, so it keeps its size from page to page
+    const digits = "8".repeat(Math.max(3, String((last + 1) * MAP_PAGE).length));
+    const rangeW = letterW(LABELS.range(digits, digits));
+    const nameW = Math.max(...BIOMES.map((b) => letterW(LABELS[b.id])));
+    const rowW = 2 * 2 + 2 * 2 + 18 + 6 + nameW + 6 + rangeW; // a chip's edge and padding, the swatch, the name, the stages
+    const cellW = letterW(digits) + 8;
+    const gridW = MAP_COLS * cellW + (MAP_COLS - 1) * 2;
+    const rows = Math.ceil(BIOME_STAGES / MAP_COLS);
+    const bodyH = Math.max(reached, rows) * CHIP_H; // rows of chips, edge to edge
+    const pageW = letterW(LABELS.stages(digits, digits));
+    const headW = 24 + letterW(LABELS.map) + 8 + 18 + 4 + pageW + 4 + 18; // the map and its title, the page between its arrows
+    const w = 2 * (FRAME + MAP_PAD) + Math.max(rowW + 8 + gridW, headW);
+    const h = 2 * (FRAME + MAP_PAD) + CHIP_H + 4 + bodyH;
+    const top = strip.y + strip.h + 4;
+    const x0 = FRAME + MAP_PAD;
+    const y0 = FRAME + MAP_PAD;
+    const at = (el, x, y) => el.absolute().left(x).top(y);
+    const turn = (dir, to, x) => {
+      const live = to >= 0 && to <= last;
+      return at(chip(`idle-rpg-map-${dir}`, 18, false, [image(src(STAGE_ARROWS[dir])).w(10).h(14)], { live }), x, y0)
+        .opacity(live ? 1 : 0.3)
+        .when(live, (el) =>
+          el.on_click((_e, cx) => {
+            this.mapPage = to;
+            this.mapBiome = 0;
+            cx.notify();
+          }),
+        );
+    };
+    // the page's stages, centred between its arrows at the right end of the top row
+    const pageText = LABELS.stages(first, first + MAP_PAGE - 1);
+    const navX = w - x0 - (18 + 4 + pageW + 4 + 18);
+    const kids = [
+      at(div(), x0, y0 + 2).child(image(src("icons/map.png")).w(18).h(18)),
+      letterText(LABELS.map, "gold", { left: x0 + 24, top: y0 + 4 }),
+      turn("prev", page - 1, navX),
+      div()
+        .id("idle-rpg-map-page")
+        .absolute()
+        .left(navX + 22 + Math.floor((pageW - letterW(pageText)) / 2))
+        .top(y0 + 4)
+        .child(letterText(pageText, "white")),
+      turn("next", page + 1, navX + 22 + pageW + 4),
+    ];
+    const bodyY = y0 + CHIP_H + 4;
+    BIOMES.slice(0, reached).forEach((b, i) => {
+      const from = first + i * BIOME_STAGES;
+      const here = Math.floor((stage - 1) / BIOME_STAGES) === Math.floor((from - 1) / BIOME_STAGES);
+      kids.push(
+        at(
+          chip(`idle-rpg-map-biome-${i}`, rowW, i === open, [
+            image(src(biomeArt(b.id, "swatch"))).w(18).h(18),
+            div().flex_none().w(nameW).child(letterText(LABELS[b.id], here ? "gold" : "white")),
+            letterText(LABELS.range(from, from + BIOME_STAGES - 1), "grey"),
+          ]),
+          x0,
+          bodyY + i * CHIP_H,
+        )
+          .gap(6)
+          .on_click((_e, cx) => {
+            this.mapPage = page;
+            this.mapBiome = i;
+            cx.notify();
+          }),
+      );
+    });
+    const gridX = x0 + rowW + 8;
+    for (let k = 0; k < BIOME_STAGES; k++) {
+      const s = first + open * BIOME_STAGES + k;
+      const live = canSelectStage(this.progress, s);
+      const current = s === stage;
+      kids.push(
+        at(chip(`idle-rpg-map-stage-${s}`, cellW, current, [letterText(String(s), current ? "gold" : live ? "white" : "grey")], { live }), gridX + (k % MAP_COLS) * (cellW + 2), bodyY + Math.floor(k / MAP_COLS) * CHIP_H)
+          .justify_center()
+          .when(!live && !current, (el) => el.opacity(0.5))
+          .when(live, (el) =>
+            el.on_click((_e, cx) => {
+              this.mapOpen = false;
+              this.toStage(s, cx);
+              cx.notify();
+            }),
+          ),
+      );
+    }
+    return div()
+      .id("idle-rpg-map-card")
+      .absolute()
+      .right(HUD_EDGE)
+      .top(top)
+      .w(w)
+      .h(h)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .children([...framePieces(w, h), ...kids]);
   }
 
   // Opens or closes the settings menu, closing the other panels and any card.
   openSettings(open) {
     this.settingsOpen = open;
     if (!open) return;
-    this.codex = false;
+    this.codex = this.mapOpen = false;
     this.skillsOpen = this.shopOpen = this.card = null;
     this.picking = false;
   }
@@ -3645,7 +3881,7 @@ export default class RaidParty extends View {
   openSkills(cls) {
     this.skillsOpen = cls;
     if (!cls) return;
-    this.codex = this.settingsOpen = false;
+    this.codex = this.settingsOpen = this.mapOpen = false;
     this.shopOpen = this.card = null;
     this.picking = false;
   }
@@ -3654,7 +3890,7 @@ export default class RaidParty extends View {
   openCodex(open) {
     this.codex = open;
     if (!open) return;
-    this.settingsOpen = false;
+    this.settingsOpen = this.mapOpen = false;
     this.skillsOpen = this.shopOpen = this.card = null;
     this.picking = false;
   }
@@ -3751,7 +3987,7 @@ export default class RaidParty extends View {
     this.shopOpen = cls;
     this.shopPick = null; // the item whose lines show: the one on, until another is clicked
     if (!cls) return;
-    this.codex = this.settingsOpen = false;
+    this.codex = this.settingsOpen = this.mapOpen = false;
     this.skillsOpen = this.card = null;
     this.picking = false;
   }
