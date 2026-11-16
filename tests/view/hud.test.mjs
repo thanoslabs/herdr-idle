@@ -41,13 +41,44 @@ describe("what the frames say", () => {
     assert.deepEqual(v.text("idle-rpg-plate"), ["Dragon", "5.3K/5.3K"]);
     assert.ok(!v.text("idle-rpg-plate").some((t) => /stage|\d:\d\d/i.test(t)));
   });
-  test("the stage section is wider while paused, by the label and its gap", async () => {
+  test("the stage section keeps its width while farming and while paused, with an arrow at each end", async () => {
     const v = await mountRaid({ stage: 12 });
-    const running = v.box("idle-rpg-stage").w;
+    const running = v.box("idle-rpg-stage");
     v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
     const paused = v.box("idle-rpg-stage");
     assert.deepEqual(v.runs("idle-rpg-stage-paused").map((r) => [r.text, r.colours]), [["(PAUSED)", ["grey"]]]);
-    assert.ok(paused.w > running, `${paused.w} against ${running}`);
+    assert.deepEqual([paused.x, paused.w], [running.x, running.w], "the pause does not move or resize it");
+    const farming = await mountRaid({ stage: 12, farming: true });
+    assert.equal(farming.box("idle-rpg-stage").w, running.w, "nor does farming");
+    // the arrows sit at the section's two ends, the words and the time between them
+    for (const view of [v, farming]) {
+      const sec = view.box("idle-rpg-stage");
+      const prev = view.box("idle-rpg-stage-prev");
+      const next = view.box("idle-rpg-stage-next");
+      assert.equal(prev.x - sec.x, sec.x + sec.w - (next.x + next.w), "the same inset at both ends");
+      assert.ok(prev.x - sec.x <= 10 && prev.x >= sec.x, `prev at the left end: ${prev.x - sec.x}`);
+      const clock = view.box("idle-rpg-stage-clock");
+      assert.ok(clock.x > prev.x + prev.w && clock.x + clock.w <= next.x, "the time is between the arrows");
+    }
+  });
+  test("the stage section is a share of the scene's width, between what it needs and a cap", async () => {
+    const widths = {};
+    for (const W of [1000, 1200, 1459, 1652, 2292, 3000]) {
+      const v = await mountRaid({ stage: 12 }, { width: W });
+      widths[W] = v.box("idle-rpg-stage").w;
+    }
+    assert.deepEqual(widths, { 1000: 300, 1200: 360, 1459: 438, 1652: 496, 2292: 520, 3000: 520 }, "30% of the scene, capped at 520");
+    const narrow = (await mountRaid({ stage: 12 }, { width: 700 })).box("idle-rpg-stage").w;
+    assert.ok(narrow > 700 * 0.3, `at least what its fullest line needs: ${narrow}`);
+    const full = await mountRaid({ stage: 12, farming: true, status: "idle" }, { width: 700 });
+    const sec = full.box("idle-rpg-stage");
+    for (const id of ["idle-rpg-stage-farm", "idle-rpg-stage-paused", "idle-rpg-stage-clock"]) {
+      const k = full.box(id);
+      assert.ok(k.x >= sec.x && k.x + k.w <= sec.x + sec.w, `${id} inside the section at its narrowest`);
+    }
+    const farm = full.box("idle-rpg-stage-farm");
+    const pause = full.box("idle-rpg-stage-paused");
+    assert.ok(farm.x + farm.w <= pause.x, "farm and (PAUSED) do not overlap at its narrowest");
   });
   test("the stage section and the plate are apart; a note lies under the section, over the plate", async () => {
     for (const stage of [1, 2, 3])
@@ -120,7 +151,7 @@ describe("hudLayout", () => {
     }
   });
 
-  test("short of room the title goes first, then the stage section drops to a second row (y 54)", async () => {
+  test("short of room the stage section drops to a second row (y 54), or the title goes to keep it in the first", async () => {
     const list = ["blocked", "working", "done", "idle"].map((st, i) => agent(`a${i}`, st));
     const { saved } = raid({ gold: 1234, slain: 1234, level: 5 });
     const rows = [];
@@ -128,6 +159,7 @@ describe("hudLayout", () => {
       const h = (await mountView({ saved, agents: list, width: W })).view.hudBox;
       rows.push([W, h.titled, h.stage.y, h.strip.y]);
     }
-    assert.deepEqual(rows, [[640, false, 54, 8], [700, false, 54, 8], [800, false, 8, 8], [1000, true, 8, 8]]);
+    // the section never shrinks below its fullest line, so it stays in the second row up to about 900px
+    assert.deepEqual(rows, [[640, false, 54, 8], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
   });
 });
