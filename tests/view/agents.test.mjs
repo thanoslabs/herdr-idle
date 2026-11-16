@@ -26,15 +26,19 @@ describe("coming and going", () => {
     v.advance(2000);
     assert.deepEqual(Object.keys(v.view.party.members), []);
   });
-  test("an agent comes back to the fight at full HP", async () => {
+  test("an agent that leaves hurt comes back with the HP it left with (not refilled)", async () => {
     const v = await mountRaid({ classes: ["warrior", "archer"], stage: 8, health: 10 });
-    v.until((h) => h.view.party.members.t1 && h.view.party.members.t1.hp < h.view.party.members.t1.maxHp, 120000);
+    v.until((h) => h.view.party.members.t1 && h.view.party.members.t1.hp < h.view.party.members.t1.maxHp && h.view.party.members.t1.down === null, 120000, 250);
     const [a, b] = v.world.agents;
     v.setAgents([{ ...a, status: "idle" }, b]);
-    v.advance(2000);
+    v.until((h) => !("t1" in h.view.party.members), 2000, 250);
+    const hp = v.view.party.away.t1.hp;
+    assert.ok(hp < v.view.party.away.t1.maxHp);
     v.setAgents([a, b]);
-    v.advance(2000);
-    assert.equal(v.view.party.members.t1.hp, v.view.party.members.t1.maxHp);
+    v.until((h) => h.view.party.members.t1, 2000, 250);
+    const m = v.view.party.members.t1;
+    // as it left, unless a blow struck it on the very tick it came back
+    assert.ok(m.hp === hp || m.hitAt === v.view.clock, `${m.hp} against ${hp}`);
   });
   test("you pick a class from your card; it is saved", async () => {
     const v = await mountRaid({ you: "archer" });

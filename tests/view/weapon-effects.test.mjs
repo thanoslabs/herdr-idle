@@ -97,6 +97,22 @@ describe("who an aura and damage over time are owed to", () => {
     assert.equal(v.view.auras().hex, true);
   });
 
+  test("with everyone knocked out, what was put on keeps ticking with the clock; no aura without its healer standing", async () => {
+    const v = await mountRaid({ classes: ["wizard", "healer"], weapons: { wizard: "venom", healer: "hex" }, you: "archer", stage: 4, level: 3, health: 20 });
+    v.until((h) => h.view.statuses.venom.length >= 2, 60000, 250);
+    for (const m of Object.values(v.view.party.members)) Object.assign(m, { hp: 0, down: v.view.clock + 200 });
+    v.view.party.foe.pending = null;
+    for (const r of Object.values(v.view.rhythm)) r.start = null; // no blow under way lands
+    v.advance(1000); // what had gathered lands
+    assert.deepEqual(v.view.attackers(), []);
+    assert.deepEqual(Object.values(v.view.auras()), [false, false, false], "the hex needs its healer standing");
+    const [hp, xp, left] = [v.view.monster.hp, v.view.progress.xp.wizard, v.view.left];
+    v.advance(1000);
+    assert.ok(v.view.monster.hp < hp, "the venom ticked on and landed with nobody standing");
+    assert.ok(v.view.progress.xp.wizard > xp, "and earned for the wizard class");
+    assert.equal(v.view.left, left - 1000, "the time ran");
+  });
+
   test("burn keeps earning for the class that put it on after its character has left", async () => {
     const v = await mountRaid({ classes: ["wizard", "warrior"], you: "archer", stage: 4, level: 3, health: 20 });
     v.until((h) => Object.keys(h.view.statuses.burn).includes("wizard"), 60000);

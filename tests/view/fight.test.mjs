@@ -1,7 +1,7 @@
 // A fight through the real main.js: blows land on the impact phase, the boss's
 // HP falls, a kill clears the stage and pays once, the next boss comes after
 // the wait (with the countdown on a first clear), and the attempt's clock
-// runs only while someone attacks.
+// runs only while anyone is in the fight (a working agent), standing or not.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { CLASSES, bossHp, shortNumber, stageGold, stageXp } from "../../mods/idle-rpg/rules.js";
@@ -130,7 +130,7 @@ describe("a kill", () => {
 });
 
 describe("the attempt's clock", () => {
-  test("runs while someone attacks, shown as minutes and seconds with a bar", async () => {
+  test("runs while anyone is in the fight, shown as minutes and seconds with a bar", async () => {
     const v = await mountRaid({ ...NO_HEALER, stage: 30 , health: 60 });
     // working agents are attackers from the start: the clock reads as running (white, not paused) before the first tick
     assert.deepEqual(v.text("idle-rpg-stage"), stageTexts({ stage: 30, clock: "10:00", running: true }));
@@ -143,7 +143,7 @@ describe("the attempt's clock", () => {
     assert.equal(v.get("idle-rpg-monster-time").style.bg, "#5cc8ff");
   });
 
-  test("pauses when nobody attacks, grey, and goes on when they do", async () => {
+  test("pauses when nobody is in the fight (no agent working), grey, and goes on when one works", async () => {
     const v = await mountRaid({ ...NO_HEALER, stage: 30, health: 60 });
     v.advance(5000);
     const working = v.world.agents;
@@ -159,6 +159,22 @@ describe("the attempt's clock", () => {
     v.setAgents(working);
     v.advance(5000);
     assert.ok(v.view.left < left);
+  });
+
+  test("runs on with everyone knocked out, and with only you standing", async () => {
+    const v = await mountRaid({ ...NO_HEALER, stage: 30, health: 60 });
+    v.advance(5000);
+    for (const m of Object.values(v.view.party.members)) Object.assign(m, { hp: 0, down: v.view.clock + 200 });
+    const left = v.view.left;
+    v.advance(10000);
+    assert.equal(v.view.left, left - 40 * 250);
+    assert.deepEqual(v.view.attackers(), []);
+    assert.deepEqual(v.text("idle-rpg-stage"), stageTexts({ stage: 30, clock: v.text("idle-rpg-stage-clock")[0], running: true }));
+    assert.deepEqual(v.runs("idle-rpg-stage-clock")[0].colours, ["white"]);
+    v.view.party.members.you.down = null; // you get up first: the agents still rest
+    v.view.party.members.you.hp = 1;
+    v.advance(1000);
+    assert.equal(v.view.left, left - 44 * 250);
   });
 
   test("you alone do not keep the clock going: it needs a working agent", async () => {

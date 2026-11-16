@@ -4,8 +4,9 @@
 // run on their own.
 //
 // The party fights the boss of a stage, numbered from 1, against the clock:
-// killing it in time clears the stage and pays gold; running out of time, or
-// being wiped, sends the party back a stage to farm (failStage). Boss HP grows
+// killing it in time clears the stage and pays gold; running out of time (the
+// only way to lose: a party knocked out waits out its rests) sends the party
+// back a stage to farm (failStage). Boss HP grows
 // exponentially with the stage, and training's price faster than gold, so the
 // party has to keep growing to push on.
 //
@@ -44,7 +45,7 @@ export const KINDS = ["slime", "ogre", "dragon"];
 export const STAGE_HP = 900; // the stage 1 boss's HP (a lone agent's untrained blows take about 4 minutes)
 export const HP_GROWTH = 1.175; // each stage's boss has this many times the HP of the one before (times the power below)
 export const HP_POWER = 0; // HP also grows as the stage number to this power (0: not at all)
-export const STAGE_MS = 600000; // the time limit of an attempt at any stage, 10 minutes (see stageTime), counted only while someone attacks
+export const STAGE_MS = 600000; // the time limit of an attempt at any stage, 10 minutes (see stageTime), counted only while anyone is in the fight (main.js clockRuns)
 // Gold for a kill grows with the party: more agents fighting means more gold,
 // so more of them means faster progress. A kill pays ATTACKER_GOLD per
 // attacker who took part, at stage 1, so the usual party of three agents and
@@ -90,13 +91,15 @@ export const MAX_TRAINING = 1000; // the most levels believed (a saved number pa
 // meets much the same fight at every stage and one that skips Health falls
 // behind: STAGE_DAMAGE x DAMAGE_GROWTH^(s-1) x s^DAMAGE_POWER is one blow on a
 // party of PARTY_SIZE (party.js softens it for fewer); the power keeps the
-// first stages' blows harmless. A healer holding the Heal Vial heals
-// HEAL_SHARE of its own max HP a throw: about one of the boss's blows on a
-// light class at the stage being pushed, so in a fight of several minutes it
-// keeps the party standing. Defaults chosen with a simulation (see PLAN.md),
-// to be retuned.
+// first stages' blows harmless. A healer's heal (every healer heals, see
+// party.js) restores HEAL_SHARE of its own max HP: about one of the boss's
+// blows on a light class at the stage being pushed, so in a fight of several
+// minutes it keeps the party standing. Defaults chosen with a simulation (see PLAN.md),
+// to be retuned. STAGE_DAMAGE was 5 while a party knocked out lost the
+// attempt at once: with no wipes a lost push costs the whole ten minutes, so
+// the boss hits a fifth softer and a party at its limit stands longer.
 export const CLASS_HP = { wizard: 100, healer: 100, warrior: 200, archer: 130 };
-export const STAGE_DAMAGE = 5;
+export const STAGE_DAMAGE = 4;
 export const DAMAGE_GROWTH = 1.175;
 export const DAMAGE_POWER = 0.5;
 export const HEAL_SHARE = 1;
@@ -502,10 +505,9 @@ export const LABELS = {
   stop: "Return to town",
   empty: "nobody in yet",
   farm: "farm",
-  paused: "(paused)", // by the time, while nobody is attacking
+  paused: "(paused)", // by the time, while nobody is in the fight
   stage: (n) => `Stage ${n}`,
   timesUp: "Time's up!",
-  wiped: "Wiped!",
   back: (why, n) => `${why} Back to stage ${n}`,
   moving: (n, s) => `Moving to stage ${n} in ${s}`,
   slain: (name) => `${name} slain!`,
@@ -729,7 +731,7 @@ export function maxHpOf(progress, cls) {
   return base * levelBonus(progress.xp?.[cls]) * healthBonus(trainingOf(progress, cls, "health"));
 }
 
-// What one throw of the Heal Vial by a character of class `cls` restores.
+// What one heal by a character of class `cls` (a healer, whatever vial it holds) restores.
 export const healOf = (progress, cls) => HEAL_SHARE * maxHpOf(progress, cls);
 
 // One of the boss's blows at stage `s` on a party of PARTY_SIZE (see party.js).
@@ -783,7 +785,7 @@ export function selectStage(progress, s) {
   return true;
 }
 
-// An attempt failed (its time ran out; a party wiped will be the same). At a
+// An attempt failed (its time ran out with the boss alive). At a
 // stage past 1 the fight goes back to the stage before, one the party has
 // cleared, and the party farms it: kills there repeat it, whatever the
 // "Advance after a kill" setting says, until the player picks a stage (the

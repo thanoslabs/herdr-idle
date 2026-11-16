@@ -77,8 +77,9 @@ export function savedState(version, { now = Date.now(), sprites = {}, extra = {}
  * `classes` in turn (all `status`); you are `you`. Every class is at `level`
  * with `attack` and `health` training; `weapons`/`armours`/`hats` put items on
  * ({ <class>: id }, owned too); `stage`/`best`/`farming`/`gold`/`settings` as saved.
+ * `statuses` gives agents their own status in turn (t1's first; `status` past its end).
  */
-export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer", status = "working", stage = 1, best = stage, farming = false, gold = 0, slain = 0, level = 1, attack = 0, health = 0, skills = {}, weapons = {}, armours = {}, hats = {}, settings = {}, battle = true, youAt = { x: 154, y: 16 }, now = Date.now() } = {}) {
+export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer", status = "working", statuses = [], stage = 1, best = stage, farming = false, gold = 0, slain = 0, level = 1, attack = 0, health = 0, skills = {}, weapons = {}, armours = {}, hats = {}, settings = {}, battle = true, youAt = { x: 154, y: 16 }, now = Date.now() } = {}) {
   const keys = classes.map((_, i) => `t${i + 1}`);
   const xp = 100 * ((level - 1) * level) / 2; // classLevel's curve: level n from 100 x n(n-1)/2
   const CLASSES = ["wizard", "healer", "warrior", "archer"];
@@ -112,5 +113,5 @@ export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer"
     hats: [...new Set(Object.values(hats).filter((h) => h !== "default"))],
     settings: { damageNumbers: true, advance: true, ...settings },
   };
-  return { saved, agents: keys.map((k) => agent(k, status)) };
+  return { saved, agents: keys.map((k, i) => agent(k, statuses[i] ?? status)) };
 }

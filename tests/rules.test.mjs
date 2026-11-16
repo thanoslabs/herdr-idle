@@ -118,9 +118,9 @@ describe("stages and the boss's numbers", () => {
     assert.deepEqual(R.bossOf(5, 9), { kind: "ogre", hp: R.bossHp(5), maxHp: R.bossHp(5), stage: 5, id: 9 });
     assert.equal(R.bossOf("junk").stage, 1);
   });
-  test("the boss's blow: 5 x 1.175^(s-1) x s^0.5", () => {
-    assert.equal(R.stageDamage(1), 5);
-    close(R.stageDamage(4), 5 * 1.175 ** 3 * 2);
+  test("the boss's blow: 4 x 1.175^(s-1) x s^0.5 (5 before no-wipes)", () => {
+    assert.equal(R.stageDamage(1), 4);
+    close(R.stageDamage(4), 4 * 1.175 ** 3 * 2);
   });
   test("gold: 0.5 per attacker x 1.23^(s-1), rounded down, never under 1", () => {
     assert.equal(R.stageGold(1, 4), 2);
@@ -374,9 +374,10 @@ describe("clockText", () => {
 describe("labels", () => {
   test("every HUD label can be lettered, with any stage and countdown", () => {
     for (const n of [1, 9, 10, 99, 100, 999, R.MAX_STAGE]) {
-      for (const text of [R.LABELS.title, R.LABELS.start, R.LABELS.stop, R.LABELS.empty, R.LABELS.farm, R.LABELS.stage(n), R.LABELS.timesUp, R.LABELS.wiped, R.LABELS.back(R.LABELS.timesUp, n), R.LABELS.back(R.LABELS.wiped, n), R.LABELS.moving(n, 5)])
+      for (const text of [R.LABELS.title, R.LABELS.start, R.LABELS.stop, R.LABELS.empty, R.LABELS.farm, R.LABELS.stage(n), R.LABELS.timesUp, R.LABELS.back(R.LABELS.timesUp, n), R.LABELS.moving(n, 5)])
         assert.ok(R.letterable(text), text);
     }
+    assert.equal(R.LABELS.wiped, undefined, "no wipes, so no note for one");
   });
   test("the settings list has a key, a name and a boolean default each", () => {
     assert.deepEqual(R.SETTINGS.map((s) => [s.key, typeof s.name, s.default]), [["damageNumbers", "string", true], ["advance", "string", true]]);

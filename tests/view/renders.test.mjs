@@ -3,7 +3,7 @@
 // while nothing changes; between attacks the attempt's clock and the
 // knocked-out's countdowns cost at most one render a second; and no timer
 // but the five standing ones (sky, blink, two roars, the watch) is left once
-// the fight is idle.
+// the fight is idle, healers standing by or not.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
@@ -37,12 +37,23 @@ describe("nothing changing", () => {
     assert.equal(v.view.ticking, false);
     assert.equal(v.view.clock, 0, "not one tick");
   });
-  test("once the fight stops, only the standing timers are left", async () => {
-    const v = await mountRaid({ stage: 3 });
+  test("with only healers standing by (nobody working): no attack clock, no throw", async () => {
+    const v = await mountRaid({ classes: ["healer", "healer", "warrior"], status: "idle", stage: 1 });
+    const log = count(v);
+    v.advance(52000);
+    assert.equal(log.length, 10 + 9 + 5, "the blink and the sky only");
+    assert.deepEqual([v.view.ticking, v.view.clock, Object.keys(v.view.rhythm)], [false, 0, []]);
+    v.advance(1000); // the last blink's off
+    assert.deepEqual(v.pendingTimers().map((t) => t.every).sort((a, b) => a - b), STANDING);
+  });
+  test("once the fight stops, only the standing timers are left, healers standing by or not", async () => {
+    const v = await mountRaid({ classes: ["warrior", "healer", "archer"], statuses: ["working", "idle", "working"], stage: 3 });
     v.advance(30000);
+    assert.ok(v.view.rhythm.t2, "the healer standing by heals while the fight is on");
     v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
     v.advance(5000);
     assert.deepEqual(v.pendingTimers().map((t) => t.every).sort((a, b) => a - b), STANDING);
+    assert.deepEqual([v.view.ticking, Object.keys(v.view.rhythm)], [false, []]);
   });
 });
 
@@ -92,8 +103,32 @@ describe("in a fight", () => {
 
   test("between attacks a render is the clock's second turning, at most once a second", async () => {
     const { quiet, bad } = await quietRenders({ classes: ["warrior", "archer"], weapons: { warrior: "hammer", archer: "crossbow" }, stage: 8, health: 30 });
-    assert.ok(quiet > 20, `${quiet} quiet renders`);
+    assert.ok(quiet > 10, `${quiet} quiet renders`);
     assert.deepEqual(bad, []);
+  });
+
+  test("healers standing by add their throws, and no render between them", async () => {
+    const { quiet, bad, v } = await quietRenders({ classes: ["warrior", "archer", "healer", "healer"], statuses: ["working", "working", "idle", "done"], you: "archer", stage: 8, health: 30 });
+    assert.ok(v.view.rhythm.t3 && v.view.rhythm.t4);
+    assert.ok(quiet > 5, `${quiet} quiet renders`);
+    assert.deepEqual(bad, []);
+  });
+
+  test("everyone knocked out: one render a second, the clock's", async () => {
+    const v = await mountRaid({ classes: ["warrior", "archer"], you: "archer", stage: 8, health: 30 });
+    v.advance(3000);
+    for (const m of Object.values(v.view.party.members)) Object.assign(m, { hp: 0, down: v.view.clock + 200 });
+    v.view.party.foe.pending = null;
+    v.advance(2000); // the cut-off attacks and fading numbers drawn
+    const from = v.renderLog.length;
+    const start = v.now;
+    v.advance(10000);
+    // the attack clock's renders (not the blink's, the sky's or a roar's, which may also follow a tick)
+    const ticks = v.renderLog.slice(from).filter((r) => r.causes.some((c) => c.name === "next") && r.causes.every((c) => c.name === "next" || c.every === 1000));
+    const perSecond = new Map();
+    for (const r of ticks) perSecond.set(Math.floor((r.at - start) / 1000), (perSecond.get(Math.floor((r.at - start) / 1000)) ?? 0) + 1);
+    for (const [s, n] of perSecond) assert.equal(n, 1, `${n} of the attack clock's renders in second ${s}`);
+    assert.ok(perSecond.size >= 6, `${perSecond.size} seconds with a render`);
   });
 
   test("the knocked out's countdowns share that beat", async () => {

@@ -1,5 +1,5 @@
-// party.js: the boss's attacks on the party, HP, knockouts and rest, wipes,
-// healing, joining and leaving.
+// party.js: the boss's attacks on the party, HP, knockouts and rest, everyone
+// down at once (no wipe), healing, joining and leaving.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import * as P from "../mods/idle-rpg/party.js";
@@ -36,13 +36,31 @@ describe("joining and leaving", () => {
     assert.equal(P.firstGap(() => 0), P.FIRST_ATTACK_TICKS);
     assert.equal(P.firstGap(() => 0.9999), P.MONSTER_ATTACK_TICKS);
   });
-  test("leavers go, and come back afresh", () => {
-    const p = party(2);
-    p.members.k1.hp = 3;
-    assert.deepEqual(P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }], 5, seeded(2)).left, ["k1"]);
+  test("leavers go, and come back within the attempt as they left: the HP lost kept, a rest not cut short", () => {
+    const p = party(3);
+    p.members.k1.hp = 30;
+    Object.assign(p.members.k2, { hp: 0, down: 5 + 80 });
+    const k0 = [{ key: "k0", maxHp: 100, x: 0, y: 60 }];
+    assert.deepEqual(P.syncParty(p, k0, 5, seeded(2)).left, ["k1", "k2"]);
     assert.equal("k1" in p.members, false);
-    P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }, { key: "k1", maxHp: 100, x: 9, y: 9 }], 6, seeded(2));
-    assert.equal(p.members.k1.hp, 100);
+    assert.deepEqual({ ...p.away.k1 }, { hp: 30, maxHp: 100, rest: null });
+    assert.deepEqual({ ...p.away.k2 }, { hp: 0, maxHp: 100, rest: 80 });
+    // away 200 ticks: the rest is frozen, not run down
+    const back = [...k0, { key: "k1", maxHp: 120, x: 9, y: 9 }, { key: "k2", maxHp: 100, x: 9, y: 9 }];
+    assert.deepEqual(P.syncParty(p, back, 205, seeded(2)).joined, ["k1", "k2"]);
+    assert.equal(p.members.k1.hp, 50, "the HP lost kept, a rise in max HP added");
+    assert.deepEqual([p.members.k2.hp, p.members.k2.down], [0, 205 + 80]);
+    assert.equal(P.standing(p, "k2"), false);
+    assert.deepEqual(Object.keys(p.away), [], "taken back");
+  });
+  test("a new attempt forgets who left: they come back fresh", () => {
+    const p = party(2);
+    Object.assign(p.members.k1, { hp: 0, down: 90 });
+    P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }], 5, seeded(2));
+    P.resetParty(p, 6, seeded(2));
+    P.syncParty(p, [{ key: "k0", maxHp: 100, x: 0, y: 60 }, { key: "k1", maxHp: 100, x: 9, y: 9 }], 7, seeded(2));
+    assert.deepEqual([p.members.k1.hp, p.members.k1.down], [100, null]);
+    assert.equal(Object.getPrototypeOf(p.away), null, "no prototype");
   });
   test("once nobody is left, the attack under way and the last one go with them", () => {
     const p = party(1);
@@ -212,72 +230,119 @@ describe("knockouts and rest", () => {
   });
 });
 
-describe("wipes", () => {
-  test("the blow that knocks out the last one standing wipes the party", () => {
+describe("everyone down at once", () => {
+  test("the blow that knocks out the last one standing ends nothing: no wipe, no new attack, and they rest", () => {
     const p = party(2);
     p.members.k1.down = 999;
     aim(p, "single", "k0", 3);
     const e = P.monsterTick(p, 3, 10000, seeded(1));
-    assert.equal(e.wiped, true);
-    assert.equal(e.started, null, "no new attack on a wiped party");
+    assert.deepEqual(Object.keys(e).sort(), ["back", "hits", "landed", "started"], "no wipe in what it returns");
+    assert.equal(e.hits[0].down, true);
+    assert.equal(e.started, null, "nobody to aim at");
+    assert.deepEqual(P.up(p), []);
+    assert.equal(p.members.k0.down, 3 + P.KO_TICKS);
   });
-  test("a blow that knocks nobody out is no wipe, even with nobody standing", () => {
-    const p = party(2);
-    for (const m of Object.values(p.members)) Object.assign(m, { hp: 0, down: 500 });
-    aim(p, "single", "k0", 3);
-    const e = P.monsterTick(p, 3, 10, seeded(1));
-    assert.deepEqual([e.hits, e.wiped], [[], false]);
-  });
-  test("an area attack that knocks out everyone at once is a wipe", () => {
+  test("an area attack that knocks out everyone at once: they all rest, and all get up at full HP", () => {
     const p = party(3, { gap: 0, hp: 5 });
     aim(p, "area", "k0", 3);
-    assert.equal(P.monsterTick(p, 3, 400, seeded(1)).wiped, true);
+    const e = P.monsterTick(p, 3, 400, seeded(1));
+    assert.ok(e.hits.length === 3 && e.hits.every((h) => h.down));
+    for (let t = 4; t < 3 + P.KO_TICKS; t++) assert.deepEqual(P.monsterTick(p, t, 400, seeded(t)).hits, []);
+    const back = P.monsterTick(p, 3 + P.KO_TICKS, 400, seeded(1));
+    assert.deepEqual(back.back, ["k0", "k1", "k2"]);
+    assert.ok(Object.values(p.members).every((m) => m.hp === 5 && m.down === null));
   });
-  test("someone leaving is not a wipe; nor is a blow that leaves anyone standing", () => {
+  test("while nobody stands the boss waits, and strikes FIRST_ATTACK_TICKS after the last tick nobody stood", () => {
     const p = party(2);
-    aim(p, "single", "k0", 3);
-    P.syncParty(p, [{ key: "k1", maxHp: 100, x: 200, y: 60 }], 2, seeded(1));
-    assert.equal(P.monsterTick(p, 3, 10000, seeded(1)).wiped, false);
-    const q = party(2);
-    aim(q, "single", "k0", 3);
-    const e = P.monsterTick(q, 3, 10000, seeded(1));
-    assert.equal(e.hits[0].down, true);
-    assert.equal(e.wiped, false);
+    for (const m of Object.values(p.members)) Object.assign(m, { hp: 0, down: 40 });
+    p.members.k1.down = 60;
+    p.foe.next = 10;
+    for (let t = 10; t < 40; t++) {
+      const e = P.monsterTick(p, t, 10, seeded(t));
+      assert.equal(e.started, null, `no attack at ${t}`);
+      assert.equal(p.foe.next, t + P.FIRST_ATTACK_TICKS, "kept off a tick at a time");
+    }
+    for (let t = 40; t < 40 + P.FIRST_ATTACK_TICKS - 1; t++) assert.equal(P.monsterTick(p, t, 10, seeded(1)).started, null);
+    const e = P.monsterTick(p, 40 + P.FIRST_ATTACK_TICKS - 1, 10, seeded(1));
+    assert.equal(e.started?.target, "k0", "the one who got up");
+    // an attack further off than that is left alone
+    const q = party(1);
+    Object.assign(q.members.k0, { hp: 0, down: 500 });
+    q.foe.next = 30;
+    P.monsterTick(q, 5, 10, seeded(1));
+    assert.equal(q.foe.next, 30);
+  });
+  test("putting the attack off draws nothing from the random source", () => {
+    const p = party(1);
+    Object.assign(p.members.k0, { hp: 0, down: 500 });
+    p.foe.next = 1;
+    let drawn = 0;
+    for (let t = 1; t < 100; t++)
+      P.monsterTick(p, t, 10, () => {
+        drawn += 1;
+        return 0.5;
+      });
+    assert.equal(drawn, 0);
+  });
+  test("a blow already under way when the last one falls lands on nobody", () => {
+    const p = party(2);
+    p.members.k1.down = 999;
+    p.members.k1.hp = 0;
+    aim(p, "single", "k1", 3);
+    assert.deepEqual(P.monsterTick(p, 3, 10000, seeded(1)).hits, []);
   });
 });
 
 describe("healing", () => {
-  test("only the healer's Heal Vial heals", () => {
-    assert.equal(P.heals("healer", "heal"), true);
-    for (const [c, potion] of [["healer", "might"], ["healer", "hex"], ["wizard", "heal"], ["healer", undefined]]) assert.equal(P.heals(c, potion), false);
+  test("the rhythm: HEAL_GAP_TICKS (6s), half that with the Heal Vial, whatever else the healer holds", () => {
+    assert.equal(P.HEAL_GAP_TICKS, 24);
+    assert.equal(P.HEAL_VIAL_GAP_TICKS, P.HEAL_GAP_TICKS / 2);
+    assert.equal(P.healTicks(P.HEAL_POTION), P.HEAL_VIAL_GAP_TICKS);
+    for (const potion of ["haste", "might", "hex", undefined, null, "nonsense"]) assert.equal(P.healTicks(potion), P.HEAL_GAP_TICKS, String(potion));
   });
-  test("the target: the standing one lowest for its max, under 60%, itself included; the first joined on a tie", () => {
+  test("healGap is the mean give or take HEAL_JITTER, evenly, a real number, never under a tick", () => {
+    assert.equal(P.healGap(24, 0), 24 - P.HEAL_JITTER);
+    assert.equal(P.healGap(24, 1), 24 + P.HEAL_JITTER);
+    assert.equal(P.healGap(24, 0.5), 24);
+    assert.equal(P.healGap(24, 0.25), 23);
+    let sum = 0;
+    for (let i = 0; i < 1000; i++) sum += P.healGap(12, (i + 0.5) / 1000);
+    assert.ok(Math.abs(sum / 1000 - 12) < 1e-9, "its mean is the mean");
+    for (const bad of [NaN, -3, 9, undefined]) assert.ok(Number.isFinite(P.healGap(24, bad)) && P.healGap(24, bad) >= 22 && P.healGap(24, bad) <= 26);
+    assert.ok(P.healGap(1, 0) >= 1 && P.healGap(0, 0) > 0 && P.healGap(NaN, 0.5) === P.HEAL_GAP_TICKS);
+  });
+  test("firstHeal is anywhere in the first gap, from one tick", () => {
+    assert.equal(P.firstHeal(24, 0), 1);
+    assert.equal(P.firstHeal(24, 1), 24);
+    assert.ok(Number.isFinite(P.firstHeal(24, NaN)) && P.firstHeal(24, NaN) >= 1);
+  });
+  test("the target: the standing one lowest for its max, anyone under full; the first joined on a tie", () => {
     const p = party(4);
-    assert.equal(P.healTarget(p, "k0"), null, "nobody low");
-    p.members.k1.hp = 59;
-    p.members.k2.hp = 59;
+    assert.equal(P.healTarget(p), null, "nobody hurt: no throw");
+    p.members.k1.hp = 99;
+    assert.equal(P.healTarget(p), "k1", "anyone under full");
+    p.members.k2.hp = 99;
+    assert.equal(P.healTarget(p), "k1", "a tie: the first to join");
     p.members.k3.hp = 30;
     p.members.k3.down = 50; // the knocked out are never healed
-    assert.equal(P.healTarget(p, "k0"), "k1");
+    assert.equal(P.healTarget(p), "k1");
     p.members.k0.hp = 20;
-    assert.equal(P.healTarget(p, "k0"), "k0");
-    p.members.k0.hp = 60;
-    assert.equal(P.healTarget(p, "k0"), "k1", "60% is not under 60%");
+    assert.equal(P.healTarget(p), "k0");
   });
   test("two healers pick different allies while another qualifies", () => {
     const p = party(3);
     p.members.k1.hp = 10;
     p.members.k2.hp = 40;
-    assert.equal(P.healTarget(p, "k0", ["k1"]), "k2");
+    assert.equal(P.healTarget(p, ["k1"]), "k2");
     p.members.k2.hp = 100;
-    assert.equal(P.healTarget(p, "k0", ["k1"]), "k1", "nobody else qualifies: the same one");
+    assert.equal(P.healTarget(p, ["k1"]), "k1", "nobody else qualifies: the same one");
   });
-  test("a healer that is down heals nobody", () => {
+  test("nobody standing, or nobody in the fight: nobody to heal", () => {
     const p = party(2);
-    p.members.k1.hp = 1;
-    p.members.k0.down = 9;
-    assert.equal(P.healTarget(p, "k0"), null);
-    assert.equal(P.healTarget(p, "nobody"), null);
+    for (const m of Object.values(p.members)) Object.assign(m, { hp: 0, down: 9 });
+    assert.equal(P.healTarget(p), null);
+    assert.equal(P.healTarget(P.newParty()), null);
+    assert.equal(P.healTarget(party(1), "not a list"), null);
   });
   test("healParty restores up to the max, nothing to the down or the gone", () => {
     const p = party(2);
@@ -292,6 +357,10 @@ describe("healing", () => {
     assert.equal(P.healParty(p, "ghost", 50, 9), 0);
     for (const bad of [-5, NaN, "9"]) assert.equal(P.healParty(p, "k0", bad, 9), 0);
   });
+  test("the old rules are gone: no heals() and no HEAL_BELOW", () => {
+    assert.equal(P.heals, undefined);
+    assert.equal(P.HEAL_BELOW, undefined);
+  });
 });
 
 describe("determinism", () => {
@@ -301,8 +370,7 @@ describe("determinism", () => {
     const log = [];
     for (let t = 1; t < 2000; t++) {
       const e = P.monsterTick(p, t, 30, rnd);
-      log.push(JSON.stringify([e.back, e.hits, e.started?.kind, e.started?.target, e.wiped]));
-      if (e.wiped) P.resetParty(p, t, rnd);
+      log.push(JSON.stringify([e.back, e.hits, e.started?.kind, e.started?.target]));
     }
     return log;
   };
