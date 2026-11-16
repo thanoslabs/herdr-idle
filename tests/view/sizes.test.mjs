@@ -179,20 +179,35 @@ describe("staying inside the scene", () => {
           (v, w, h) => {
             if (w < 640) return [];
             const kind = v.view.monster.kind;
-            return [...imagesUnder(v, `idle-rpg-monster-${v.view.monster.id}`).flatMap((el) => outside(`the ${kind}`, visible(v, el), w, h)), ...outside("the plate", { ...v.box("idle-rpg-plate"), h: 28 }, w, h)];
+            return [...imagesUnder(v, `idle-rpg-monster-${v.view.monster.id}`).flatMap((el) => outside(`the ${kind}`, visible(v, el), w, h)), ...outside("the plate", v.box("idle-rpg-plate"), w, h)];
           },
         )),
       );
     assert.ok(!found.length, summary(found));
   });
 
-  test("the plate stays inside, clear of the frames above it", async () => {
+  test("the plate stays inside, clear of the frames above it, with and without its icons", async () => {
     const found = [];
     for (const stage of [1, 2, 3])
       found.push(
         ...(await sweep(
-          () => mountRaid({ stage }),
-          (v, w, h) => (w < 640 ? [] : outside("the plate", { ...v.box("idle-rpg-plate"), h: 28 }, w, h)),
+          async () => {
+            // the ogre with statuses on it (the plate a row taller); the others without
+            const v = await mountRaid({ stage, ...(stage === 2 ? { classes: ["wizard", "warrior"], weapons: { wizard: "venom", warrior: "flame" }, you: "healer", level: 3 } : {}) });
+            if (stage === 2) v.until((h) => h.has("idle-rpg-plate-icons"), 120000);
+            return v;
+          },
+          (v, w, h) => {
+            if (w < 640) return [];
+            const p = v.box("idle-rpg-plate");
+            // and clear of the sign, the strip and the stage section (a stage note may lie over it)
+            const hits = ["idle-rpg-sign", "idle-rpg-hud", "idle-rpg-stage"]
+              .filter((id) => v.has(id))
+              .map((id) => [id, v.box(id)])
+              .filter(([, b]) => p.x < b.x + b.w && b.x < p.x + p.w && p.y < b.y + b.h && b.y < p.y + p.h)
+              .map(([id, b]) => ({ what: `the plate under ${id}`, side: "overlapping", by: Math.round(b.y + b.h - p.y) }));
+            return [...outside("the plate", p, w, h), ...hits];
+          },
         )),
       );
     assert.ok(!found.length, summary(found));

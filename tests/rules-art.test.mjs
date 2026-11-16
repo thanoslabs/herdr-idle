@@ -129,14 +129,93 @@ describe("glyphArt and letterArt", () => {
     assert.equal(R.letterArt("red", "q"), R.letterArt("red", "Q"));
     assert.equal(R.letterArt("gold", " "), null);
     assert.equal(R.letterWidth(" "), 1);
-    for (const bad of ["é", "ß", "ı", "#", "..", "", "AB"]) assert.equal(R.letterArt("white", bad), null, bad);
+    for (const bad of ["é", "ß", "ı", "$", "..", "", "AB", "\u{1F600}", "__proto__", "constructor", "toString"]) assert.equal(R.letterArt("white", bad), null, bad);
     for (const h of HOSTILE) {
       assert.equal(R.letterArt(h, "A"), null);
       assert.equal(R.letterArt("white", h), null);
     }
     assert.equal(R.letterable("Time's up!"), true);
-    assert.equal(R.letterable("50%"), false);
+    assert.equal(R.letterable("50%"), true);
+    assert.equal(R.letterable("caf\u00e9"), false, "an accent is folded by letterFit, not drawn");
     assert.equal(R.letterable(null), false);
+  });
+});
+
+describe("letterFit: any text, as the lettering draws it", () => {
+  const ok = (out) => [...out].every((ch) => R.LETTERS.includes(ch));
+  // every character it gives has a picture in every colour (or is a space), named only from a fixed list
+  const drawable = (out) => [...out].every((ch) => ch === " " || R.LETTER_COLOURS.every((c) => isArt(R.letterArt(c, ch)) && safe(R.letterArt(c, ch))));
+  test("every character of the face is a file of its own, named in plain lower-case letters and digits", () => {
+    const names = new Set();
+    for (const ch of R.LETTERS) {
+      if (ch === " ") continue;
+      const p = R.letterArt("white", ch);
+      assert.match(p, /^lettering\/white\/[a-z0-9]+\.png$/, ch);
+      names.add(p);
+    }
+    assert.equal(names.size, R.LETTERS.length - 1, "no two characters share a picture");
+  });
+  test("a table of names", () => {
+    const U = R.UNKNOWN;
+    const E = R.ELLIPSIS;
+    const table = [
+      ["Keep\u00b7Hall", "KEEP\u00b7HALL"],
+      ["lower case", "LOWER CASE"],
+      ["Caf\u00e9 na\u00efve", "CAFE NAIVE"], // accents fold to their letters
+      ["e\u0301", "E"], // a combining accent takes no room
+      ["\u00c5ngstr\u00f6m", "ANGSTROM"],
+      ["\ufb01le", "FILE"], // a ligature, its letters
+      ["Stra\u00dfe", `STRA${U}E`], // no plain letter for it: the box
+      ["\u65e5\u672c\u8a9e", `${U}${U}${U}`], // a box per character
+      ["\u{1F680} deploy", `${U} DEPLOY`], // an emoji (astral) is one box
+      ["\u{1F468}\u200d\u{1F469}\u200d\u{1F467}", U], // a family joined by zero-width joiners: one
+      ["\u{1F44B}\u{1F3FD}", U], // a skin tone takes no room
+      ["\u{1F1E8}\u{1F1E6}x", `${U}X`], // a flag (two regional indicators): one
+      ["\u2764\ufe0f", U], // a variation selector takes no room
+      ["a\tb\n\nc   d", "A B C D"], // any white space is a space, a run of them one
+      ["#123 fix_it [1] ~/x 50%? a&b @c *=<> | \\ \"; ,", '#123 FIX_IT [1] ~/X 50%? A&B @C *=<> | \\ "; ,'],
+      ["", ""],
+      ["\ud800", U], // a lone surrogate
+      ["\u0000\u0007", ""], // controls take no room
+    ];
+    for (const [text, want] of table) {
+      const got = R.letterFit(text);
+      assert.equal(got, want, JSON.stringify(text));
+      assert.ok(ok(got) && drawable(got), JSON.stringify(text));
+    }
+    for (const h of [undefined, null, 0, 12, {}, [], ["a"], () => "a", Symbol.iterator]) assert.equal(R.letterFit(h), "", String(typeof h));
+  });
+  test("cut to a width with an ellipsis, spaces before it dropped, never wider", () => {
+    assert.equal(R.letterFit("Keep\u00b7Hall", 38), "KEEP\u00b7HALL"); // 36 art px: fits
+    assert.equal(R.letterFit("lower case\u00b7zsh", 38), `LOWER C${R.ELLIPSIS}`);
+    assert.equal(R.letterFit("abcdef ghij", 32), `ABCDEF${R.ELLIPSIS}`, "the space before the cut goes");
+    assert.equal(R.letterFit("abc", 7), R.ELLIPSIS, "only the ellipsis fits");
+    assert.equal(R.letterFit("abc", 6), "", "not even that");
+    for (const max of [7, 20, 38, 50, 101])
+      for (const text of ["x".repeat(200), "M W".repeat(50), "\u65e5".repeat(80), "Caf\u00e9 ".repeat(40)]) {
+        const got = R.letterFit(text, max);
+        assert.ok(R.lettersWidth(got) <= max, `${got} is ${R.lettersWidth(got)} > ${max}`);
+        assert.ok(got.endsWith(R.ELLIPSIS), got);
+        // and with no spaces to drop, it holds as much as it can: one more (5 or 6 art px) would not fit
+        if (!text.includes(" ")) assert.ok(R.lettersWidth(got) + 6 > max, `${got} could hold another character in ${max}`);
+      }
+  });
+  test("hostile names: paths, prototype keys, astral and combining characters, a 10,000-character name", () => {
+    for (const text of ["../../etc/passwd", "..\\..\\x", "__proto__", "constructor", "toString", "hasOwnProperty", "lettering/white/a.png", "\u{10FFFF}\u{E0041}\u{1D400}", "a\u0300\u0301\u0302\u0303\u0304".repeat(50), "\u202eevil", "%2e%2e%2f"]) {
+      const got = R.letterFit(text, 38);
+      assert.ok(ok(got) && drawable(got), `${JSON.stringify(text)} -> ${JSON.stringify(got)}`);
+    }
+    const huge = "\u00e9\u{1F600}x".repeat(3334);
+    const t0 = performance.now();
+    const got = R.letterFit(huge, 38);
+    assert.ok(performance.now() - t0 < 50, "stops reading once full");
+    assert.ok(ok(got) && R.lettersWidth(got) <= 38);
+    // every code point in a sweep of the planes, alone and among letters, gives only characters of the face
+    for (let cp = 0; cp < 0x30000; cp += 7) {
+      if (cp >= 0xd800 && cp < 0xe000) continue;
+      const out = R.letterFit(`a${String.fromCodePoint(cp)}b`);
+      assert.ok(ok(out), `U+${cp.toString(16)} -> ${JSON.stringify(out)}`);
+    }
   });
 });
 
