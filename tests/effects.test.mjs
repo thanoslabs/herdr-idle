@@ -201,6 +201,16 @@ describe("statuses", () => {
     close(sum, 100 * 0.75 * 0.2, 1e-9); // the Toxic Rod's 0.75: its factor (no cadence given) on the blow
     assert.deepEqual(one.venom, []);
   });
+  test("venom: the stack replaced is the one with least left, not the oldest", () => {
+    const st = E.newStatuses();
+    // the oldest is the biggest; the third the smallest
+    for (const damage of [1000, 400, 10, 300, 200]) E.strike(blow({ cls: "wizard", weapon: "venom", damage }), "ogre", st, {}, never);
+    const smallest = st.venom[2].left;
+    E.strike(blow({ cls: "wizard", weapon: "venom", damage: 500 }), "ogre", st, {}, never);
+    const left = st.venom.map((v) => v.left);
+    assert.ok(left.includes(1000 * 0.75 * 0.2), "the oldest stays");
+    assert.ok(!left.includes(smallest), "the least-left one went");
+  });
   test("statuses are shares of the blow as dealt: crit and might in", () => {
     const st = E.newStatuses();
     E.strike(blow({ cls: "wizard", critChance: 1 }), "slime", st, { might: true }, never);

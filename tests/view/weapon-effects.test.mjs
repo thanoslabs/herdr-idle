@@ -84,6 +84,51 @@ describe("auras", () => {
   });
 });
 
+describe("who an aura and damage over time are owed to", () => {
+  test("an aura goes while its healer is knocked out, and comes back when it rises", async () => {
+    const v = await mountRaid({ classes: ["warrior", "healer"], weapons: { healer: "hex" }, you: "archer", stage: 2, health: 20 });
+    v.advance(6000);
+    assert.equal(v.view.auras().hex, true);
+    Object.assign(v.view.party.members.t2, { hp: 0, down: v.view.clock + 8 });
+    assert.equal(v.view.auras().hex, false);
+    v.setAgents([...v.world.agents]);
+    assert.equal(v.find("idle-rpg-plate-hex"), null);
+    v.advance(4000);
+    assert.equal(v.view.auras().hex, true);
+  });
+
+  test("burn keeps earning for the class that put it on after its character has left", async () => {
+    const v = await mountRaid({ classes: ["wizard", "warrior"], you: "archer", stage: 4, level: 3, health: 20 });
+    v.until((h) => Object.keys(h.view.statuses.burn).includes("wizard"), 60000);
+    const [wizard, warrior] = v.world.agents;
+    v.setAgents([{ ...wizard, status: "idle" }, warrior]);
+    const before = v.view.progress.xp.wizard;
+    v.advance(3000); // the burn still ticks while the warrior and you attack
+    assert.ok(!v.view.fighters().includes("t1"));
+    assert.ok(v.view.progress.xp.wizard > before, "the wizard class earned by its burn");
+  });
+
+  test("what the Might aura adds to a blow earns for the healer class (0.3 of 1.3), the rest for the attacker's", async () => {
+    const v = await mountRaid({ classes: ["warrior", "healer"], weapons: { healer: "might" }, you: "archer", youAt: { x: 154, y: 16 }, stage: 3, level: 2, health: 20 });
+    let checked = 0;
+    v.until(() => {
+      const xp = { ...v.view.progress.xp };
+      v.advance(250);
+      const view = v.view;
+      const landing = view.attackers().filter((k) => view.phaseOf(k) === 4);
+      const dot = view.damage.some((d) => d.tick === view.clock && d.dot);
+      if (landing.length === 1 && landing[0] === "t1" && !dot && view.monster.hp > 0) {
+        const warrior = view.progress.xp.warrior - xp.warrior;
+        const healer = view.progress.xp.healer - xp.healer;
+        assert.ok(warrior > 0);
+        assert.ok(Math.abs(healer / warrior - 0.3) < 1e-9, `healer ${healer}, warrior ${warrior}`);
+        checked += 1;
+      }
+      return checked >= 3;
+    }, 120000, 0);
+  });
+});
+
 describe("weapons in hand", () => {
   test("each class fights with its weapon's pictures and its attack's", async () => {
     const v = await mountRaid({ classes: ["warrior", "archer", "wizard", "healer"], weapons: { warrior: "hammer", archer: "crossbow", wizard: "frost", healer: "might" }, you: "archer", stage: 1, level: 2 });

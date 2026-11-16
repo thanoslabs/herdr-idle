@@ -231,4 +231,7 @@ jobs:
           # Node's built-in runner, no dependencies (tests/README.md). The runner's
           # Node must be 22 or later (.tool-versions pins the version used locally).
           node -e 'const [major] = process.versions.node.split("."); if (+major < 22) { console.error(`Node ${process.version}: the tests need 22 or later`); process.exit(1); }'
-          node --test --test-reporter=spec 'tests/**/*.test.mjs'
+          tap="$(mktemp)"
+          node --test --test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination="$tap" 'tests/**/*.test.mjs'
+          # a known bug's todo test that now passes: the bug is fixed, so drop the todo (a warning, not a failure)
+          grep -E '^ *ok [0-9]+ - .* # TODO' "$tap" | sed -E 's/^ *ok [0-9]+ - (.*) # TODO.*/::warning::todo test now passes, remove its todo: \1/' || true

@@ -31,11 +31,13 @@ export function misshapen(tree, letterboxed = LETTERBOXED) {
   const out = [];
   for (const el of all(tree, (n) => n.type === "image")) {
     const { w, h } = el.style;
-    if (typeof w !== "number" || typeof h !== "number") continue;
     const file = el.src.slice(ART_PREFIX.length);
+    if (typeof w !== "number" || typeof h !== "number") throw new Error(`${file}: an image with no numeric w and h (${w} x ${h}); main.js always sizes its pictures`);
     if (letterboxed.has(file)) continue;
     const p = pngSize(file);
-    if (Math.abs(w - (h * p.w) / p.h) > 1 && Math.abs(h - (w * p.h) / p.w) > 1) out.push(`${file}: ${w}x${h} for a ${p.w}x${p.h} picture`);
+    // the picture as drawn: its own shape, as large as fits; what the box has spare is empty
+    const k = Math.min(w / p.w, h / p.h);
+    if (Math.max(w - k * p.w, h - k * p.h) > 1) out.push(`${file}: ${w}x${h} for a ${p.w}x${p.h} picture`);
   }
   return out;
 }
@@ -63,6 +65,8 @@ class Cx {
     };
   }
   notify() {
+    // gpui-kit.d.ts (Context.notify): "Calling it during `render` throws, because notifying a view while rendering is a loop."
+    if (this.rendering) throw new Error("cx.notify() during render (gpui-kit throws: a loop)");
     this.h.notified += 1;
     this.h.dirty = true;
   }
@@ -102,8 +106,11 @@ export async function mountRaid(options = {}, view = {}) {
 }
 
 export class Handle {
-  constructor({ saved, key = STATE, agents = [], spaces = [], width = 1280, height = 360, inset, seed = 1, phase = 0.25, checkShapes = true } = {}) {
+  constructor({ saved, key = STATE, agents = [], spaces = [], width = 1280, height = 360, inset, seed = 1, phase = 0.25, checkShapes = true, origin = { x: 0, y: 0 } } = {}) {
     this.size = { width, height };
+    // where the view sits in the window: pointer events carry window positions
+    // and bounds, so a test's view-relative points are moved by it
+    this.origin = origin;
     this.timers = new Timers(timeAt(phase));
     this.random = seeded(seed);
     this.renders = 0; // render() calls
@@ -111,7 +118,9 @@ export class Handle {
     // (the attack clock's timer is main.js's `next`, set by wake: name "next")
     this.renderLog = [];
     this.causes = [];
-    this.checkShapes = checkShapes; // see misshapen(); a test may turn it off to look at what is drawn anyway
+    // see misshapen(). Turning it off is for the harness's own tests only; a
+    // picture main.js really letterboxes goes in LETTERBOXED, with why
+    this.checkShapes = checkShapes;
     this.notified = 0; // cx.notify() calls
     this.dirty = false;
     this.tree = null;
@@ -119,7 +128,9 @@ export class Handle {
     this.install();
   }
 
-  // Date.now and Math.random for this view (the last one mounted owns them).
+  // Date.now and Math.random for this view: put in place on mount and again
+  // whenever this handle renders, advances or takes input, so several views
+  // in one test each run on their own clock and random source.
   install() {
     const timers = this.timers;
     Date.now = () => timers.now;
@@ -155,14 +166,23 @@ export class Handle {
   }
 
   render() {
+    this.install();
     world.missing.length = 0;
-    this.tree = this.view.render(new Cx(this));
+    this.dirty = false;
+    world.dirty = false;
+    const cx = new Cx(this);
+    cx.rendering = true;
+    world.rendering = true;
+    try {
+      this.tree = this.view.render(cx);
+    } finally {
+      world.rendering = false;
+    }
     if (!(this.tree instanceof El)) throw new Error("render() did not return an element");
     this.renders += 1;
     this.renderLog.push({ at: this.timers.now, clock: this.view.clock, causes: this.causes });
     this.causes = [];
-    this.dirty = false;
-    world.dirty = false;
+    // a setShared during this render left world.dirty set: the app renders every mod again (see flush)
     if (world.missing.length) throw new Error(`render asked for pictures that are not in art/:\n${[...new Set(world.missing)].join("\n")}`);
     if (this.checkShapes) {
       const bad = misshapen(this.tree);
@@ -173,7 +193,11 @@ export class Handle {
 
   // Renders if anything asked for it (a notify, a save, live data changing).
   flush() {
-    if (this.dirty || world.dirty) this.render();
+    // renders until nothing asks for another; a render that saves asks for one more (the app re-renders every mod)
+    for (let n = 0; this.dirty || world.dirty; n++) {
+      if (n >= 5) throw new Error("render loop: each render asked for another");
+      this.render();
+    }
   }
 
   /**
@@ -181,20 +205,13 @@ export class Handle {
    * time; whatever they notify is rendered once per instant (as a frame would).
    */
   advance(ms) {
+    this.install();
     const until = this.timers.now + ms;
     for (;;) {
       const t = this.timers.next(until);
       if (!t) break;
-      this.timers.now = t.at;
-      t.live = false;
       this.causes.push({ every: t.every, ms: t.ms, name: t.fn.name });
-      t.fn(new Cx(this));
-      if (t.every !== null) {
-        t.live = true;
-        t.at = this.timers.now + t.every;
-        t.seq = this.timers.seq += 1;
-        this.timers.queue.push(t);
-      }
+      this.timers.run(t, new Cx(this));
       // a frame once nothing more is due at this instant
       if (!this.timers.queue.some((q) => q.live && q.at === this.timers.now)) this.flush();
     }
@@ -220,21 +237,25 @@ export class Handle {
 
   // ---- live data -----------------------------------------------------------
   setAgents(list) {
+    this.install();
     world.agents = list;
     world.dirty = true;
     this.flush();
   }
   setProps(p) {
+    this.install();
     world.props = p;
     world.dirty = true;
     this.flush();
   }
   resize(width, height = this.size.height) {
+    this.install();
     this.size = { width, height };
     this.dispatch(this.tree, "size_change", { width, height });
     this.flush();
   }
   close() {
+    this.install();
     this.view.close(new Cx(this));
     this.flush();
   }
@@ -277,7 +298,11 @@ export class Handle {
   // ---- input -------------------------------------------------------------------
   // Runs `name` handlers from `el` up through its ancestors (bubbling) until
   // one stops propagation. `ev` is the event; each handler gets its element's bounds.
+  // Positions are given in view px and handed to handlers in window px (+ origin).
   dispatch(el, name, ev, { bubble = true } = {}) {
+    this.install();
+    const o = this.origin;
+    const position = ev?.position ? { x: ev.position.x + o.x, y: ev.position.y + o.y } : undefined;
     const chain = pathTo(el).reverse();
     let ran = 0;
     for (const n of bubble ? chain : chain.slice(0, 1)) {
@@ -285,9 +310,9 @@ export class Handle {
       if (!fn) continue;
       const cx = new Cx(this);
       const b = boxOf(n, this.size);
-      const bounds = { x: b.x, y: b.y, width: b.w ?? this.size.width, height: b.h ?? this.size.height };
+      const bounds = { x: b.x + o.x, y: b.y + o.y, width: b.w ?? this.size.width, height: b.h ?? this.size.height };
       if (name === "size_change" || name === "hover") fn(ev, cx);
-      else fn({ ...ev, bounds, local_position: ev.position ? { x: ev.position.x - b.x, y: ev.position.y - b.y } : undefined }, cx);
+      else fn({ ...ev, position, bounds, local_position: position ? { x: position.x - bounds.x, y: position.y - bounds.y } : undefined }, cx);
       ran += 1;
       if (cx.stopped) break;
     }

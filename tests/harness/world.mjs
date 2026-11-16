@@ -40,6 +40,8 @@ export const world = {
   images: new Set(), // every image path any render has asked for since the world started
   missing: [], // image paths asked for that are not on disk
   dirty: false, // something changed that re-renders the view (setShared, live data)
+  rendering: false, // inside the view's render()
+  savedWhileRendering: 0, // setShared calls made from inside render() (the app then renders every mod again)
   now: () => Date.now(),
 };
 
@@ -53,6 +55,8 @@ export function resetWorld({ agents = [], spaces = [], props = {}, shared = {} }
   world.images = new Set();
   world.missing = [];
   world.dirty = false;
+  world.rendering = false;
+  world.savedWhileRendering = 0;
 }
 
 // A path asked of image(): recorded, and checked against the files on disk.

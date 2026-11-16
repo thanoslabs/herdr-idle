@@ -26,8 +26,9 @@
 // The player (Player below) is a policy on top: spend skill points on the rank
 // that adds most damage a second; buy training (Attack and Health evenly,
 // cheapest first; Attack only; or nothing); press the next arrow after a
-// purchase or every N minutes; drop back one stage on a failure (main.js's
-// rule) or more (--drop, an experiment).
+// purchase or every N minutes. A failure goes where main.js sends it
+// (failStage in rules.js); --drop N instead drops N stages back from the one
+// that failed, an experiment.
 
 import { pathToFileURL } from "node:url";
 import {
@@ -130,7 +131,7 @@ export class Fight {
     this.ticking = false;
     this.nextTick = null; // the ms the next tick runs at, while ticking
     this.stats = { kills: 0, fails: 0, wipes: 0, timeouts: 0, knockouts: 0, heals: 0, blows: 0, saves: 0, firstClears: {}, killTimes: [] };
-    this.onFail = null; // (fight, why) after a failed attempt, for the player
+    this.onFail = null; // (fight, why, the stage that failed) after a failed attempt, for the player
   }
 
   // ---- who fights (fighters, joins, attackers in main.js) ----------------------
@@ -208,7 +209,7 @@ export class Fight {
     this.stats.fails += 1;
     this.stats[why === "wiped" ? "wipes" : "timeouts"] += 1;
     this.stats.saves += 1;
-    this.onFail?.(this, why);
+    this.onFail?.(this, why, from);
   }
   // the stage arrows: a stage reached, a fresh attempt, the clock woken
   toStage(s) {
@@ -484,10 +485,11 @@ export function play(o) {
   const every = o.next === "purchase" ? null : Number(o.next) * 60000;
   let lastNext = 0;
   let kind = null;
-  fight.onFail = (f) => {
-    // drop back further than main.js's one stage (an experiment)
-    if (o.drop > 1) progress.stage = Math.max(1, f.monster.stage - (o.drop - 1));
-    if (o.drop > 1) f.newBoss();
+  fight.onFail = (f, _why, failedAt) => {
+    // an experiment: N stages back from the one that failed, instead of failStage's stage
+    if (o.drop === null) return;
+    progress.stage = Math.max(1, failedAt - o.drop);
+    if (progress.stage !== f.monster.stage) f.newBoss();
   };
   while (fight.now < limit && !(fight.stats.firstClears[o.until] !== undefined)) {
     fight.step();
@@ -510,7 +512,7 @@ export function play(o) {
 
 // ---- the command line -----------------------------------------------------------
 
-const DEFAULTS = { agents: 3, classes: CYCLE, you: "healer", policy: "both", next: "purchase", weapons: "default", loadout: {}, vial: null, seeds: 5, seed: 1, drop: 1, until: 50, maxDays: 8, stages: [1, 2, 3, 5, 10, 15, 20, 25, 30, 40, 50] };
+const DEFAULTS = { agents: 3, classes: CYCLE, you: "healer", policy: "both", next: "purchase", weapons: "default", loadout: {}, vial: null, seeds: 5, seed: 1, drop: null, until: 50, maxDays: 8, stages: [1, 2, 3, 5, 10, 15, 20, 25, 30, 40, 50] };
 
 const HELP = `node tools/sim.mjs [options]
   --agents N        working agents (default 3), classes cycling --classes
@@ -520,7 +522,7 @@ const HELP = `node tools/sim.mjs [options]
   --next W          press the next arrow after each purchase (purchase, default) or every W minutes
   --weapons W       default, best (each class's best for each boss), or class=id,... (a fixed loadout)
   --vial V          your healer's vial: heal (default), haste, might, hex
-  --drop N          stages to drop back on a failure (default 1, main.js's rule)
+  --drop N          an experiment: drop N stages back from a failed stage (default: main.js's rule, failStage)
   --seeds N --seed S  how many runs, from which seed (default 5 from 1)
   --until S         stop at the first clear of stage S (default 50)
   --max-days D      give up after D days of fighting (default 8)
@@ -559,7 +561,7 @@ export function parse(argv) {
     else throw new Error(`unknown option ${a} (see --help)`);
   }
   if (!["both", "attack", "none"].includes(o.policy)) throw new Error(`--policy is both, attack or none`);
-  if (!(o.agents >= 0) || !(o.seeds >= 1) || !(o.drop >= 1)) throw new Error("--agents, --seeds and --drop need numbers");
+  if (!(o.agents >= 0) || !(o.seeds >= 1) || !(o.drop === null || o.drop >= 1)) throw new Error("--agents, --seeds and --drop need numbers");
   for (const c of [...o.classes, ...(o.you ? [o.you] : [])]) if (!CLASSES.includes(c)) throw new Error(`unknown class ${c}`);
   if (o.next !== "purchase" && !(Number(o.next) > 0)) throw new Error("--next is purchase or a number of minutes");
   return o;
@@ -597,7 +599,7 @@ function main(argv) {
   const secs = Number(process.hrtime.bigint() - started) / 1e9;
   if (o.json) return console.log(JSON.stringify({ ...r, runs: r.runs.map(({ firstClears, stats, best }) => ({ firstClears, stats, best })) }, null, 2));
   const party = `${o.agents} agent${o.agents === 1 ? "" : "s"} (${Array.from({ length: o.agents }, (_, i) => o.classes[i % o.classes.length]).join(", ")})${o.you ? ` and you (${o.you}${o.vial ? `, ${o.vial} vial` : ""})` : ""}`;
-  console.log(`${party}; policy ${o.policy}; next ${o.next === "purchase" ? "after each purchase" : `every ${o.next}m`}; weapons ${o.weapons === "default" && Object.keys(o.loadout).length ? JSON.stringify(o.loadout) : o.weapons}; drop ${o.drop}; median of ${o.seeds} seed${o.seeds === 1 ? "" : "s"}`);
+  console.log(`${party}; policy ${o.policy}; next ${o.next === "purchase" ? "after each purchase" : `every ${o.next}m`}; weapons ${o.weapons === "default" && Object.keys(o.loadout).length ? JSON.stringify(o.loadout) : o.weapons}; ${o.drop === null ? "failures as failStage" : `drop ${o.drop} back`}; median of ${o.seeds} seed${o.seeds === 1 ? "" : "s"}`);
   console.log("time of fighting to first clear:");
   for (const s of o.stages) console.log(`  stage ${String(s).padStart(3)}  ${time(r.stages[s])}`);
   console.log(`per run: ${r.kills.toFixed(0)} kills, ${r.knockouts.toFixed(0)} knockouts, ${r.wipes.toFixed(0)} wipes, ${r.timeouts.toFixed(0)} time-outs, ${r.heals.toFixed(0)} heals; best stage ${r.best.join(", ")}`);

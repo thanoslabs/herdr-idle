@@ -253,6 +253,15 @@ describe("picking, clearing and failing stages", () => {
     R.slay(p, R.bossOf(1), true, 4);
     assert.deepEqual([p.slain, p.kills.slime, p.gold, p.best, p.stage], [1, 1, 2, 2, 2]);
   });
+  test("a kill pays the gold of the attackers that took part", () => {
+    for (const [n, gold] of [[1, 3], [2, 6], [7, 22]]) {
+      const p = fresh();
+      Object.assign(p, { stage: 10, best: 10 });
+      R.slay(p, R.bossOf(10), true, n);
+      assert.equal(p.gold, gold, `${n} attackers`);
+      assert.equal(gold, R.stageGold(10, n));
+    }
+  });
   test("with advance off a kill repeats the stage (but still reaches the next)", () => {
     const p = fresh();
     R.slay(p, R.bossOf(1), false, 4);

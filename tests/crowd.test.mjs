@@ -1,11 +1,13 @@
-// Many agents at once. BASELINE for a planned fix: today 400 agents (100 a
-// class) fail to render in the real app ("interrupted" inside place(), whose
-// search for a free spot for each newcomer scans every spot for each of up to
-// 200 candidate places: quadratic in the agent count, see PLAN.md, Next wave).
-// These tests document today's behaviour: the work place() does for 50, 100,
-// 200 and 400 newcomers (counted, not timed), and that the harness still
-// renders them. When place() is fixed, the growth assertion below should be
-// changed to expect linear growth (and the crowding expectations updated).
+// Many agents at once. Today 400 agents (100 a class) fail to render in the
+// real app ("interrupted" inside place(), whose search for a free spot reads
+// every spot for each of up to 200 candidate places for each newcomer:
+// quadratic in the agent count; see PLAN.md, Next wave), and past the default
+// spots newcomers are stacked on each other. Following the suite's convention,
+// the wanted behaviour is asserted as todos (they start passing when place()
+// is fixed: remove the todo then); today's numbers are printed, not asserted.
+// Recorded on the day this was written (spot reads by place(), harness time):
+//   50: 193,100   100: 878,500   200: 3,629,300   400: 14,650,900 (about 1.2s)
+//   100 agents in town at 1280px share 20 distinct spots.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { agent, mountView, raid } from "./harness/view.mjs";
@@ -40,18 +42,15 @@ async function arrive(n, { battle = false, status = "idle" } = {}) {
 }
 
 describe("a crowd arriving", () => {
-  test("BASELINE: place() reads about n x min(n, 200) spots for n newcomers (quadratic)", async (t) => {
+  test("finding spots costs about linearly more as the crowd grows", { todo: "place() is quadratic today: 14.65M spot reads for 400 against 3.63M for 200 (x4.0)" }, async (t) => {
     const counts = {};
     for (const n of [50, 100, 200, 400]) {
       const { reads, ms } = await arrive(n);
       counts[n] = reads;
       t.diagnostic(`${n} agents: ${reads} spot reads, ${ms.toFixed(0)}ms in the harness`);
     }
-    // doubling the agents more than triples the work at every step (quadratic, not linear)
-    assert.ok(counts[100] > 3 * counts[50], JSON.stringify(counts));
-    assert.ok(counts[200] > 3 * counts[100], JSON.stringify(counts));
-    assert.ok(counts[400] > 3 * counts[200], JSON.stringify(counts));
-    assert.ok(counts[400] > 1e7, `today's 400: ${counts[400]} reads`);
+    // doubling the crowd at most about doubles the work (2.5x allows for the default spots filling)
+    for (const [a, b] of [[50, 100], [100, 200], [200, 400]]) assert.ok(counts[b] <= 2.5 * counts[a], `${a} -> ${b}: ${counts[a]} -> ${counts[b]}`);
   });
 
   test("400 agents in town still render in the harness, each with a spot inside the scene", async () => {
@@ -63,12 +62,11 @@ describe("a crowd arriving", () => {
     }
   });
 
-  test("BASELINE: past the default spots, newcomers are placed on top of each other", async () => {
+  test("a crowd is spread out: 100 agents in town get 100 distinct spots", { todo: "past the default spots newcomers are stacked: 100 agents share 20 spots at 1280px" }, async (t) => {
     const { v } = await arrive(100);
     const spots = new Set(v.world.agents.map((a) => `${v.view.spots[a.address].x},${v.view.spots[a.address].y}`));
-    // the default grid at 1280px: two rows of 11 from x 250, 88px apart, less the two behind the campfire
-    assert.equal(spots.size, 20, `${spots.size} distinct spots for 100 agents`);
-    for (const p of spots) assert.match(p, /^(250|338|426|514|602|690|778|866|954|1042|1130),(64|104)$/);
+    t.diagnostic(`${spots.size} distinct spots for 100 agents`);
+    assert.equal(spots.size, 100);
   });
 
   test("100 and 400 working agents render in a raid, the whole party in the fight", async () => {

@@ -75,6 +75,17 @@ describe("a kill", () => {
     assert.equal(JSON.stringify(v.view.progress), snapshot);
   });
 
+  test("its gold is for everyone in the fight: 2 fighters, then 6", async () => {
+    for (const classes of [["warrior"], ["warrior", "archer", "wizard", "archer", "wizard"]]) {
+      const v = await mountRaid({ classes, you: "archer", stage: 5, best: 5, level: 15, health: 20 });
+      v.until((h) => h.view.progress.slain === 1, 300000);
+      const n = classes.length + 1;
+      assert.equal(v.view.fighters().length, n);
+      assert.equal(v.view.progress.gold, stageGold(5, n), `${n} fighters`);
+      assert.notEqual(stageGold(5, n), stageGold(5), "not the 4 a kill is reckoned with by default");
+    }
+  });
+
   test("a first clear counts down five seconds under the stage section, then the next boss comes", async () => {
     const v = await mountRaid({ ...NO_HEALER, stage: 1, level: 4 });
     v.until((h) => h.view.monster.hp <= 0, 120000);

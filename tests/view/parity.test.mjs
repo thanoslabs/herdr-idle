@@ -2,12 +2,17 @@
 // seeded party, through the view harness and through the simulation's Fight,
 // second by second, must agree on everything that decides the outcome (the
 // boss's HP and id, the stage, gold, kills, every experience total, the
-// party's HP and knockouts, the clock). If main.js's fight changes, this fails
-// until Fight is changed to match, so the balance numbers never drift silently.
+// party's HP and knockouts, the clock), so the balance numbers never drift
+// silently. When it fails, first decide which side is right: a parting can be
+// a bug in main.js as well as a stale simulation (this test cannot say
+// which). Find the cause, add a direct test for it in the view's or the
+// rules' suites, and only then change the wrong side; never just copy the
+// view into the simulation.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { loadState } from "../../mods/idle-rpg/rules.js";
 import { Fight, seeded } from "../../tools/sim.mjs";
+import { seeded as harnessSeeded } from "../harness/clock.mjs";
 import { mountRaid, raid, timeAt } from "../harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
@@ -44,10 +49,12 @@ async function both(o, seconds, seed) {
 }
 
 describe("the simulation plays main.js's fight", () => {
-  test("its random source is the harness's", () => {
-    const a = seeded(42);
-    const b = seeded(42);
-    for (let i = 0; i < 100; i++) assert.equal(a(), b());
+  test("its random source is the harness's (the same numbers for the same seed)", () => {
+    for (const seed of [1, 42, 99999]) {
+      const sim = seeded(seed);
+      const harness = harnessSeeded(seed);
+      for (let i = 0; i < 1000; i++) assert.equal(sim(), harness());
+    }
   });
 
   test("a push through first clears, knockouts and heals (3 agents and you, the healer)", async () => {

@@ -68,9 +68,11 @@ describe("a wipe", () => {
 
   test("the experience the attempt earned is kept and saved", async () => {
     const v = await mountRaid(DOOMED);
+    const before = { ...v.view.progress.xp };
     v.until((h) => h.view.timesUp, 120000);
-    assert.ok(v.stored.xp.wizard > 0 || v.stored.xp.archer > 0);
-    assert.equal(v.stored.xp.you, v.view.progress.xp.you);
+    const xp = v.view.progress.xp;
+    for (const k of ["you", "wizard", "archer"]) assert.ok(xp[k] > before[k], `${k} earned nothing`);
+    assert.deepEqual(v.stored.xp, JSON.parse(JSON.stringify(xp)), "every total saved as it is");
   });
 });
 

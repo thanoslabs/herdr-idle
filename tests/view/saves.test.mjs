@@ -24,6 +24,18 @@ describe("saving on the documented events", () => {
     v.setAgents([agent("t1", "idle"), agent("t2", "idle")]);
     assert.equal(v.saves.length, 3);
   });
+  test("a newcomer's class is saved from inside render (place), so its arrival renders the view twice", async () => {
+    // a finding, not a bug: setShared during a render makes the app render every mod again;
+    // nothing changes on the second render (the newcomer has its class by then)
+    const v = await mountView({ agents: [agent("t1", "idle")] });
+    const [renders, inRender] = [v.renders, v.world.savedWhileRendering];
+    v.setAgents([agent("t1", "idle"), agent("t2", "idle")]);
+    assert.equal(v.world.savedWhileRendering - inRender, 1);
+    assert.equal(v.renders - renders, 2);
+    const n = v.renders;
+    v.setAgents([...v.world.agents]);
+    assert.equal(v.renders - n, 1, "once the class is known, one render");
+  });
   test("a fight saves once per kill and never on a blow, a tick or the next boss", async () => {
     const v = await mountRaid({ classes: ["warrior", "archer", "wizard"], you: "archer", level: 6 });
     let kills = 0;

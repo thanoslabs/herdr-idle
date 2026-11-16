@@ -39,6 +39,25 @@ describe("elements", () => {
     v.checkShapes = false;
     v.render();
   });
+  test("the shape rule holds for long thin pictures too: the picture is fitted first, then the box's spare measured", async () => {
+    const v = await mountRaid();
+    // scene/mountains.png is 512x160 (drawn 256x80). A box 259x80 has its height within a pixel of the
+    // width's (80.9), which an either-side test lets through, but the picture fills only 256 of the 259px
+    const box = (w, h) => () => div().child(image("mods/idle-rpg/art/scene/mountains.png").w(w).h(h));
+    v.view.render = box(256, 80);
+    v.render();
+    v.view.render = box(257, 80);
+    v.render();
+    v.view.render = box(259, 80);
+    assert.throws(() => v.render(), /mountains\.png: 259x80/);
+    v.view.render = box(256, 83);
+    assert.throws(() => v.render(), /mountains\.png: 256x83/);
+  });
+  test("an image with no numeric w or h throws", async () => {
+    const v = await mountRaid();
+    v.view.render = () => div().child(image("mods/idle-rpg/art/scene/wall.png").w(128));
+    assert.throws(() => v.render(), /no numeric w and h/);
+  });
   test("drawnIn: a picture sits at its own shape, as large as fits, centred", () => {
     const p = pngSize("scene/wall.png");
     const d = drawnIn("scene/wall.png", 4 * p.w, p.h);
@@ -61,6 +80,54 @@ describe("the clock", () => {
     t.add(100, () => order.push("c"), false);
     for (let x; (x = t.next(1000)); ) x.fn();
     assert.deepEqual(order, ["a", "b", "c"]);
+  });
+  test("a repeating timer cancelled inside its own callback stops", async () => {
+    const v = await mountRaid({ status: "idle" });
+    let calls = 0;
+    const task = v.timers.add(100, () => {
+      calls += 1;
+      task.cancel();
+    }, true);
+    v.advance(1000);
+    assert.equal(calls, 1);
+    assert.equal(task.is_done(), true);
+  });
+  test("cx.notify() during a render throws, as gpui-kit's does", async () => {
+    const v = await mountRaid();
+    v.view.render = (cx) => {
+      cx.notify();
+      return div();
+    };
+    assert.throws(() => v.render(), /during render/);
+  });
+  test("a setShared during a render renders again (the app re-renders every mod), and a render that always saves is a loop", async () => {
+    const v = await mountRaid();
+    const herdr = await import("./harness/stubs/herdr.mjs");
+    let once = true;
+    const render = v.view.render.bind(v.view);
+    v.view.render = (cx) => {
+      if (once) herdr.setShared("x", 1);
+      once = false;
+      return render(cx);
+    };
+    const n = v.renders;
+    v.setAgents([...v.world.agents]);
+    assert.equal(v.renders, n + 2);
+    v.view.render = () => (herdr.setShared("x", 2), div());
+    assert.throws(() => v.setAgents([]), /render loop/);
+  });
+  test("shared values come back as JSON makes them", async () => {
+    const herdr = await import("./harness/stubs/herdr.mjs");
+    herdr.setShared("k", { a: NaN, b: Infinity, c: undefined, d: [undefined], e: new Date(0) });
+    assert.deepEqual(herdr.shared("k"), { a: null, b: null, d: [null], e: "1970-01-01T00:00:00.000Z" });
+  });
+  test("two views keep their own clock and random source, whichever was mounted last", async () => {
+    const a = await mountRaid({}, { seed: 1 });
+    const b = await mountRaid({}, { seed: 2 });
+    b.advance(5000);
+    a.advance(1000);
+    assert.equal(Date.now(), a.now);
+    assert.equal(b.now - a.now, 4000);
   });
   test("the seeded random source is the same for the same seed", () => {
     assert.deepEqual([1, 2, 3].map(seeded(5)), [1, 2, 3].map(seeded(5)));

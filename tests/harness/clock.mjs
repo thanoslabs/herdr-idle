@@ -33,11 +33,13 @@ export class Timers {
   add(ms, fn, every) {
     if (typeof fn !== "function") throw new TypeError("cx.timer handler is not a function");
     if (!(typeof ms === "number" && Number.isFinite(ms) && ms >= 0)) throw new TypeError(`cx.timer delay ${ms} is not a duration`);
-    const t = { at: this.now + ms, seq: (this.seq += 1), every: every ? ms : null, ms, fn, live: true };
+    const t = { at: this.now + ms, seq: (this.seq += 1), every: every ? ms : null, ms, fn, live: true, cancelled: false };
     this.queue.push(t);
     return {
+      // also from inside its own callback: a repeating timer is then not set again
       cancel: () => {
         t.live = false;
+        t.cancelled = true;
       },
       is_done: () => !t.live,
     };
@@ -58,6 +60,20 @@ export class Timers {
     }
     const [t] = this.queue.splice(best, 1);
     return t;
+  }
+
+  // Runs timer `t` (taken off the queue by next()) at its time, and sets a
+  // repeating one again once its call returns, unless it was cancelled.
+  run(t, cx) {
+    this.now = t.at;
+    t.live = false;
+    t.fn(cx);
+    if (t.every !== null && !t.cancelled) {
+      t.live = true;
+      t.at = this.now + t.every;
+      t.seq = this.seq += 1;
+      this.queue.push(t);
+    }
   }
 
   // What is set now, for tests: [{ in: ms from now, every }].

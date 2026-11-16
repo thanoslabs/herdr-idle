@@ -4,7 +4,9 @@
 // throws, so a new call shows up as a test failure to stub it here.
 import { world } from "../world.mjs";
 
-const copy = (v) => (v === undefined ? undefined : structuredClone(v));
+// The app keeps shared values as JSON (shared.json): what comes back is what
+// JSON makes of it (NaN and Infinity become null, undefined fields go).
+const copy = (v) => (v === undefined ? undefined : JSON.parse(JSON.stringify(v)));
 
 export const agents = () => world.agents;
 export const spaces = () => world.spaces;
@@ -16,7 +18,8 @@ export function setShared(key, value) {
   const v = copy(value);
   world.shared.set(key, v);
   world.saves.push({ key, value: v, at: world.now() });
-  world.dirty = true; // every mod re-renders
+  world.dirty = true; // every mod re-renders (even when set during a render: the app re-renders again)
+  if (world.rendering) world.savedWhileRendering += 1;
   return null;
 }
 export function run(name, args) {

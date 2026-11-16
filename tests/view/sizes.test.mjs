@@ -87,8 +87,7 @@ describe("the night's darkness", () => {
   for (const battle of [true, false])
     test(`covers the whole width, every pixel once, ${battle ? "in a raid" : "in town (the campfire's pool cut in)"}`, async () => {
       const found = await sweep(
-        // measure what is drawn, rather than stop at a misshapen box
-        () => mountRaid({ battle }, { checkShapes: false }),
+        () => mountRaid({ battle }),
         (v, w) => {
           const spans = gloomSpans(v).sort((a, b) => a[0] - b[0]);
           const out = [];

@@ -56,12 +56,14 @@ describe("older keys and garbage", () => {
     assert.ok(["wizard", "healer", "warrior", "archer"].includes(v.view.sprites.you));
     assert.ok(["wizard", "healer", "warrior", "archer"].includes(v.view.sprites.t1));
   });
-  test("agents not seen for a week are forgotten on the next save; others kept", async () => {
-    const saved = savedState(7, { now: NOW, extra: { spots: { old: { x: 1, y: 2 }, t1: { x: 250, y: 64 } }, sprites: { you: "archer", old: "wizard", t1: "warrior" }, seen: { old: NOW - 8 * 86400000, t1: NOW } } });
+  test("agents not seen for a week are forgotten on the next save; one away six days is kept", async () => {
+    const day = 86400000;
+    const saved = savedState(7, { now: NOW, extra: { spots: { old: { x: 1, y: 2 }, away: { x: 3, y: 4 }, t1: { x: 250, y: 64 } }, sprites: { you: "archer", old: "wizard", away: "healer", t1: "warrior" }, seen: { old: NOW - 8 * day, away: NOW - 6 * day, t1: NOW } } });
     const v = await mount(saved);
     v.clickFloor(500, 80);
-    assert.deepEqual(Object.keys(v.stored.spots), ["t1"]);
+    assert.deepEqual(Object.keys(v.stored.spots).sort(), ["away", "t1"]);
     assert.equal(v.stored.sprites.old, undefined);
+    assert.equal(v.stored.sprites.away, "healer");
   });
 });
 

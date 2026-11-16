@@ -147,6 +147,12 @@ describe("damage by party size", () => {
     for (const n of [0, -2, NaN, undefined]) assert.equal(P.hitDamage(100, n), 25);
     assert.equal(P.hitDamage(Number.MAX_VALUE, 1e300), Number.MAX_VALUE);
   });
+  test("the knocked out do not count: a blow scales by those standing", () => {
+    const p = party(4, { gap: 0, hp: 1000 });
+    p.members.k2.down = p.members.k3.down = 500;
+    aim(p, "single", "k0", 2);
+    assert.equal(P.monsterTick(p, 2, 40, seeded(1)).hits[0].damage, 20);
+  });
   test("the standing count is taken before this blow's knockouts", () => {
     const p = party(4, { gap: 0, hp: 10 });
     aim(p, "area", "k0", 2);

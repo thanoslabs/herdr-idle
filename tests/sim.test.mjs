@@ -17,7 +17,7 @@ describe("the simulation", () => {
     const out = execFileSync(process.execPath, [SIM, "--smoke"], { encoding: "utf8" });
     assert.match(out, /time of fighting to first clear:/);
     for (const s of [1, 2, 3, 5]) assert.match(out, new RegExp(`stage +${s} +\\d+(\\.\\d)?(s|m)`));
-    assert.match(out, /knockouts/);
+    assert.match(out, /per run: \d+ kills, \d+ knockouts, \d+ wipes, \d+ time-outs, \d+ heals; best stage 6\b/);
   });
   test("--json and the options", () => {
     const r = JSON.parse(execFileSync(process.execPath, [SIM, "--smoke", "--agents", "1", "--you", "none", "--policy", "attack", "--json"], { encoding: "utf8" }));
