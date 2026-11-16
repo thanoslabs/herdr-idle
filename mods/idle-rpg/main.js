@@ -2544,7 +2544,9 @@ export default class RaidParty extends View {
   // ("10:00"), so it keeps its size as the seconds turn.
   stageWidth() {
     const farm = this.progress.farming ? 6 + letterW(LABELS.farm) : 0;
-    return 2 * FRAME + 2 * 4 + 18 + 2 + letterW(LABELS.stage(this.progress.stage)) + farm + 2 + 18 + 10 + letterW("00:00");
+    // while nobody attacks a living boss the time stands still, and says so
+    const paused = this.monster?.hp > 0 && this.attackers().length === 0 ? letterW(LABELS.paused) + 6 : 0;
+    return 2 * FRAME + 2 * 4 + 18 + 2 + letterW(LABELS.stage(this.progress.stage)) + farm + 2 + 18 + 10 + paused + letterW("00:00");
   }
 
   // Where the HUD's frames go, in scene px from the top left: { sign, strip,
@@ -2760,6 +2762,18 @@ export default class RaidParty extends View {
     kids.push(arrow("next", stage + 1, x));
     const clock = dead ? "" : clockText(this.left);
     const barW = b.w - 2 * x0;
+    // the time only runs while someone attacks: standing still, it says so
+    if (!dead && !running) {
+      kids.push(
+        div()
+          .id("idle-rpg-stage-paused")
+          .absolute()
+          .left(b.w - x0 - letterW("00:00") - 6 - letterW(LABELS.paused))
+          .top(y0 + 4)
+          .tooltip("The time runs only while an agent is working and attacking.")
+          .child(letterText(LABELS.paused, "grey")),
+      );
+    }
     kids.push(
       div().id("idle-rpg-stage-clock").absolute().left(b.w - x0 - letterW(clock)).top(y0 + 4).child(letterText(clock, running ? "white" : "grey")),
       div()

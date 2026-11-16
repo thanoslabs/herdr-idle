@@ -363,12 +363,12 @@ export function glyphArt(colour, ch) {
 // and W 5 art px, N 4; the font's M stays 3 wide for shortNumber). Capitals
 // only: lower case is drawn as capitals. A space has no picture, only its
 // width. LETTERS is every character it can draw, the space included.
-export const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+!.:'/- ";
+export const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+!.:'/-() ";
 // white and gold for words and numbers, grey for the time standing still,
 // red for a failed attempt, green for the stage being farmed
 export const LETTER_COLOURS = ["white", "gold", "grey", "red", "green"];
-const LETTER_NAMES = { "+": "plus", "!": "bang", ".": "point", ":": "colon", "'": "quote", "/": "slash", "-": "dash" };
-const LETTER_WIDTHS = { M: 5, W: 5, N: 4, "!": 1, ".": 1, ":": 1, "'": 1, " ": 1 };
+const LETTER_NAMES = { "+": "plus", "!": "bang", ".": "point", ":": "colon", "'": "quote", "/": "slash", "-": "dash", "(": "open", ")": "close" };
+const LETTER_WIDTHS = { M: 5, W: 5, N: 4, "!": 1, ".": 1, ":": 1, "'": 1, "(": 2, ")": 2, " ": 1 };
 // Upper case, for ASCII letters only (so no character turns into two).
 const capitalOf = (ch) => (typeof ch === "string" && ch.length === 1 && ch >= "a" && ch <= "z" ? ch.toUpperCase() : ch);
 // How many art px wide a character of the lettering is without its outline
@@ -403,6 +403,7 @@ export const LABELS = {
   stop: "Return to town",
   empty: "nobody in yet",
   farm: "farm",
+  paused: "(paused)", // by the time, while nobody is attacking
   stage: (n) => `Stage ${n}`,
   timesUp: "Time's up!",
   wiped: "Wiped!",
@@ -687,10 +688,12 @@ export function selectStage(progress, s) {
 // tried again. Returns the stage the fight is now at.
 export function failStage(progress) {
   const stage = stageOf(progress.stage);
-  if (stage > 1) {
-    progress.stage = stage - 1;
-    progress.farming = true;
-  }
+  // never further back than the stage before the highest reached, which the
+  // party has cleared: a failure there, or lower down where the player chose
+  // to go, repeats that stage
+  const back = Math.max(1, stageOf(progress.best) - 1);
+  if (stage > back) progress.stage = back;
+  if (stageOf(progress.best) > 1) progress.farming = true;
   return progress.stage;
 }
 
