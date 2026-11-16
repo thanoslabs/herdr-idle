@@ -672,7 +672,7 @@ def dark(name, w, *lights):
 TORCH_LIGHT = (48.5, 4.5, 9, 40, 1.15)
 dark("light/torch.png", 96, TORCH_LIGHT)                 # one torch's stretch of wall, the flame near the top
 dark("light/candle.png", 68, (28.5, 9, 3, 24, 1.0))      # the left end, lit only by the candle on the table
-dark("light/fill.png", 4)                                # no flame: stretched over whatever is left
+dark("light/fill.png", 96)                               # no flame: as wide as a torch's, laid over what is left and clipped (a picture is never stretched: the app keeps its proportions)
 # The campfire's stretch (between raids), 80 wide with the fire in the middle,
 # cut into the row of pictures wherever the fire stands. The torches' pools
 # reach into it, so it carries their light as well as its own. The torches'
