@@ -33,13 +33,15 @@ describe("blows", () => {
   test("the plate's HP and bar fall as blows land", async () => {
     const v = await mountRaid({ ...NO_HEALER, stage: 4 });
     const max = bossHp(4);
-    assert.deepEqual(v.text("idle-rpg-plate"), ["Slime", `${shortNumber(max)}/${shortNumber(max)}`]);
-    assert.equal(v.get("idle-rpg-monster-hp").style.w, 136);
+    assert.deepEqual(v.text("idle-rpg-plate"), ["SLIME", `${shortNumber(max)}/${shortNumber(max)}`]);
+    // the bar's fill spans the inside of its 2px outline at full HP
+    const full = v.get("idle-rpg-monster-hp").parent.style.w - 4;
+    assert.equal(v.get("idle-rpg-monster-hp").style.w, full);
     v.advance(20000);
     const [, hp] = v.text("idle-rpg-plate");
     const shown = Number(hp.split("/")[0].replace("K", "e3"));
     assert.ok(shown < max && shown > 0, hp);
-    assert.equal(v.get("idle-rpg-monster-hp").style.w, Math.round((136 * v.view.monster.hp) / max));
+    assert.equal(v.get("idle-rpg-monster-hp").style.w, Math.round((full * v.view.monster.hp) / max));
   });
 
   test("a damage number pops in where the blow lands, then rises and fades on the next tick", async () => {
@@ -68,7 +70,7 @@ describe("a kill", () => {
     assert.deepEqual([p.slain, p.kills.slime, p.gold, p.best, p.stage], [1, 1, stageGold(1, attackers), 2, 2]);
     assert.ok(Math.abs(classXp(v) - xp0 - stageXp(1, attackers)) < 1e-6, "the classes earned exactly one kill's experience");
     assert.ok(Math.abs(p.xp.you - stageXp(1, attackers)) < 1e-6, "and so did you");
-    assert.deepEqual(v.text("idle-rpg-plate"), ["Slime slain!"]);
+    assert.deepEqual(v.text("idle-rpg-plate"), ["SLIME SLAIN!"]);
     // nothing more is paid while it lies there
     const snapshot = JSON.stringify(p);
     v.advance(3000);
