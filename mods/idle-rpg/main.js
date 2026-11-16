@@ -445,7 +445,13 @@ const plateW = (kind) => 2 * (FRAME + PLATE_PAD) + Math.max(BAR_W, letterW(kind.
 // An agent's tag reads "SPACE·TAB" (TAG_SEP between its space and tab
 // names, either left out when blank; "·" when both are).
 const TAG_SEP = "\u00b7";
-const tagName = (a) => [a.space_name, a.tab_name].map((n) => (typeof n === "string" ? n.trim() : "")).filter(Boolean).join(TAG_SEP) || TAG_SEP;
+// (a part with nothing to draw, like one of zero-width characters, is left out;
+// a part is read no further than letterFit would.)
+const tagName = (a) =>
+  [a.space_name, a.tab_name]
+    .map((n) => (typeof n === "string" ? n.slice(0, 512).trim() : ""))
+    .filter((n) => letterFit(n) !== "")
+    .join(TAG_SEP) || TAG_SEP;
 function tag(fit, tone = TAG.plain) {
   const w = tagW(fit);
   return div()

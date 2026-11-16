@@ -210,12 +210,33 @@ describe("letterFit: any text, as the lettering draws it", () => {
     const got = R.letterFit(huge, 38);
     assert.ok(performance.now() - t0 < 50, "stops reading once full");
     assert.ok(ok(got) && R.lettersWidth(got) <= 38);
+    // characters that take no room never fill it, so reading stops by count
+    for (const pad of ["\u0301", "\u200b", " ", "\u200d"]) {
+      const t1 = performance.now();
+      const out = R.letterFit(`a${pad.repeat(1e6)}b`, 38);
+      assert.ok(performance.now() - t1 < 20, `${JSON.stringify(pad)} is not read to the end`);
+      assert.equal(out, `A${R.ELLIPSIS}`);
+    }
     // every code point in a sweep of the planes, alone and among letters, gives only characters of the face
     for (let cp = 0; cp < 0x30000; cp += 7) {
       if (cp >= 0xd800 && cp < 0xe000) continue;
       const out = R.letterFit(`a${String.fromCodePoint(cp)}b`);
       assert.ok(ok(out), `U+${cp.toString(16)} -> ${JSON.stringify(out)}`);
     }
+  });
+});
+
+describe("letterFit: joiners and blanks", () => {
+  test("a joiner merges emoji only, never eats a letter", () => {
+    assert.equal(R.letterFit("Dev\u200dOps"), "DEVOPS");
+    assert.equal(R.letterFit("\u{1F468}\u200d\u{1F469}\u200d\u{1F467}x"), `${R.UNKNOWN}X`);
+    assert.equal(R.letterFit("\u200dab"), "AB");
+  });
+  test("what it gives never starts or ends with a space", () => {
+    assert.equal(R.letterFit("  a  b  "), "A B");
+    assert.equal(R.letterFit("abc \u200b"), "ABC");
+    assert.equal(R.letterFit("\u200b"), "");
+    assert.equal(R.letterFit(" \u0301 "), "");
   });
 });
 

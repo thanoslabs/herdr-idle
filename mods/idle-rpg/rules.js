@@ -445,21 +445,31 @@ export const lettersWidth = (text) => [...text].reduce((x, ch) => x + letterWidt
 // run of spaces is one), and at most `max` art px wide (lettersWidth): a
 // longer one is cut after the last character that leaves room for an
 // ELLIPSIS, spaces before it dropped.
-// It stops reading once past `max`, so a very long name costs no more than a
-// short one. Anything that is not a string is "".
+// It stops reading once past `max`, and after FIT_READ characters whatever
+// they are (ones that take no room never fill it), so a very long name costs
+// no more than a short one; what it gives never starts or ends with a space.
+// Anything that is not a string is "".
+const FIT_READ = 256;
 export function letterFit(text, max = Infinity) {
   if (typeof text !== "string") return "";
   const kept = [];
   let w = 1;
+  let read = 0;
+  const cut = () => {
+    const room = max - (letterWidth(ELLIPSIS) + 1);
+    while (kept.length && (w > room || kept[kept.length - 1] === " ")) w -= letterWidth(kept.pop()) + 1;
+    return w + letterWidth(ELLIPSIS) + 1 <= max ? `${kept.join("")}${ELLIPSIS}` : "";
+  };
   let joined = false; // the character after a joiner is part of the one before it
   let flag = false; // and so is a flag's second half
   for (const ch of text) {
+    if (++read > FIT_READ) return cut();
     if (joined) {
       joined = false;
       continue;
     }
     if (ch === "\u200d") {
-      joined = kept.length > 0;
+      joined = kept[kept.length - 1] === UNKNOWN; // only an emoji takes the next one into itself
       continue;
     }
     if (isFlagHalf(ch)) {
@@ -467,17 +477,14 @@ export function letterFit(text, max = Infinity) {
       if (!flag) continue;
     } else flag = false;
     for (const c of letterOf(ch)) {
-      if (c === " " && kept[kept.length - 1] === " ") continue; // a run of spaces is one
+      if (c === " " && (!kept.length || kept[kept.length - 1] === " ")) continue; // a run of spaces is one, and none lead
       const cw = letterWidth(c) + 1;
-      if (w + cw > max) {
-        const room = max - (letterWidth(ELLIPSIS) + 1);
-        while (kept.length && (w > room || kept[kept.length - 1] === " ")) w -= letterWidth(kept.pop()) + 1;
-        return w + letterWidth(ELLIPSIS) + 1 <= max ? `${kept.join("")}${ELLIPSIS}` : "";
-      }
+      if (w + cw > max) return cut();
       kept.push(c);
       w += cw;
     }
   }
+  if (kept[kept.length - 1] === " ") kept.pop();
   return kept.join("");
 }
 

@@ -50,6 +50,17 @@ describe("the boss's plate", () => {
       assert.ok(plate.w >= 152 && plate.w <= 200, `${plate.w}`);
     }
   });
+  test("the plate keeps one width per kind, whatever the HP reads", async () => {
+    for (const stage of [1, 2, 3]) {
+      const v = await mountRaid({ stage, status: "idle" });
+      const w0 = v.box("idle-rpg-plate").w;
+      setHp(v, 1);
+      assert.equal(v.box("idle-rpg-plate").w, w0, "at 1 HP");
+      v.view.monster.maxHp = 9.94e99;
+      setHp(v, 9.94e99);
+      assert.equal(v.box("idle-rpg-plate").w, w0, "at the widest HP");
+    }
+  });
   test("the HP bar: a 2px outline round its fill, green above half, yellow above a fifth, red below, its width eased", async () => {
     const v = await mountRaid({ stage: 4, status: "idle" });
     const max = v.view.monster.maxHp;
