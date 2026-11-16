@@ -7,7 +7,7 @@
 // by one of those states; the few that are not are listed below, with why.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { CLASSES, ELLIPSIS, LETTERS, UNKNOWN, catalogue, letterArt } from "../../mods/idle-rpg/rules.js";
+import { BIOMES, BIOME_ART, CLASSES, ELLIPSIS, LETTERS, UNKNOWN, biomeArt, catalogue, letterArt } from "../../mods/idle-rpg/rules.js";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 import { artFiles } from "../harness/world.mjs";
 
@@ -154,6 +154,15 @@ describe("every picture asked for is in art/", () => {
     for (const u of ["k", "m", "b", "t", "e", "point"]) assert.ok(drawn.has(`font/white/${u}.png`), u);
   });
 
+  test("every biome's backdrop in a raid, and the stage picker showing every biome", async () => {
+    for (const stage of [1, 11, 21, 31]) keep(await mountRaid({ stage, best: 45 }));
+    const v = await mountRaid({ stage: 12, best: 45 });
+    v.click("idle-rpg-map");
+    keep(v);
+    for (const b of BIOMES) for (const part of BIOME_ART[b.id]) assert.ok(drawn.has(biomeArt(b.id, part)), `${b.id} ${part}`);
+    assert.ok(drawn.has("icons/map.png"));
+  });
+
   test("every panel, card and HUD state", async () => {
     const { saved } = raid({ gold: 1234567, slain: 9, level: 9, stage: 3, best: 5, farming: true });
     saved.kills = { slime: 3, ogre: 3, dragon: 3 };
@@ -183,8 +192,8 @@ describe("every picture asked for is in art/", () => {
 const NAME_SIGNS = "and at backslash bar comma dot dquote ellipsis equals hash less lsquare more percent query rsquare semi star tilde under unknown";
 const UNDRAWN_LETTERING = {
   white: "",
-  gold: `b c close colon dash f h j k open plus point q quote slash u w x z ${NAME_SIGNS}`,
-  grey: `bang c dash f g h j k l m plus point q quote r slash v w x z ${NAME_SIGNS}`,
+  gold: `b c close colon dash f j k open plus point q quote slash u w x z ${NAME_SIGNS}`,
+  grey: `bang c f g h j k l m plus point q quote r slash v w x z ${NAME_SIGNS}`,
   red: `close colon d dash f h j l n open plus point q r slash v w x y z ${NAME_SIGNS}`,
   green: `b bang c close colon d dash e g h i j k l n o open p plus point q quote s slash t u v w x y z ${NAME_SIGNS}`,
 };

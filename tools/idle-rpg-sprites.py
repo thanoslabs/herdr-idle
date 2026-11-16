@@ -3,7 +3,8 @@
 # (stubby 16x16 adventurers with a one-pixel dark outline, in every colourway
 # the shop sells, and every weapon and hat it sells drawn to lay over them),
 # each weapon's attack and effects on the boss, the castle
-# scenery (wall, floor, mountains, clouds, sun, moon, stars, props), the icons,
+# scenery (wall, floor, mountains, clouds, sun, moon, stars, props), each
+# biome's backdrop (the raids' scenes: forest, hills, caves, hell), the icons,
 # a small pixel font for numbers, and the lettering (the HUD's words, the
 # boss's plate and the name tags) and the frame corners.
 #
@@ -15,7 +16,9 @@
 # The pictures go in folders by what they show, then by what it is doing, with
 # short names inside (the paths in mods/idle-rpg/rules.js, effects.js and main.js follow it):
 #   scene/      the backdrop and props: wall, floor, mountains, stars, sun, moon,
-#               cloud-a, cloud-b, banner, torch, barrel
+#               cloud-a, cloud-b, banner, torch, barrel; and <biome>/ (forest,
+#               hills, caves, hell): far, mid, ground, swatch, and under a roof
+#               ceiling and the light (caves crystal, hell vent)
 #   classes/    <class>/<look>/stand, walk/{l,r}, rag/{c,l,r}, and the fighting
 #               poses stance/, windup/, strike/ {l,r}, and down/ {l,r} (knocked
 #               out); <look> is "default" or a colourway's id; drawn without the weapon
@@ -35,8 +38,8 @@
 #   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark,
 #               dizzy-1, dizzy-2 (knocked out), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
-#               coin, star, armour, hat, gear, the card's wrench, and the
-#               stage section's arrows: prev, next
+#               coin, star, armour, hat, gear, map (the stage picker), the
+#               card's wrench, and the stage section's arrows: prev, next
 #   effects/    weapon effects (effects.js): icons/ (burn, chill, venom, hex, haste,
 #               might), marks/ (weak, resist), and on the boss burn/flame-1, -2,
 #               chill/crystal, glint, chain/arc/{l,r}, venom/drip-1, -2
@@ -2144,3 +2147,335 @@ for name, rows in (
     ]),
 ):
     icon(f"effects/venom/{name}.png", rows, VENOM)
+
+# ---- Biomes (scene/<biome>/): where a raid takes place, ten stages each
+# (BIOMES and BIOME_ART in mods/idle-rpg/rules.js; the town is always the
+# rampart above). Each biome's backdrop is drawn in the rampart's tile sizes
+# and laid the same way, each picture repeated at its own shape across the
+# scene: "far" (64x20, in place of the mountains), "mid" (32x16, in place of
+# the wall: its bottom rows solid where it meets the ground), "ground" (32x38,
+# in place of the planks). Every tile meets its own copy seamlessly (anything
+# drawn near an edge wraps round to the other). The two biomes under a roof,
+# the caves and hell, have no sky: a "ceiling" (64x16) hangs from the top of
+# the scene over a plain dark colour (main.js), and they have their own fixed
+# light, drawn into the pictures, instead of the day and the night: where the
+# rampart has a torch, the caves have a glowing crystal and hell a fire vent.
+# "swatch" is the biome's icon in the stage picker (7x7, outlined like the
+# sign's icons). The grounds are mid-tones, so the characters' dark outline,
+# the name tags and the HP bars stand out on them as they do on the planks:
+# each ground is at least 4.5:1 against the outline on average (tests/view/biomes.test.mjs).
+def wrapped(w, h, seed, fill=None):
+    # a blank tile and a seeded random source for it
+    return blank(w, h, fill), random.Random(seed)
+
+def put(g, x, y, colour):
+    # a pixel at (x, y), x wrapping round the tile's width (y outside it is dropped)
+    if 0 <= y < len(g): g[y][x % len(g[0])] = colour
+
+def wave(x, w, *terms):
+    # a periodic height at column x of a tile w wide: (amplitude, cycles, phase) terms
+    return sum(a * math.sin(2 * math.pi * k * x / w + p) for a, k, p in terms)
+
+def blob(g, cx, cy, rx, ry, colour, lit=None, shade=None):
+    # a filled ellipse (wrapping sideways), lighter at its top left and darker at its bottom right
+    for y in range(int(cy - ry) - 1, int(cy + ry) + 2):
+        for x in range(int(cx - rx) - 1, int(cx + rx) + 2):
+            u, v = (x + 0.5 - cx) / rx, (y + 0.5 - cy) / ry
+            if u * u + v * v <= 1:
+                c = colour
+                if lit and u + v < -0.7: c = lit
+                elif shade and u + v > 0.8: c = shade
+                put(g, x, y, c)
+
+def speckle(g, rnd, n, colours, rows=None, keep=None):
+    # n single pixels at random, in `rows` (a range of y) and only over a pixel `keep` allows
+    h, w = len(g), len(g[0])
+    for _ in range(n):
+        x, y = rnd.randrange(w), rnd.choice(rows or range(h))
+        if keep is None or keep(g[y][x]): g[y][x] = rnd.choice(colours)
+
+# -- The forest: a line of trees, undergrowth, a grass floor
+def forest_far():
+    g, rnd = wrapped(64, 20, 21)
+    for px, top in ((2, 3), (11, 6), (19, 2), (27, 5), (36, 1), (45, 4), (53, 7), (60, 3)):  # far firs, hazy
+        for y in range(top, 20):
+            half = (y - top) * 0.55 + (0.6 if (y - top) % 4 == 3 else 0)
+            for x in range(px - 6, px + 7):
+                if abs(x - px) <= half: put(g, x, y, "#5d8c76" if x < px else "#4d7a68")
+    for px, top, r in ((6, 9, 5), (16, 10, 4.5), (24, 8, 5.5), (33, 10, 4), (41, 9, 5), (50, 8, 5.5), (58, 10, 4.5)):  # nearer, round crowns
+        blob(g, px, top + r, r, r, "#2f5e3c", "#3f7346", "#264d32")
+    for y in range(14, 20):
+        for x in range(64): g[y][x] = g[y][x] if g[y][x] in ("#3f7346",) else "#2f5e3c" if y < 17 else "#264d32"
+    return g
+
+def forest_mid():
+    g, rnd = wrapped(32, 16, 22)
+    for cx, cy, r in ((3, 9, 4.5), (11, 8, 5), (18, 10, 4), (25, 8, 5.5), (31, 10, 3.5)):
+        blob(g, cx, cy, r * 1.1, r, "#3b6e35", "#579245", "#2c5530")
+    for y in range(11, 16):
+        for x in range(32): g[y][x] = "#2c5530" if y > 12 or g[y][x] is None else g[y][x]
+    speckle(g, rnd, 22, ["#579245", "#4a8a3e"], range(5, 14), lambda c: c in ("#3b6e35", "#2c5530"))
+    for x, y in ((6, 7), (20, 8), (27, 6)): g[y][x] = "#d84a4a"           # berries
+    for x, y in ((14, 12), (29, 13)): g[y][x] = "#f4ecd8"                # a flower or two in the shade
+    return g
+
+def forest_ground():
+    g, rnd = wrapped(32, 38, 23, "#7aa84c")
+    for y in range(38):
+        for x in range(32):
+            n = rnd.random()
+            g[y][x] = "#73a046" if n < 0.22 else "#82b052" if n < 0.38 else "#7aa84c"
+    for x in range(32):                                                  # the undergrowth's shade along the back
+        g[0][x] = "#5f8f3c"
+        if rnd.random() < 0.6: g[1][x] = "#6a9842"
+    for _ in range(40):                                                  # blades, a light pixel over a dark one
+        x, y = rnd.randrange(32), rnd.randrange(3, 37)
+        g[y][x], g[y + 1][x] = "#94c25c", "#64923e"
+    speckle(g, rnd, 5, ["#f2c14e", "#f4ecd8", "#e8a0c0"], range(4, 36))  # flowers
+    speckle(g, rnd, 4, ["#8a6a3e"], range(4, 36))                        # bare earth
+    return g
+
+# -- The hills: rolling hills either side of a valley, a fenced knoll, a dirt path
+def hills_far():
+    g = blank(64, 20)
+    for x in range(64):
+        back = 6 + wave(x, 64, (2.2, 1, 0.4), (1.2, 3, 2.0))             # the far side of the valley, hazy
+        front = 12 + wave(x, 64, (3.4, 2, -0.6), (0.8, 5, 1.1))          # the near hills, dipping into the valley twice
+        for y in range(20):
+            if y >= front: g[y][x] = "#76b25c" if y < front + 1 else "#5e9a4e"
+            elif y >= back: g[y][x] = "#a3c8a0" if y < back + 1 else "#86b08a"
+    for x in (5, 9, 30, 44, 47, 57):                                     # trees dotted on the far side
+        y = int(6 + wave(x, 64, (2.2, 1, 0.4), (1.2, 3, 2.0))) + 1
+        put(g, x, y, "#5f8f66"); put(g, x, y - 1, "#5f8f66"); put(g, x + 1, y, "#5f8f66")
+    return g
+
+def hills_mid():
+    g, rnd = wrapped(32, 16, 32)
+    for x in range(32):
+        top = 7 + wave(x, 32, (2.0, 1, 0.0), (0.7, 3, 1.3))
+        for y in range(16):
+            if y >= top: g[y][x] = "#78b35a" if y < top + 1 else "#5a9447"
+    for x in (4, 12, 20, 28):                                            # a fence along the knolls
+        top = int(7 + wave(x, 32, (2.0, 1, 0.0), (0.7, 3, 1.3)))
+        for y in range(top - 5, top + 1): g[y][x] = "#7a5230"
+        g[top - 5][x] = "#9a6639"
+    for x in range(32):
+        top = int(7 + wave(x, 32, (2.0, 1, 0.0), (0.7, 3, 1.3)))
+        for d in (3, 1):
+            if g[top - d][x] != "#7a5230": g[top - d][x] = "#9a6639"
+    speckle(g, rnd, 16, ["#4a7f3b", "#6aa652"], range(8, 16), lambda c: c == "#5a9447")
+    for x, y in ((8, 12), (24, 13)): g[y][x], g[y][x + 1] = "#9aa3ad", "#7d8590"  # stones
+    return g
+
+def hills_ground():
+    g, rnd = wrapped(32, 38, 33, "#c29a64")
+    for y in range(38):
+        for x in range(32):
+            n = rnd.random()
+            g[y][x] = "#b98f5b" if n < 0.25 else "#c9a26c" if n < 0.4 else "#c29a64"
+    for base in (11, 26):                                                # cart ruts, wandering
+        for x in range(32):
+            y = base + round(wave(x, 32, (1.2, 1, base)))
+            g[y][x] = "#a98252"
+            if rnd.random() < 0.5: g[y + 1][x] = "#b48a57"
+    for x in range(32):                                                  # grass at the path's edge, along the back
+        for y in range(0, 2 + (1 if rnd.random() < 0.4 else 0)): g[y][x] = "#6e9c44" if y == 0 else "#7fa84e"
+    for _ in range(14):                                                  # pebbles, lit on top
+        x, y = rnd.randrange(32), rnd.randrange(5, 36)
+        g[y][x], g[y + 1][x] = "#d8c4a4", "#8f7f6e"
+    speckle(g, rnd, 6, ["#7fa84e"], range(4, 37))                        # a tuft here and there
+    return g
+
+# -- The caves: a dark vault, stalactites, crystals glowing in the rock, a flagstone floor
+CAVE = {"rock": "#3c3749", "lit": "#4e4a5e", "dark": "#2c2937", "deep": "#16141f",
+        "c": "#5fd0e6", "C": "#b8f4ff", "cd": "#3a8fb0", "v": "#a77fe0", "V": "#e0ccff"}
+def crystals(g, x, y, big, pal=CAVE):
+    # a little cluster of crystals standing on (x, y): a tall one and a short one beside it
+    for i in range(big):
+        put(g, x, y - i, pal["C"] if i == big - 1 else pal["c"]); put(g, x + 1, y - i, pal["cd"] if i < big - 1 else pal["c"])
+    for i in range(max(1, big - 2)): put(g, x - 1, y - i, pal["c"] if i else pal["cd"])
+
+def caves_ceiling():
+    g, rnd = wrapped(64, 16, 41)
+    for x in range(64):
+        d = 3 + wave(x, 64, (1.2, 2, 0.3), (0.8, 5, 1.0))
+        for y in range(16):
+            if y < d: g[y][x] = "#221f2c" if y < d - 2 else CAVE["dark"]
+    for px, n, w in ((3, 9, 3), (12, 5, 2), (19, 12, 3), (28, 6, 2), (35, 10, 3), (44, 4, 2), (50, 13, 3), (58, 7, 2)):
+        for i in range(n):
+            half = (w - 1) * (1 - i / n) / 2 + 0.3
+            for x in range(px - 2, px + 3):
+                if abs(x - px) <= half: put(g, x, 2 + i, CAVE["lit"] if x < px else CAVE["rock"] if x == px else CAVE["dark"])
+        put(g, px, 2 + n, "#5d576e")                                     # the wet tip catches the light
+    for x, y in ((8, 1), (31, 2), (55, 1)): put(g, x, y, CAVE["c"])      # glints in the vault
+    return g
+
+def caves_far():
+    g, rnd = wrapped(64, 20, 42)
+    for x in range(64):
+        top = 6 + wave(x, 64, (2.5, 2, 0.8), (1.5, 5, 0.1)) + rnd.choice((0, 0, 1))
+        for y in range(20):
+            if y >= top: g[y][x] = "#2a2636" if y > top + 1 else "#332e42"
+    for x in (9, 24, 40, 55):                                            # pillars of rock, lit on the left
+        for y in range(3, 20):
+            put(g, x, y, "#3a3549"); put(g, x + 1, y, "#2f2b3c"); put(g, x - 1, y, "#332e42" if y > 5 else None)
+    for x, y, big, pal in ((4, 12, 4, CAVE), (17, 13, 3, {**CAVE, "c": CAVE["v"], "C": CAVE["V"], "cd": "#6a4fa0"}), (32, 11, 5, CAVE), (47, 13, 3, CAVE), (60, 12, 4, {**CAVE, "c": CAVE["v"], "C": CAVE["V"], "cd": "#6a4fa0"})):
+        for dx in (-2, 2):                                               # a faint halo round each
+            put(g, x + dx, y - 1, "#2f4555" if pal is CAVE else "#3d3155")
+        crystals(g, x, y, big, pal)
+    return g
+
+def caves_mid():
+    g, rnd = wrapped(32, 16, 43)
+    for cx, cy, rx, ry in ((4, 11, 5, 5), (13, 12, 4, 4), (21, 10, 5.5, 6), (29, 12, 4, 4)):
+        blob(g, cx, cy, rx, ry, "#4a4558", "#5d576e", "#38334a")
+    for y in range(12, 16):
+        for x in range(32): g[y][x] = g[y][x] if y < 14 and g[y][x] else "#38334a"
+    speckle(g, rnd, 14, ["#433e52", "#55506a"], range(6, 14), lambda c: c == "#4a4558")
+    crystals(g, 9, 9, 4)
+    crystals(g, 26, 9, 3, {**CAVE, "c": CAVE["v"], "C": CAVE["V"], "cd": "#6a4fa0"})
+    return g
+
+def caves_ground():
+    # flagstones of every shape: each pixel takes the tone of the nearest of a
+    # few seeded points (wrapping round the tile), with a joint where two are about as near
+    g, rnd = wrapped(32, 38, 44)
+    tones = ["#8a8798", "#827f91", "#918ea0", "#878495"]
+    seeds = [(rnd.uniform(0, 32), rnd.uniform(0, 38), tones[i % len(tones)]) for i in range(11)]
+    for y in range(38):
+        for x in range(32):
+            d = sorted((math.hypot(min(abs(x + 0.5 - sx), 32 - abs(x + 0.5 - sx)), (y + 0.5 - sy) * 1.3), t) for sx, sy, t in seeds)
+            g[y][x] = "#6c6a7c" if d[1][0] - d[0][0] < 1.1 else d[0][1]
+    speckle(g, rnd, 12, ["#a19eaf"], range(1, 38), lambda c: c in tones)  # lit grit
+    speckle(g, rnd, 6, ["#76738a"], range(1, 38), lambda c: c in tones)   # chips
+    speckle(g, rnd, 2, [CAVE["c"]], range(3, 36), lambda c: c in tones)   # a shard of crystal
+    for x in range(32): g[0][x] = "#4f4c5e"                              # the rocks' shadow along the back
+    return g
+
+# -- Hell: red-black rock, falls of lava glowing below, a scorched floor
+HELL = {"rock": "#3a1612", "lit": "#4e1f19", "dark": "#2a0f0d", "deep": "#1c0807", "r": "#e2552f", "o": "#ff9d3c", "y": "#ffe27a", "W": "#fff3b0", "c": "#c2401f"}
+def hell_ceiling():
+    g, rnd = wrapped(64, 16, 51)
+    for x in range(64):
+        d = 3 + wave(x, 64, (1.0, 3, 0.2), (0.8, 4, 1.4))
+        for y in range(16):
+            if y < d: g[y][x] = HELL["dark"] if y < d - 1 else HELL["rock"]
+    for px, n in ((5, 8), (14, 4), (22, 11), (31, 6), (39, 9), (48, 5), (55, 12), (62, 4)):
+        for i in range(n):
+            half = 1.2 * (1 - i / n) + 0.3
+            for x in range(px - 2, px + 3):
+                if abs(x - px) <= half: put(g, x, 2 + i, "#5a1a12" if x < px else HELL["rock"] if x == px else HELL["dark"])
+        put(g, px, 2 + n, HELL["r"] if n > 7 else "#8f2626")             # the longest drip a bead of lava
+    return g
+
+def hell_far():
+    g, rnd = wrapped(64, 20, 52)
+    for x in range(64):
+        top = 7 + wave(x, 64, (3.0, 3, 0.5), (1.5, 7, 2.0))
+        for y in range(20):
+            if y >= top: g[y][x] = "#3a1410" if y > top else "#4e1f19"
+    for px, top, h in ((7, 1, 10), (26, 3, 8), (45, 0, 11), (57, 4, 7)):   # spires
+        for i in range(h):
+            half = 0.4 + 2.2 * i / h
+            for x in range(px - 3, px + 4):
+                if abs(x - px) <= half: put(g, x, top + i, "#4e1f19" if x < px else "#3a1410")
+    for px in (17, 37):                                                  # lava falls down the rock
+        for y in range(5, 20):
+            top = 7 + wave(px, 64, (3.0, 3, 0.5), (1.5, 7, 2.0))
+            if y >= top - 1:
+                put(g, px, y, HELL["y"] if y % 3 else HELL["W"]); put(g, px - 1, y, HELL["o"]); put(g, px + 1, y, HELL["r"])
+    for y in range(16, 20):                                              # the glow of the lava below
+        for x in range(64):
+            if (x * 7 + y * 3) % (5 - (y - 16)) == 0: g[y][x] = "#6a2216"
+    return g
+
+def hell_mid():
+    g, rnd = wrapped(32, 16, 53)
+    for cx, cy, rx, ry in ((3, 11, 5, 5), (12, 12, 4.5, 4), (20, 10, 5, 6), (29, 12, 4.5, 4.5)):
+        blob(g, cx, cy, rx, ry, "#4a2a24", "#5e362e", "#3a1f1a")
+    for y in range(12, 16):
+        for x in range(32): g[y][x] = g[y][x] if y < 14 and g[y][x] else "#3a1f1a"
+    for x0, y0, path in ((5, 8, (1, 1, 0, 1, 1)), (19, 7, (0, 1, 1, 0, 1, 1)), (27, 10, (1, 0, 1))):  # cracks glowing with lava
+        x, y = x0, y0
+        for step in path:
+            put(g, x, y, HELL["r"] if y < 11 else HELL["o"]); x += step; y += 1
+    for x in range(8, 16): g[14][x] = HELL["o"] if x % 3 else HELL["y"]  # a seam of lava along the foot
+    for x in range(9, 15): g[13][x] = HELL["r"]
+    return g
+
+def hell_ground():
+    g, rnd = wrapped(32, 38, 54)
+    tones = ["#a08376", "#98796c", "#a68a7c"]
+    for y in range(38):
+        for x in range(32): g[y][x] = rnd.choice(tones)
+    for _ in range(9):                                                   # scorch marks
+        cx, cy = rnd.randrange(32), rnd.randrange(3, 35)
+        blob(g, cx, cy, rnd.choice((2.5, 3.5)), 1.5, "#836659")
+    for x0, y0, steps in ((20, 22, (1, 0, 1)),):                         # a glowing crack
+        x, y = x0, y0
+        for i, s in enumerate(steps):
+            put(g, x, y, HELL["o"] if i % 2 else HELL["r"]); put(g, x, y + 1, "#6e3a2c"); x += 1; y += s
+    speckle(g, rnd, 14, ["#b8a49a"], range(1, 38), lambda c: c in tones)  # ash
+    for x in range(32): g[0][x] = "#6e5249"                              # the rocks' shadow along the back
+    return g
+
+for biome, parts in (
+    ("forest", {"far": forest_far, "mid": forest_mid, "ground": forest_ground}),
+    ("hills", {"far": hills_far, "mid": hills_mid, "ground": hills_ground}),
+    ("caves", {"far": caves_far, "mid": caves_mid, "ground": caves_ground, "ceiling": caves_ceiling}),
+    ("hell", {"far": hell_far, "mid": hell_mid, "ground": hell_ground, "ceiling": hell_ceiling}),
+):
+    for part, draw in parts.items():
+        save(f"scene/{biome}/{part}.png", draw())
+
+save("scene/caves/crystal.png", chars([                                 # in place of a torch: a cluster on a rock
+    "...W....",
+    "..WcC...",
+    "..WcC...",
+    "..WcC.W.",
+    "W.WcC.cC",
+    "cCWccCcC",
+    "cCWccCcC",
+    "cCcccCcC",
+    ".rRRRRr.",
+    "rRRrRRRr",
+    "RRrRRrRR",
+    "rRRRRRRr",
+], {"W": "#b8f4ff", "c": "#5fd0e6", "C": "#3a8fb0", "r": "#4a4558", "R": "#5d576e"}))
+save("scene/hell/vent.png", chars([                                     # in place of a torch: fire from a crack in a rock
+    "...y....",
+    "..yo....",
+    "..yoy.y.",
+    ".yooyyo.",
+    ".oWooyo.",
+    ".orWWoo.",
+    "..rrrro.",
+    ".RRrrRR.",
+    "RRmRRmRR",
+    "RmRRRRmR",
+    "RRRmRRRR",
+    "RRRRRRRR",
+], {"y": "#ffe27a", "o": "#ff9d3c", "r": "#e2552f", "W": "#fff3b0", "R": "#4a2a24", "m": "#c2401f"}))
+for biome, rows, pal in (                                                # the stage picker's swatches
+    ("forest", ["bbbgbbb", "bbgggbb", "bgggggb", "bbgggbb", "bgggggb", "bbbtbbb", "GGGGGGG"],
+     {"b": "#6db6ee", "g": "#2f6b3c", "t": "#6e4525", "G": "#7aa84c"}),
+    ("hills", ["bbbbbbb", "bbbbbbb", "bbhhbbb", "bhhhhbH", "hhhhHHH", "hhHHHHH", "ddddddd"],
+     {"b": "#6db6ee", "h": "#86b08a", "H": "#5e9a4e", "d": "#c29a64"}),
+    ("caves", ["rrrrrrr", "rkrkkrk", "kkkkkkk", "kkkkckk", "kckkCck", "kCckCck", "sssssss"],
+     {"r": "#3c3749", "k": "#16141f", "c": "#5fd0e6", "C": "#b8f4ff", "s": "#8a8798"}),
+    ("hell", ["rrrrrrr", "rkrkkrk", "kkkkkkk", "kkkokkk", "kkoyokk", "koyyyok", "aaaaaaa"],
+     {"r": "#3a1612", "k": "#1c0807", "o": "#ff9d3c", "y": "#ffe27a", "a": "#a08376"}),
+):
+    icon(f"scene/{biome}/swatch.png", rows, pal)
+
+# ---- The stage picker: a folded map (icons/), left of the gear in the top-right corner ----
+icon("icons/map.png", [
+    "ppp..ppp",
+    "pppSSrpr",
+    "pppSSprp",
+    "pppSdrpr",
+    "pppSSppp",
+    "ppdSSppp",
+    "pdpSSppp",
+    "...SS...",
+], {"p": "#e8d7a8", "S": "#c4ab78", "d": "#7a5230", "r": "#d0403a"})

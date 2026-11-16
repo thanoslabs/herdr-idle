@@ -117,6 +117,33 @@ describe("monsterArt and attackPart", () => {
   });
 });
 
+describe("biomeArt", () => {
+  test("every biome's every part is a picture, in scene/<biome>/", () => {
+    for (const b of R.BIOMES)
+      for (const part of R.BIOME_ART[b.id]) {
+        const p = R.biomeArt(b.id, part);
+        assert.ok(isArt(p), `${b.id} ${part}`);
+        assert.ok(p.startsWith(`scene/${b.id}/`), p);
+      }
+    assert.equal(R.biomeArt("caves", "ceiling"), "scene/caves/ceiling.png");
+  });
+  test("every biome has a backdrop: far, mid, ground and a swatch; one under a roof a ceiling and a light", () => {
+    assert.deepEqual(Object.keys(R.BIOME_ART), R.BIOMES.map((b) => b.id));
+    for (const b of R.BIOMES) {
+      for (const part of ["far", "mid", "ground", "swatch"]) assert.ok(R.BIOME_ART[b.id].includes(part), `${b.id} ${part}`);
+      assert.equal(R.BIOME_ART[b.id].includes("ceiling"), !b.outdoors, `${b.id}: a ceiling only under a roof`);
+    }
+  });
+  test("an unknown biome or part is null, never in the path", () => {
+    for (const h of HOSTILE) {
+      assert.equal(R.biomeArt(h, "far"), null, String(h));
+      assert.equal(R.biomeArt("forest", h), null, String(h));
+    }
+    assert.equal(R.biomeArt("forest", "ceiling"), null, "the forest has no roof");
+    assert.equal(R.biomeArt("rampart", "far"), null, "the town's pictures are named in main.js");
+  });
+});
+
 describe("glyphArt and letterArt", () => {
   test("every glyph in every colour, and nothing else", () => {
     for (const c of R.GLYPH_COLOURS) for (const ch of R.GLYPHS) assert.ok(isArt(R.glyphArt(c, ch)), `${c} ${ch}`);

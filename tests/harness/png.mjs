@@ -29,10 +29,10 @@ export function drawnIn(file, w, h) {
   return { x: (w - dw) / 2, y: (h - dh) / 2, w: dw, h: dh };
 }
 
-// { w, h, top, bottom, left, right }: the picture's size and the first and
-// last rows and columns with any pixel not fully transparent (in its own px).
-export function opaqueBounds(file) {
-  if (cache.has(file)) return cache.get(file);
+// The picture's pixels, decoded: { w, h, rgba } (rgba: 4 bytes a pixel, row by row).
+const decoded = new Map();
+export function pixels(file) {
+  if (decoded.has(file)) return decoded.get(file);
   const d = readFileSync(join(ART, file));
   let i = 8;
   let w = 0;
@@ -50,8 +50,8 @@ export function opaqueBounds(file) {
   if (type !== 6) throw new Error(`${file}: not RGBA`);
   const raw = inflateSync(Buffer.concat(idat));
   const stride = w * 4;
+  const rgba = new Uint8Array(stride * h);
   let prev = new Uint8Array(stride);
-  const b = { w, h, top: -1, bottom: -1, left: w, right: -1 };
   for (let y = 0, o = 0; y < h; y++) {
     const f = raw[o++];
     const line = new Uint8Array(raw.subarray(o, o + stride));
@@ -70,15 +70,28 @@ export function opaqueBounds(file) {
         line[x] = (line[x] + (pa <= pb && pa <= pc ? a : pb <= pc ? up : c)) & 255;
       }
     }
+    rgba.set(line, y * stride);
+    prev = line;
+  }
+  const out = { w, h, rgba };
+  decoded.set(file, out);
+  return out;
+}
+
+// { w, h, top, bottom, left, right }: the picture's size and the first and
+// last rows and columns with any pixel not fully transparent (in its own px).
+export function opaqueBounds(file) {
+  if (cache.has(file)) return cache.get(file);
+  const { w, h, rgba } = pixels(file);
+  const b = { w, h, top: -1, bottom: -1, left: w, right: -1 };
+  for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++)
-      if (line[x * 4 + 3]) {
+      if (rgba[(y * w + x) * 4 + 3]) {
         if (b.top < 0) b.top = y;
         b.bottom = y;
         b.left = Math.min(b.left, x);
         b.right = Math.max(b.right, x);
       }
-    prev = line;
-  }
   cache.set(file, b);
   return b;
 }
