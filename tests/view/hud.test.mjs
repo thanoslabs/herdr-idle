@@ -84,7 +84,7 @@ describe("what the frames say", () => {
     for (const stage of [1, 2, 3])
       for (const height of [230, 360, 560]) {
         const v = await mountRaid({ stage, status: "idle" }, { height });
-        v.view.timesUp = { at: v.now, id: 9, text: `Wiped! Back to stage ${stage}` };
+        v.view.timesUp = { at: v.now, id: 9, text: `Time's up! Back to stage ${stage}` };
         v.setAgents([...v.world.agents]);
         const s = v.box("idle-rpg-stage");
         const p = v.box("idle-rpg-plate");
@@ -116,7 +116,7 @@ describe("hudLayout", () => {
           const list = sts.flatMap((st) => Array.from({ length: big ? 150 : 3 }, (_, i) => agent(`${st}${i}`, st)));
           Object.assign(view.progress, big ? { gold: 9.9e15, slain: 9.9e15, stage: 999, best: 1000 } : { gold: 0, slain: 0, stage: 1, best: 1 }, { farming });
           view.progress.xp.wizard = big ? 9e15 : 0;
-          for (const note of [null, "Wiped! Back to stage 999"]) {
+          for (const note of [null, "Time's up! Back to stage 999"]) {
             view.timesUp = note ? { at: Date.now(), id: 1, text: note } : null;
             for (const inset of insets) {
               v.world.props = { inset };

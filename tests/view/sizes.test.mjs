@@ -233,7 +233,7 @@ describe("staying inside the scene", () => {
     const found = await sweep(
       async () => {
         const v = await mountRaid({ gold: 1e15, slain: 1e15, level: 50, stage: 999, best: 1000, farming: true });
-        v.view.timesUp = { at: v.now, id: 1, text: "Wiped! Back to stage 999" };
+        v.view.timesUp = { at: v.now, id: 1, text: "Time's up! Back to stage 999" };
         return v;
       },
       (v, w, h) => {

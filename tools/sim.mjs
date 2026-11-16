@@ -12,11 +12,12 @@
 // The fight (class Fight below) is main.js's attack clock and watch, line for
 // line where it matters to the outcome: every 250ms tick brings the party in
 // line with who fights (muster), runs the boss's tick (monsterTick: rests end,
-// its attacks land and start), returns early on a wipe (fail), starts each
-// attacker's attacks on its own rhythm (cadence, nextGap), ticks the statuses,
-// heals at the impact, lands the blows (strike) and once a second the damage
-// over time, books a kill (slay) and runs the attempt's time down (fail on
-// time-out); the 1s watch brings the next boss 3s after a kill (5s after a
+// its attacks land and start), starts each attacker's attacks and each
+// healer's heals (a working one's and those standing by) on their own rhythms
+// (cadence, nextGap; healTicks, healGap), ticks the statuses, heals at the
+// impact, lands the blows (strike) and once a second the damage over time,
+// books a kill (slay) and runs the attempt's time down while anyone is in the
+// fight (fail on time-out, the only way to lose); the 1s watch brings the next boss 3s after a kill (5s after a
 // first clear) and restarts the clock. It draws from its random source in the
 // same order main.js draws from Math.random, so a view and a Fight given the
 // same seed and party play the same fight (tests/view/parity.test.mjs checks
@@ -64,7 +65,7 @@ import {
   trainingOf,
   trainingPrice,
 } from "../mods/idle-rpg/rules.js";
-import { down, healParty, healTarget, heals, monsterTick, newParty, resetParty, rise, standing, syncParty } from "../mods/idle-rpg/party.js";
+import { down, firstHeal, healGap, healParty, healTarget, healTicks, monsterTick, newParty, resetParty, rise, standing, syncParty, up } from "../mods/idle-rpg/party.js";
 import { cadence, elementFactor, newStatuses, nextGap, partyAuras, statsOf, strike, tickStatuses } from "../mods/idle-rpg/effects.js";
 
 // ---- main.js's constants that shape a fight ---------------------------------
@@ -104,6 +105,8 @@ export function seeded(seed) {
  * @param {object} o
  * @param {object} o.progress rules.js progress (newProgress(), or a loaded save's)
  * @param {string[]} o.agents the working agents' addresses, in agents() order
+ * @param {string[]} [o.idle] the other agents' (idle, done or blocked): its healers heal from the side
+ * @param {string[]} [o.order] every agent's address in agents() order, for the formation (default agents, then idle)
  * @param {object} o.sprites the class of each address, and of YOU
  * @param {object|null} [o.you] where you stand ({ x, y }), or null for you not fighting
  * @param {object} [o.settings] { advance } (the setting; default on)
@@ -111,9 +114,11 @@ export function seeded(seed) {
  * @param {() => number} [o.random] the random source (Math.random in main.js)
  */
 export class Fight {
-  constructor({ progress, agents, sprites, you = { x: 154, y: 16 }, settings = { advance: true }, width = 1280, random = Math.random }) {
+  constructor({ progress, agents, idle = [], order = null, sprites, you = { x: 154, y: 16 }, settings = { advance: true }, width = 1280, random = Math.random }) {
     this.progress = progress;
     this.agents = agents;
+    this.idle = idle;
+    this.order = order ?? [...agents, ...idle];
     this.sprites = sprites;
     this.you = you && { x: Math.round(clamp(you.x, 30, width - 30)), y: Math.round(clamp(you.y, YOU_Y[0], YOU_Y[1])) };
     this.settings = settings;
@@ -130,8 +135,9 @@ export class Fight {
     this.rhythm = Object.create(null);
     this.ticking = false;
     this.nextTick = null; // the ms the next tick runs at, while ticking
-    this.stats = { kills: 0, fails: 0, wipes: 0, timeouts: 0, knockouts: 0, heals: 0, blows: 0, saves: 0, firstClears: {}, killTimes: [] };
-    this.onFail = null; // (fight, why, the stage that failed) after a failed attempt, for the player
+    this.stats = { kills: 0, fails: 0, timeouts: 0, knockouts: 0, heals: 0, sideHeals: 0, blows: 0, saves: 0, firstClears: {}, killTimes: [], attempts: [] };
+    this.attempt = this.newAttempt();
+    this.onFail = null; // (fight, the stage that failed) after a failed attempt, for the player
   }
 
   // ---- who fights (fighters, joins, attackers in main.js) ----------------------
@@ -152,6 +158,12 @@ export class Fight {
     if (!(this.monster?.hp > 0)) return [];
     return this.fighters().filter((key) => !this.knocked(key));
   }
+  clockRuns() {
+    return this.monster?.hp > 0 && this.fighters().length > 0;
+  }
+  standby() {
+    return this.idle.filter((key) => this.sprites[key] === "healer");
+  }
   auras() {
     return partyAuras(this.attackers().map((key) => ({ cls: this.sprites[key], weapon: equipped(this.progress, this.sprites[key], "weapon") })));
   }
@@ -162,7 +174,7 @@ export class Fight {
     const rows = [96, 60];
     const spots = {};
     const count = { melee: 0, ranged: 0 };
-    for (const key of this.agents) {
+    for (const key of this.order) {
       const melee = this.sprites[key] === "warrior";
       const i = melee ? count.melee++ : count.ranged++;
       const side = i % 2 ? 1 : -1;
@@ -186,18 +198,30 @@ export class Fight {
   }
 
   // ---- attempts (newBoss, fail, toStage) ---------------------------------------
+  // What one attempt came to, for the report (not in main.js): its stage,
+  // whether it was a push (the stage never cleared), knockouts, how often
+  // everyone in the fight was down at once and for how many ticks.
+  newAttempt() {
+    return { stage: this.monster.stage, push: this.monster.stage === this.progress.best, ko: 0, allDown: 0, downTicks: 0, wasDown: false };
+  }
+  endAttempt(won) {
+    const a = this.attempt;
+    this.stats.attempts.push({ stage: a.stage, push: a.push, won, ms: stageTime(a.stage) - this.left, ko: a.ko, allDown: a.allDown, downTicks: a.downTicks });
+  }
   clearEffects() {
     this.statuses = newStatuses();
     this.dots = Object.create(null);
   }
   newBoss() {
     this.monster = bossOf(this.progress.stage, (this.monster?.id ?? 0) + 1);
+    this.attempt = this.newAttempt();
     this.left = stageTime(this.monster.stage);
     this.clearEffects();
     resetParty(this.party, this.clock, this.random);
   }
-  fail(why = "time") {
+  fail() {
     const from = this.monster.stage;
+    this.endAttempt(false);
     const to = failStage(this.progress);
     if (to !== from) this.newBoss();
     else {
@@ -205,11 +229,12 @@ export class Fight {
       this.left = stageTime(this.monster.stage);
       this.clearEffects();
       resetParty(this.party, this.clock, this.random);
+      this.attempt = this.newAttempt();
     }
     this.stats.fails += 1;
-    this.stats[why === "wiped" ? "wipes" : "timeouts"] += 1;
+    this.stats.timeouts += 1;
     this.stats.saves += 1;
-    this.onFail?.(this, why, from);
+    this.onFail?.(this, from);
   }
   // the stage arrows: a stage reached, a fresh attempt, the clock woken
   toStage(s) {
@@ -246,6 +271,7 @@ export class Fight {
       m.hp = 0;
       m.slainAt = this.now;
       this.clearEffects();
+      this.endAttempt(true);
       const best = this.progress.best;
       slay(this.progress, m, this.settings.advance, attackers);
       if (this.progress.best > best) this.stats.firstClears[m.stage] = this.now;
@@ -268,7 +294,7 @@ export class Fight {
 
   // ---- the clock (wake, tick, the watch) ----------------------------------------
   wake() {
-    if (this.ticking || (!this.attackers().length && !down(this.party).length)) return;
+    if (this.ticking || (!this.clockRuns() && !down(this.party).length)) return;
     this.ticking = true;
     this.nextTick = this.now + TICK_STEP;
   }
@@ -282,32 +308,59 @@ export class Fight {
     const t = (this.clock += 1);
     const inFight = this.muster();
     const alive = this.monster.hp > 0;
-    const e = alive ? monsterTick(this.party, t, stageDamage(this.monster.stage), this.random) : { back: rise(this.party, t), hits: [], wiped: false };
+    const running = inFight.length > 0 && alive;
+    const e = alive ? monsterTick(this.party, t, stageDamage(this.monster.stage), this.random) : { back: rise(this.party, t), hits: [] };
     this.stats.knockouts += e.hits.filter((h) => h.down).length;
-    if (e.wiped) {
-      this.fail("wiped");
-      return true;
-    }
+    this.attempt.ko += e.hits.filter((h) => h.down).length;
+    const allDown = alive && inFight.length > 0 && up(this.party).length === 0;
+    if (allDown && !this.attempt.wasDown) this.attempt.allDown += 1;
+    if (allDown) this.attempt.downTicks += 1;
+    this.attempt.wasDown = allDown;
     const keys = this.attackers();
     const auras = this.auras();
-    for (const key of Object.keys(this.rhythm)) if (!keys.includes(key)) delete this.rhythm[key];
+    const actors = [...keys, ...(running ? this.standby() : [])];
+    for (const key of Object.keys(this.rhythm)) if (!actors.includes(key)) delete this.rhythm[key];
     const aimed = [];
-    for (const key of keys) {
+    for (const key of actors) {
       const cls = this.sprites[key];
-      const pace = cadence(attackTicksOf(this.progress.skills[cls]), cls, equipped(this.progress, cls, "weapon"), auras);
-      const r = (this.rhythm[key] ??= { start: null, next: t + 1 + this.random() * Math.max(0, pace.ticks - 1), seed: 0, factor: 1 });
+      const fights = keys.includes(key);
+      const healer = cls === "healer";
+      const pace = fights ? cadence(attackTicksOf(this.progress.skills[cls]), cls, equipped(this.progress, cls, "weapon"), auras) : null;
+      const mend = healer ? healTicks(this.potionOf(cls)) : 0;
+      let r = this.rhythm[key];
+      if (!r) {
+        r = this.rhythm[key] = { start: null, next: fights ? t + 1 + this.random() * Math.max(0, pace.ticks - 1) : null, mend: null, seed: 0, factor: 1, heal: null };
+        if (healer) r.mend = t + firstHeal(mend, this.random());
+      }
+      if (r.next === null && fights) r.next = t + 1 + this.random() * Math.max(0, pace.ticks - 1);
+      if (healer && r.mend === null) r.mend = t + firstHeal(mend, this.random());
+      if (!healer) r.mend = null;
+      if (!fights) r.next = null;
+      if (!fights && r.start !== null && !r.heal) {
+        r.start = null; // an attack cut off: one standing by only heals
+      }
       if (r.start !== null && t - r.start > ATTACK_PHASES) r.start = null;
-      if (r.start === null && t >= r.next) {
+      if (r.start !== null) continue;
+      if (healer && t >= r.mend) {
+        const to = healTarget(this.party, aimed);
+        r.mend = Math.max(r.mend, t - 1) + healGap(mend, this.random());
+        if (to) {
+          r.start = r.seed = t;
+          r.heal = to;
+          aimed.push(to);
+          continue;
+        }
+      }
+      if (fights && t >= r.next) {
         r.start = r.seed = t;
+        r.heal = null;
         r.factor = pace.factor;
         r.haste = pace.haste;
         r.next = Math.max(r.next, t - 1) + nextGap(pace.ticks, this.random());
-        r.heal = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, aimed) : null;
-        if (r.heal) aimed.push(r.heal);
       }
     }
     const kind = this.monster.kind;
-    if (keys.length && this.monster.hp > 0) {
+    if (running) {
       for (const d of tickStatuses(this.statuses, kind, auras)) {
         const p = (this.dots[`${d.cls}/${d.status}`] ??= { cls: d.cls, status: d.status, n: 0, owed: { attacker: 0, haste: 0, might: 0, hex: 0 } });
         p.n += d.damage;
@@ -319,17 +372,18 @@ export class Fight {
       const k = r && r.start !== null ? this.clock - r.start : -1;
       return k >= 0 && k < ATTACK_PHASES ? k + 1 : 0;
     };
-    const landing = keys.filter((key) => phaseOf(key) === ATTACK_PHASES);
+    const landing = actors.filter((key) => phaseOf(key) === ATTACK_PHASES);
     const healed = [];
     for (const key of landing.filter((k) => this.rhythm[k].heal)) {
       const cls = this.sprites[key];
-      const to = heals(cls, this.potionOf(cls)) ? healTarget(this.party, key, healed) : null;
-      this.rhythm[key].heal = to;
+      const to = cls === "healer" ? healTarget(this.party, healed) : null;
       if (!to) continue;
+      this.rhythm[key].heal = to;
       healed.push(to);
       const got = healParty(this.party, to, healOf(this.progress, cls), t);
       if (got > 0) {
         this.stats.heals += 1;
+        if (!keys.includes(key)) this.stats.sideHeals += 1;
         this.healXp(key, got);
       }
     }
@@ -346,7 +400,7 @@ export class Fight {
       );
       for (const h of out.hits) blows.push({ key, cls, damage: h.damage, shares: out.shares });
     }
-    const turning = keys.length && this.monster.hp > 0 ? Math.ceil((this.left - TICK_STEP) / 1000) !== Math.ceil(this.left / 1000) : t % DOT_TICKS === 0;
+    const turning = running ? Math.ceil((this.left - TICK_STEP) / 1000) !== Math.ceil(this.left / 1000) : t % DOT_TICKS === 0;
     if (turning && this.monster.hp > 0) {
       for (const p of Object.values(this.dots)) {
         if (p.n > 0) {
@@ -358,13 +412,13 @@ export class Fight {
     }
     this.stats.blows += blows.length;
     if (blows.length) this.fight(blows);
-    const plateTurn = keys.length > 0 && this.monster.hp > 0 && turning;
+    const plateTurn = running && this.monster.hp > 0 && turning;
     if (turning && (plateTurn || t - this.koBeat >= DOT_TICKS) && down(this.party).length) this.koBeat = t;
-    if (keys.length && this.monster.hp > 0) {
+    if (running && this.monster.hp > 0) {
       this.left -= TICK_STEP;
-      if (this.left <= 0) this.fail("time");
+      if (this.left <= 0) this.fail();
     }
-    return keys.length > 0 || (inFight.length > 0 && down(this.party).length > 0);
+    return running || (inFight.length > 0 && down(this.party).length > 0);
   }
 
   // Moves time on by one TICK_STEP: the watch when its second comes round,
@@ -468,7 +522,8 @@ export function play(o) {
   const random = seeded(o.seed);
   const progress = newProgress();
   const agents = Array.from({ length: o.agents }, (_, i) => `t${i + 1}`);
-  const sprites = Object.fromEntries(agents.map((k, i) => [k, o.classes[i % o.classes.length]]));
+  const idle = Array.from({ length: o.idleHealers }, (_, i) => `h${i + 1}`);
+  const sprites = Object.fromEntries([...agents.map((k, i) => [k, o.classes[i % o.classes.length]]), ...idle.map((k) => [k, "healer"])]);
   if (o.you) sprites[YOU] = o.you;
   const classes = [...new Set(Object.values(sprites))];
   // weapons: a fixed loadout, or the best for each boss (re-equipped as it comes)
@@ -480,12 +535,12 @@ export function play(o) {
   };
   for (const [cls, id] of Object.entries(o.loadout)) own(cls, id);
   if (o.vial && sprites[YOU] === "healer") own("healer", o.vial);
-  const fight = new Fight({ progress, agents, sprites, you: o.you ? { x: 154, y: 16 } : null, random, width: 1280 });
+  const fight = new Fight({ progress, agents, idle, sprites, you: o.you ? { x: 154, y: 16 } : null, random, width: 1280 });
   const limit = o.maxDays * 86400 * 1000;
   const every = o.next === "purchase" ? null : Number(o.next) * 60000;
   let lastNext = 0;
   let kind = null;
-  fight.onFail = (f, _why, failedAt) => {
+  fight.onFail = (f, failedAt) => {
     // an experiment: N stages back from the one that failed, instead of failStage's stage
     if (o.drop === null) return;
     progress.stage = Math.max(1, failedAt - o.drop);
@@ -512,11 +567,12 @@ export function play(o) {
 
 // ---- the command line -----------------------------------------------------------
 
-const DEFAULTS = { agents: 3, classes: CYCLE, you: "healer", policy: "both", next: "purchase", weapons: "default", loadout: {}, vial: null, seeds: 5, seed: 1, drop: null, until: 50, maxDays: 8, stages: [1, 2, 3, 5, 10, 15, 20, 25, 30, 40, 50] };
+const DEFAULTS = { agents: 3, idleHealers: 0, classes: CYCLE, you: "healer", policy: "both", next: "purchase", weapons: "default", loadout: {}, vial: null, seeds: 5, seed: 1, drop: null, until: 50, maxDays: 8, stages: [1, 2, 3, 5, 10, 15, 20, 25, 30, 40, 50] };
 
 const HELP = `node tools/sim.mjs [options]
   --agents N        working agents (default 3), classes cycling --classes
   --classes a,b,..  the agents' classes in turn (default warrior,archer,wizard,healer)
+  --idle-healers N  healers standing by (idle agents) that heal from the side (default 0)
   --you CLASS|none  you join as this class (default healer), or do not fight
   --policy P        both (Attack and Health, cheapest first), attack, or none (hands-off: no training, no points, no next)
   --next W          press the next arrow after each purchase (purchase, default) or every W minutes
@@ -541,6 +597,7 @@ export function parse(argv) {
     };
     if (a === "--help" || a === "-h") o.help = true;
     else if (a === "--agents") o.agents = Number(val());
+    else if (a === "--idle-healers") o.idleHealers = Number(val());
     else if (a === "--classes") o.classes = val().split(",");
     else if (a === "--you") o.you = val() === "none" ? null : argv[i];
     else if (a === "--policy") o.policy = val();
@@ -561,7 +618,7 @@ export function parse(argv) {
     else throw new Error(`unknown option ${a} (see --help)`);
   }
   if (!["both", "attack", "none"].includes(o.policy)) throw new Error(`--policy is both, attack or none`);
-  if (!(o.agents >= 0) || !(o.seeds >= 1) || !(o.drop === null || o.drop >= 1)) throw new Error("--agents, --seeds and --drop need numbers");
+  if (!(o.agents >= 0) || !(o.idleHealers >= 0) || !(o.seeds >= 1) || !(o.drop === null || o.drop >= 1)) throw new Error("--agents, --seeds and --drop need numbers");
   for (const c of [...o.classes, ...(o.you ? [o.you] : [])]) if (!CLASSES.includes(c)) throw new Error(`unknown class ${c}`);
   if (o.next !== "purchase" && !(Number(o.next) > 0)) throw new Error("--next is purchase or a number of minutes");
   return o;
@@ -576,19 +633,48 @@ export function time(ms) {
   return `${(s / 86400).toFixed(2)}d`;
 }
 
-const median = (xs) => {
+function median(xs) {
   const s = xs.filter((x) => x !== undefined).sort((a, b) => a - b);
   // a stage some seeds never cleared: the median counts them as never
   if (s.length * 2 <= xs.length) return undefined;
   return s[Math.floor((xs.length - 1) / 2)];
-};
+}
 
 // Runs every seed and sums them up: { stages: { stage: median ms }, runs, ... }.
 export function simulate(o) {
   const runs = Array.from({ length: o.seeds }, (_, i) => play({ ...o, seed: o.seed + i }));
   const stages = Object.fromEntries(o.stages.map((s) => [s, median(runs.map((r) => r.firstClears[s]))]));
   const sum = (k) => runs.reduce((n, r) => n + r.stats[k], 0) / runs.length;
-  return { options: o, stages, best: runs.map((r) => r.best), kills: sum("kills"), knockouts: sum("knockouts"), wipes: sum("wipes"), timeouts: sum("timeouts"), heals: sum("heals"), runs };
+  return { options: o, stages, best: runs.map((r) => r.best), kills: sum("kills"), knockouts: sum("knockouts"), timeouts: sum("timeouts"), heals: sum("heals"), sideHeals: sum("sideHeals"), attempts: attemptsOf(runs), runs };
+}
+
+// The attempts of every run summed up: pushes (attempts at a stage never
+// cleared) won and lost, their median length, knockouts per attempt, and how
+// often everyone in the fight was down at once.
+export function attemptsOf(runs) {
+  const all = runs.flatMap((r) => r.stats.attempts);
+  const pushes = all.filter((a) => a.push);
+  const mean = (xs, f) => (xs.length ? xs.reduce((n, a) => n + f(a), 0) / xs.length : 0);
+  const mid = (xs) => median(xs.map((a) => a.ms));
+  const won = pushes.filter((a) => a.won);
+  const lost = pushes.filter((a) => !a.won);
+  return {
+    count: all.length,
+    pushes: pushes.length,
+    won: won.length,
+    lost: lost.length,
+    wonMs: mid(won),
+    lostMs: mid(lost),
+    koPerAttempt: mean(all, (a) => a.ko),
+    koPerPush: mean(pushes, (a) => a.ko),
+    allDownShare: mean(all, (a) => (a.allDown > 0 ? 1 : 0)),
+    allDownPushShare: mean(pushes, (a) => (a.allDown > 0 ? 1 : 0)),
+    allDownPerPush: mean(pushes, (a) => a.allDown),
+    // where a run's fighting time went, in ms a run: pushes won and lost, attempts below the best won and lost
+    split: Object.fromEntries(
+      [["pushWon", true, true], ["pushLost", true, false], ["farmWon", false, true], ["farmLost", false, false]].map(([k, push, w]) => [k, all.filter((a) => a.push === push && a.won === w).reduce((n, a) => n + a.ms, 0) / runs.length]),
+    ),
+  };
 }
 
 function main(argv) {
@@ -598,15 +684,19 @@ function main(argv) {
   const r = simulate(o);
   const secs = Number(process.hrtime.bigint() - started) / 1e9;
   if (o.json) return console.log(JSON.stringify({ ...r, runs: r.runs.map(({ firstClears, stats, best }) => ({ firstClears, stats, best })) }, null, 2));
-  const party = `${o.agents} agent${o.agents === 1 ? "" : "s"} (${Array.from({ length: o.agents }, (_, i) => o.classes[i % o.classes.length]).join(", ")})${o.you ? ` and you (${o.you}${o.vial ? `, ${o.vial} vial` : ""})` : ""}`;
+  const party = `${o.agents} agent${o.agents === 1 ? "" : "s"} (${Array.from({ length: o.agents }, (_, i) => o.classes[i % o.classes.length]).join(", ")})${o.idleHealers ? `, ${o.idleHealers} idle healer${o.idleHealers === 1 ? "" : "s"}` : ""}${o.you ? ` and you (${o.you}${o.vial ? `, ${o.vial} vial` : ""})` : ""}`;
   console.log(`${party}; policy ${o.policy}; next ${o.next === "purchase" ? "after each purchase" : `every ${o.next}m`}; weapons ${o.weapons === "default" && Object.keys(o.loadout).length ? JSON.stringify(o.loadout) : o.weapons}; ${o.drop === null ? "failures as failStage" : `drop ${o.drop} back`}; median of ${o.seeds} seed${o.seeds === 1 ? "" : "s"}`);
   console.log("time of fighting to first clear:");
   for (const s of o.stages) console.log(`  stage ${String(s).padStart(3)}  ${time(r.stages[s])}`);
-  console.log(`per run: ${r.kills.toFixed(0)} kills, ${r.knockouts.toFixed(0)} knockouts, ${r.wipes.toFixed(0)} wipes, ${r.timeouts.toFixed(0)} time-outs, ${r.heals.toFixed(0)} heals; best stage ${r.best.join(", ")}`);
+  console.log(`per run: ${r.kills.toFixed(0)} kills, ${r.knockouts.toFixed(0)} knockouts, ${r.timeouts.toFixed(0)} time-outs, ${r.heals.toFixed(0)} heals (${r.sideHeals.toFixed(0)} from the side); best stage ${r.best.join(", ")}`);
   // kill times (the attempt's clock) over the last ten stages each run reached
   const late = r.runs.flatMap((run) => run.stats.killTimes.filter((k) => k.stage > run.best - 11));
   const mid = (ks) => (ks.length ? time(median(ks.map((k) => k.ms))) : "none");
   console.log(`kill times over the last 10 stages (median): first clears ${mid(late.filter((k) => k.first))}, repeats ${mid(late.filter((k) => !k.first))}`);
+  const a = r.attempts;
+  console.log(`pushes (attempts at a stage never cleared): ${a.won} won in ${time(a.wonMs)}, ${a.lost} lost in ${time(a.lostMs)} (medians)`);
+  console.log(`a run's time: pushes won ${time(a.split.pushWon)}, lost ${time(a.split.pushLost)}; below the best won ${time(a.split.farmWon)}, lost ${time(a.split.farmLost)}`);
+  console.log(`knockouts per attempt ${a.koPerAttempt.toFixed(1)} (per push ${a.koPerPush.toFixed(1)}); everyone down at once in ${(100 * a.allDownShare).toFixed(0)}% of attempts, ${(100 * a.allDownPushShare).toFixed(0)}% of pushes (${a.allDownPerPush.toFixed(1)} times a push)`);
   console.log(`(${secs.toFixed(1)}s)`);
 }
 

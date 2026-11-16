@@ -141,7 +141,7 @@ jobs:
           // and every label main.js letters can be drawn whole: the numbers beside the
           // words are shortNumber's and clockText's, and each label is tried with every digit
           const samples = ["0123456789", "999"];
-          const labels = Object.values(LABELS).flatMap((l) => (typeof l === "function" ? samples.flatMap((n) => [l(n, n), l(LABELS.timesUp, n), l(LABELS.wiped, n)]) : [l]));
+          const labels = Object.values(LABELS).flatMap((l) => (typeof l === "function" ? samples.flatMap((n) => [l(n, n), l(LABELS.timesUp, n)]) : [l]));
           for (let n = 0; n < 1e80; n = n * 1.37 + 1) labels.push(shortNumber(n));
           for (let ms = 0; ms <= 3600000; ms += 997) labels.push(clockText(ms));
           // the boss's names on its plate (MONSTERS in main.js) too

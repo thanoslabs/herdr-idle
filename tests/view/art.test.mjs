@@ -162,9 +162,13 @@ describe("every picture asked for is in art/", () => {
     v.click("critter-t1");
     v.release("critter-t1");
     v.click("idle-rpg-stage-next");
-    v.view.timesUp = { at: v.now, id: 3, text: "Wiped! Back to stage 2" };
+    v.view.timesUp = { at: v.now, id: 3, text: "Time's up! Back to stage 2" };
     v.setAgents([...v.world.agents]);
     assert.ok(v.has("idle-rpg-timesup-3"));
+    keep(v);
+    // nobody working: the time stands still, "(PAUSED)" in grey
+    v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
+    assert.ok(v.has("idle-rpg-stage-paused"));
     keep(v);
     const empty = await mountView({ saved: raid({ battle: false }).saved, agents: [] });
     keep(empty);
@@ -181,7 +185,7 @@ const UNDRAWN_LETTERING = {
   white: "",
   gold: `b c close colon dash f h j k open plus point q quote slash u w x z ${NAME_SIGNS}`,
   grey: `bang c dash f g h j k l m plus point q quote r slash v w x z ${NAME_SIGNS}`,
-  red: `close colon dash f h j l m n open plus point q quote r slash u v x y z ${NAME_SIGNS}`,
+  red: `close colon d dash f h j l n open plus point q r slash v w x y z ${NAME_SIGNS}`,
   green: `b bang c close colon d dash e g h i j k l n o open p plus point q quote s slash t u v w x y z ${NAME_SIGNS}`,
 };
 const sorted = (list) => list.split(" ").filter(Boolean).sort().join(" ");

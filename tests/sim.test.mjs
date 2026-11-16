@@ -17,7 +17,25 @@ describe("the simulation", () => {
     const out = execFileSync(process.execPath, [SIM, "--smoke"], { encoding: "utf8" });
     assert.match(out, /time of fighting to first clear:/);
     for (const s of [1, 2, 3, 5]) assert.match(out, new RegExp(`stage +${s} +\\d+(\\.\\d)?(s|m)`));
-    assert.match(out, /per run: \d+ kills, \d+ knockouts, \d+ wipes, \d+ time-outs, \d+ heals; best stage 6\b/);
+    assert.match(out, /per run: \d+ kills, \d+ knockouts, \d+ time-outs, \d+ heals \(\d+ from the side\); best stage 6\b/);
+    assert.match(out, /pushes \(attempts at a stage never cleared\): \d+ won in \S+, \d+ lost in \S+ \(medians\)/);
+    assert.match(out, /knockouts per attempt [\d.]+ \(per push [\d.]+\); everyone down at once in \d+% of attempts/);
+    assert.doesNotMatch(out, /wipe/);
+  });
+  test("--idle-healers: healers standing by heal from the side", () => {
+    const r = JSON.parse(execFileSync(process.execPath, [SIM, "--smoke", "--idle-healers", "2", "--json"], { encoding: "utf8" }));
+    assert.equal(r.options.idleHealers, 2);
+    assert.ok(r.runs[0].stats.sideHeals > 0 && r.runs[0].stats.sideHeals <= r.runs[0].stats.heals, JSON.stringify(r.runs[0].stats));
+    assert.throws(() => parse(["--idle-healers", "-1"]), Error);
+  });
+  test("a lost attempt is only ever a time-out, after the whole clock", () => {
+    const o = { ...parse(["--agents", "2", "--classes", "wizard,archer", "--you", "archer", "--until", "40", "--max-days", "0.3"]), seed: 2 };
+    const r = play(o);
+    const lost = r.stats.attempts.filter((a) => !a.won);
+    assert.ok(lost.length >= 1 && r.stats.timeouts === lost.length, JSON.stringify(r.stats.timeouts));
+    for (const a of lost) assert.equal(a.ms, 600000);
+    assert.ok(r.stats.attempts.some((a) => a.allDown > 0), "everyone was down at once in some attempt");
+    assert.equal(r.stats.wipes, undefined);
   });
   test("--json and the options", () => {
     const r = JSON.parse(execFileSync(process.execPath, [SIM, "--smoke", "--agents", "1", "--you", "none", "--policy", "attack", "--json"], { encoding: "utf8" }));
