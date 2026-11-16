@@ -16,7 +16,7 @@ Quote the glob: Node expands it (`node --test tests/` does not work on Node 22, 
 | | |
 |---|---|
 | `rules*.test.mjs`, `party.test.mjs`, `effects.test.mjs` | the plain modules (`rules.js`; its shop, art paths and `loadState`; `party.js`; `effects.js`) |
-| `view/*.test.mjs` | the real `main.js` through the harness: loading, fights, failures, the boss's attacks, weapon effects, panels, the HUD and `hudLayout`, screen sizes, saves, render discipline, every picture, the simulation's parity |
+| `view/*.test.mjs` | the real `main.js` through the harness: loading, fights, failures, the boss's attacks, weapon effects, panels, the HUD and `hudLayout`, the name tags and the boss's plate, screen sizes, saves, render discipline, every picture, the simulation's parity |
 | `crowd.test.mjs` | 50–400 agents: today's quadratic `place()`, as a baseline |
 | `sim.test.mjs` | `tools/sim.mjs --smoke` and its player |
 | `harness.test.mjs` | the harness itself |

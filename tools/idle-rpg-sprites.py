@@ -4,7 +4,8 @@
 # the shop sells, and every weapon and hat it sells drawn to lay over them),
 # each weapon's attack and effects on the boss, the castle
 # scenery (wall, floor, mountains, clouds, sun, moon, stars, props), the icons,
-# a small pixel font for numbers, and the HUD's lettering and frame corners.
+# a small pixel font for numbers, and the lettering (the HUD's words, the
+# boss's plate and the name tags) and the frame corners.
 #
 #   python3 tools/idle-rpg-sprites.py mods/idle-rpg/art
 #
@@ -35,14 +36,16 @@
 #               dizzy-1, dizzy-2 (knocked out), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
 #               coin, star, armour, hat, gear, the card's wrench, and the
-#               stage arrows on the boss's plate: prev, next
+#               stage section's arrows: prev, next
 #   effects/    weapon effects (effects.js): icons/ (burn, chill, venom, hex, haste,
 #               might), marks/ (weak, resist), and on the boss burn/flame-1, -2,
 #               chill/crystal, glint, chain/arc/{l,r}, venom/drip-1, -2
 #   font/       <colour>/<character>, the pixel font: white, gold, ember, venom
-#   lettering/  <colour>/<character>, the HUD's second face, for words: white,
-#               gold, grey, red, green
-#   frame/      tl, tr, bl, br: the corners of the HUD's pixel frames
+#   lettering/  <colour>/<character>, the second face, for words (the HUD, the
+#               boss's plate, the name tags): white, gold, grey, red, green;
+#               capitals, digits, signs, the middle dot, the ellipsis and
+#               "unknown", the box drawn for any character it lacks
+#   frame/      tl, tr, bl, br: the corners of the HUD's pixel frames (and the boss's plate)
 import math, os, struct, sys, zlib
 if len(sys.argv) != 2 or sys.argv[1].startswith("-"):  # no options: "--help" is not a folder to fill
     sys.exit("usage: idle-rpg-sprites.py <output folder>")
@@ -1317,11 +1320,14 @@ for colour, hexa in GLYPH_COLOURS.items():
         glyph(f"font/{colour}/{ch}.png", rows, hexa)
 
 # ---- The lettering: a second face, for words on the HUD (the sign, the stage
-# section, the notes under it). The same 5 rows as the pixel font, so words and
+# section, the notes under it, the boss's plate) and the name tags in the
+# scene (an agent's space and tab names, any text: letterFit in rules.js
+# folds it to these characters, a box, "unknown", for any it lacks, and cuts
+# a long one with the ellipsis). The same 5 rows as the pixel font, so words and
 # numbers share a line, and its digits and signs are drawn the same, but its
 # letters take the width they need: the font's 3-wide M (which shortNumber's
 # "1.2M" keeps) reads as an H in a word, so here M and W are 5 wide and N 4,
-# the rest 3 (and the point and the signs 1). Capitals only: main.js draws
+# the rest 3 (the point and the thin signs 1, a few signs 2, 4 or 5). Capitals only: main.js draws
 # lower case as capitals. A space is no picture, just 2 art px of advance
 # (letterWidth in rules.js). A drop shadow, not an outline (see letter). Its characters
 # and colours must match LETTERS and LETTER_COLOURS in mods/idle-rpg/rules.js,
@@ -1364,6 +1370,28 @@ LETTERING = {
     "dash": ["...", "...", "###", "...", "..."],
     "open": [".#", "#.", "#.", "#.", ".#"],                 # brackets: "(paused)" by the time
     "close": ["#.", ".#", ".#", ".#", "#."],
+    # signs common in the names of spaces and tabs, for the name tags
+    "under": ["...", "...", "...", "...", "###"],
+    "comma": ["..", "..", "..", ".#", "#."],
+    "semi": ["..", ".#", "..", ".#", "#."],
+    "query": ["##.", "..#", ".#.", "...", ".#."],
+    "and": [".#..", "#.#.", ".#..", "#.##", ".##."],
+    "hash": [".#.#.", "#####", ".#.#.", "#####", ".#.#."],
+    "at": [".###.", "#.#.#", "#.###", "#....", ".###."],
+    "star": ["...", "#.#", ".#.", "#.#", "..."],
+    "equals": ["...", "###", "...", "###", "..."],
+    "less": ["..#", ".#.", "#..", ".#.", "..#"],
+    "more": ["#..", ".#.", "..#", ".#.", "#.."],
+    "lsquare": ["##", "#.", "#.", "#.", "##"],
+    "rsquare": ["##", ".#", ".#", ".#", "##"],
+    "percent": ["#.#", "..#", ".#.", "#..", "#.#"],
+    "tilde": ["....", ".#.#", "#.#.", "....", "...."],
+    "bar": ["#", "#", "#", "#", "#"],
+    "backslash": ["#..", "#..", ".#.", "..#", "..#"],
+    "dquote": ["#.#", "#.#", "...", "...", "..."],
+    "dot": [".", ".", "#", ".", "."],                         # the middle dot between a tag's space and tab
+    "ellipsis": [".....", ".....", ".....", ".....", "#.#.#"],  # where a long name is cut
+    "unknown": ["....", "####", "#..#", "#..#", "####"],      # a small hollow box for any character the face lacks
 }
 LETTER_COLOURS = {"white": "#ffffff", "gold": "#ffd166",      # words and numbers; the stage, the title
                   "grey": "#8ea3bb", "red": "#ff7b7b",        # the time standing still, nobody in; a failed attempt
@@ -1390,7 +1418,7 @@ for colour, hexa in LETTER_COLOURS.items():
         letter(f"lettering/{colour}/{ch}.png", rows, hexa)
 
 # ---- The HUD's frames (frame/): the sign top left, the stage section top
-# centre, the strip top right and the stage notes are each a dark slate panel
+# centre, the strip top right, the stage notes and the boss's plate are each a dark slate panel
 # with a lighter bevel, shown at 2 screen px an art px. main.js builds a frame
 # of any size from four bands of colour (FRAME in main.js: a px of outline and
 # a px of bevel, the top and left light, the bottom and right dark) round a

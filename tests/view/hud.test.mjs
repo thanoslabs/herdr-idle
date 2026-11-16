@@ -38,7 +38,7 @@ describe("what the frames say", () => {
   test("the stage section: the stage and the time; FARM while farming; the plate keeps only the boss's name and HP", async () => {
     const v = await mountRaid({ stage: 12, best: 14, farming: true, status: "idle" });
     assert.deepEqual(v.text("idle-rpg-stage"), stageTexts({ stage: 12, farming: true, clock: "10:00", running: false }));
-    assert.deepEqual(v.text("idle-rpg-plate"), ["Dragon", "5.3K/5.3K"]);
+    assert.deepEqual(v.text("idle-rpg-plate"), ["DRAGON", "5.3K/5.3K"]);
     assert.ok(!v.text("idle-rpg-plate").some((t) => /stage|\d:\d\d/i.test(t)));
   });
   test("the stage section keeps its width while farming and while paused, with an arrow at each end", async () => {
@@ -87,7 +87,7 @@ describe("what the frames say", () => {
         v.view.timesUp = { at: v.now, id: 9, text: `Wiped! Back to stage ${stage}` };
         v.setAgents([...v.world.agents]);
         const s = v.box("idle-rpg-stage");
-        const p = { ...v.box("idle-rpg-plate"), h: 28 };
+        const p = v.box("idle-rpg-plate");
         const n = v.box("idle-rpg-timesup-9");
         assert.ok(p.y >= s.y + s.h, `the plate (${p.y}) under the section (${s.y + s.h}) at stage ${stage}, height ${height}`);
         assert.ok(n.y >= s.y + s.h, "the note under the section");

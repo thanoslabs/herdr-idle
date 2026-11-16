@@ -71,13 +71,15 @@ jobs:
           # and its attack's pictures facing each way, each hat's overlay for each
           # class (no hat, no overlay), every monster's pictures (its attacks on the party too) and every character
           # of the pixel font in every colour it has (and no other colour), every
-          # character of the lettering likewise and every label the HUD letters, the
+          # character of the lettering likewise (the placeholder and the ellipsis
+          # included) and every label the HUD letters, the boss's names, and that
+          # any name a tag shows letters to those characters only, the
           # weapon effects' icons, marks and pictures on the boss (effects.js);
           # plus every picture main.js names outright
           node --input-type=module <<'EOF'
           import { existsSync, readdirSync, readFileSync } from "node:fs";
           import { EFFECT_ICONS, EFFECT_MARKS, EFFECT_OVERLAYS, effectIconArt, markArt, overlayArt } from "./mods/idle-rpg/effects.js";
-          import { ATTACK_PARTS, CLASSES, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, LABELS, LETTERS, LETTER_COLOURS, MONSTER_ART, MONSTER_ATTACKS, WEAPON_FRAMES, attackArt, attackPart, catalogue, clockText, glyphArt, hatArt, letterArt, letterable, lookArt, monsterArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
+          import { ATTACK_PARTS, CLASSES, ELLIPSIS, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, LABELS, LETTERS, LETTER_COLOURS, MONSTER_ART, MONSTER_ATTACKS, UNKNOWN, WEAPON_FRAMES, attackArt, attackPart, catalogue, clockText, glyphArt, hatArt, letterArt, letterFit, letterable, lookArt, monsterArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
           const dir = "mods/idle-rpg";
           const unknown = KINDS.filter((k) => !MONSTER_ART[k]);
           if (unknown.length) {
@@ -142,9 +144,36 @@ jobs:
           const labels = Object.values(LABELS).flatMap((l) => (typeof l === "function" ? samples.flatMap((n) => [l(n, n), l(LABELS.timesUp, n), l(LABELS.wiped, n)]) : [l]));
           for (let n = 0; n < 1e80; n = n * 1.37 + 1) labels.push(shortNumber(n));
           for (let ms = 0; ms <= 3600000; ms += 997) labels.push(clockText(ms));
+          // the boss's names on its plate (MONSTERS in main.js) too
+          const bosses = [...readFileSync(`${dir}/main.js`, "utf8").matchAll(/^\s+[a-z]+: \{ name: "([^"]+)"/gm)].map((m) => m[1]);
+          if (bosses.length < KINDS.length) {
+            console.error(`Expected a name for each of ${KINDS.join(", ")} in MONSTERS (main.js), found ${bosses.join(", ")}`);
+            process.exit(1);
+          }
+          labels.push(...bosses, ...bosses.map((b) => LABELS.slain(b)));
           const unletterable = [...new Set(labels.filter((t) => !letterable(t)))];
           if (unletterable.length) {
             console.error(`Labels the lettering cannot draw: ${unletterable.join(" | ")}`);
+            process.exit(1);
+          }
+          // names (an agent's tag) are any text: letterFit gives only characters of the
+          // face, the placeholder for what it lacks and the ellipsis where it cuts one
+          // (both in LETTERS, so drawn in every colour below), and each character's
+          // picture has a name of its own in plain letters and digits
+          if (!LETTERS.includes(UNKNOWN) || !LETTERS.includes(ELLIPSIS)) {
+            console.error("LETTERS lacks the placeholder (UNKNOWN) or the ellipsis");
+            process.exit(1);
+          }
+          const names = [...LETTERS].filter((ch) => ch !== " ").map((ch) => letterArt("white", ch));
+          if (new Set(names).size !== names.length || names.some((n) => !/^lettering\/white\/[a-z0-9]+\.png$/.test(n ?? ""))) {
+            console.error(`Lettering pictures not named one each in [a-z0-9]: ${names.join(" ")}`);
+            process.exit(1);
+          }
+          const odd = ["caf\u00e9 \u65e5\u672c \u{1F680}\u200d\u{1F525}", "../../etc/passwd", "__proto__", "a\u0301\u0302", "\ud800", "x".repeat(10000)];
+          for (let cp = 0; cp < 0x30000; cp += 13) if (cp < 0xd800 || cp >= 0xe000) odd.push(String.fromCodePoint(cp));
+          const strays = odd.flatMap((t) => [...letterFit(t), ...letterFit(t, 38)]).filter((ch) => !LETTERS.includes(ch));
+          if (strays.length || !letterFit("\u65e5").includes(UNKNOWN) || !letterFit("x".repeat(99), 38).endsWith(ELLIPSIS)) {
+            console.error(`letterFit gave characters outside LETTERS (${[...new Set(strays)].join(" ")}), or no placeholder or ellipsis`);
             process.exit(1);
           }
           const paths = [

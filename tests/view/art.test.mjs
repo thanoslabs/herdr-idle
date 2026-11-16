@@ -7,7 +7,7 @@
 // by one of those states; the few that are not are listed below, with why.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { CLASSES, catalogue } from "../../mods/idle-rpg/rules.js";
+import { CLASSES, ELLIPSIS, LETTERS, UNKNOWN, catalogue, letterArt } from "../../mods/idle-rpg/rules.js";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 import { artFiles } from "../harness/world.mjs";
 
@@ -47,6 +47,16 @@ describe("every picture asked for is in art/", () => {
     }
     // the campfire's light at each of its 24 places along a torch
     for (let i = 0; i < 24; i++) assert.ok(drawn.has(`light/fire-${i}.png`), `light/fire-${i}`);
+  });
+
+  test("name tags with every character of the lettering, a long name and one it lacks", async () => {
+    // a few characters a name, so none is cut off; then one cut (the ellipsis) and one with no letter (the box)
+    const chars = [...LETTERS].filter((ch) => ch !== " " && ch !== ELLIPSIS && ch !== UNKNOWN);
+    const names = [...Array.from({ length: Math.ceil(chars.length / 6) }, (_, i) => chars.slice(i * 6, i * 6 + 6).join("")), "a very long name indeed", "\u65e5\u672c"];
+    const { saved } = raid({ battle: false, classes: [] });
+    const v = await mountView({ saved, agents: names.map((n, i) => agent(`n${i}`, "idle", { space_name: n, tab_name: "" })) });
+    keep(v);
+    for (const ch of LETTERS) if (ch !== " ") assert.ok(drawn.has(letterArt("white", ch)), `white ${ch}`);
   });
 
   test("every class in every look, weapon and hat, in every pose", async () => {
@@ -165,13 +175,16 @@ describe("every picture asked for is in art/", () => {
 // file name): those no label has in that colour. Exact, like UNDRAWN: change
 // the sweep or a label, and this says what to update. (Digits are left out:
 // which show depends on the stage and the time; every digit is drawn in white.)
+// The signs for names (NAME_SIGNS) are drawn only in white, on the name tags.
+const NAME_SIGNS = "and at backslash bar comma dot dquote ellipsis equals hash less lsquare more percent query rsquare semi star tilde under unknown";
 const UNDRAWN_LETTERING = {
-  white: "b bang c close dash f g h j k l open p plus q quote slash v x y z",
-  gold: "b bang c close colon dash f h j k l open plus point q quote slash u w x z",
-  grey: "bang c dash f g h j k l m plus point q quote r slash v w x z",
-  red: "close colon dash f h j l m n open plus point q quote r slash u v x y z",
-  green: "b bang c close colon d dash e g h i j k l n o open p plus point q quote s slash t u v w x y z",
+  white: "",
+  gold: `b c close colon dash f h j k open plus point q quote slash u w x z ${NAME_SIGNS}`,
+  grey: `bang c dash f g h j k l m plus point q quote r slash v w x z ${NAME_SIGNS}`,
+  red: `close colon dash f h j l m n open plus point q quote r slash u v x y z ${NAME_SIGNS}`,
+  green: `b bang c close colon d dash e g h i j k l n o open p plus point q quote s slash t u v w x y z ${NAME_SIGNS}`,
 };
+const sorted = (list) => list.split(" ").filter(Boolean).sort().join(" ");
 
 // The lettering's pictures no label or number draws: every character in
 // every colour minus what the HUD sets in that colour.
@@ -189,7 +202,7 @@ describe("nearly every picture is drawn by some state", () => {
     // the lettering: exactly the listed characters are left out in each colour
     const name = (p) => p.split("/")[2].replace(".png", "");
     const left = Object.fromEntries(Object.keys(UNDRAWN_LETTERING).map((c) => [c, [...lettering].filter((p) => p.startsWith(`lettering/${c}/`) && !/^\d$/.test(name(p))).map(name).join(" ")]));
-    assert.deepEqual(left, UNDRAWN_LETTERING);
+    assert.deepEqual(Object.fromEntries(Object.entries(left).map(([c, l]) => [c, sorted(l)])), Object.fromEntries(Object.entries(UNDRAWN_LETTERING).map(([c, l]) => [c, sorted(l)])));
     for (const d of "0123456789") assert.ok(drawn.has(`lettering/white/${d}.png`), `white ${d}`);
     const share = (artFiles().length - undrawn.length - lettering.size) / artFiles().length;
     assert.ok(share > 0.75, `${Math.round(share * 100)}% of art/ drawn`);

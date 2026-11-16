@@ -357,18 +357,32 @@ export function glyphArt(colour, ch) {
 }
 
 // The lettering: a second pixel face, for the words and numbers of the HUD
-// (the sign, the stage section and its notes), drawn by
-// tools/idle-rpg-sprites.py into lettering/<colour>/. The same height as the
-// font, with the same digits and signs, but letters as wide as they need (M
-// and W 5 art px, N 4; the font's M stays 3 wide for shortNumber). Capitals
-// only: lower case is drawn as capitals. A space has no picture, only its
-// width. LETTERS is every character it can draw, the space included.
-export const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+!.:'/-() ";
+// (the sign, the stage section and its notes, the boss's plate) and the name
+// tags in the scene, drawn by tools/idle-rpg-sprites.py into
+// lettering/<colour>/. The same height as the font, with the same digits and
+// signs, but letters as wide as they need (M and W 5 art px, N 4; the font's
+// M stays 3 wide for shortNumber). Capitals only: lower case is drawn as
+// capitals. A space has no picture, only its width. LETTERS is every
+// character it can draw, the space included; the signs after the brackets are
+// for names (a tag shows the user's space and tab names), with the middle dot
+// a tag sets between them, the ellipsis a long name is cut with, and
+// UNKNOWN, a hollow box drawn for any character the face lacks (letterFit).
+export const UNKNOWN = "\u25a1";
+export const ELLIPSIS = "\u2026";
+export const LETTERS = `ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+!.:'/-() _,;?&#@*=<>[]%~|\\"\u00b7${ELLIPSIS}${UNKNOWN}`;
 // white and gold for words and numbers, grey for the time standing still,
 // red for a failed attempt, green for the stage being farmed
 export const LETTER_COLOURS = ["white", "gold", "grey", "red", "green"];
-const LETTER_NAMES = { "+": "plus", "!": "bang", ".": "point", ":": "colon", "'": "quote", "/": "slash", "-": "dash", "(": "open", ")": "close" };
-const LETTER_WIDTHS = { M: 5, W: 5, N: 4, "!": 1, ".": 1, ":": 1, "'": 1, "(": 2, ")": 2, " ": 1 };
+const LETTER_NAMES = {
+  "+": "plus", "!": "bang", ".": "point", ":": "colon", "'": "quote", "/": "slash", "-": "dash", "(": "open", ")": "close",
+  _: "under", ",": "comma", ";": "semi", "?": "query", "&": "and", "#": "hash", "@": "at", "*": "star", "=": "equals",
+  "<": "less", ">": "more", "[": "lsquare", "]": "rsquare", "%": "percent", "~": "tilde", "|": "bar", "\\": "backslash",
+  '"': "dquote", "\u00b7": "dot", [ELLIPSIS]: "ellipsis", [UNKNOWN]: "unknown",
+}; // prettier-ignore
+const LETTER_WIDTHS = {
+  M: 5, W: 5, N: 4, "!": 1, ".": 1, ":": 1, "'": 1, "(": 2, ")": 2, " ": 1,
+  ",": 2, ";": 2, "&": 4, "#": 5, "@": 5, "[": 2, "]": 2, "~": 4, "|": 1, "\u00b7": 1, [ELLIPSIS]: 5, [UNKNOWN]: 4,
+}; // prettier-ignore
 // Upper case, for ASCII letters only (so no character turns into two).
 const capitalOf = (ch) => (typeof ch === "string" && ch.length === 1 && ch >= "a" && ch <= "z" ? ch.toUpperCase() : ch);
 // How many art px wide a character of the lettering is without its outline
@@ -385,18 +399,103 @@ export function letterWidth(ch) {
 export function letterArt(colour, ch) {
   const c = capitalOf(ch);
   if (!LETTER_COLOURS.includes(colour) || !letterWidth(c) || c === " ") return null;
-  return `lettering/${colour}/${LETTER_NAMES[c] ?? c.toLowerCase()}.png`;
+  return `lettering/${colour}/${Object.prototype.hasOwnProperty.call(LETTER_NAMES, c) ? LETTER_NAMES[c] : c.toLowerCase()}.png`;
 }
 // Whether every character of `text` is one the lettering draws (a space
 // included), so a label loses nothing.
 export const letterable = (text) => typeof text === "string" && [...text].every((ch) => letterWidth(ch) > 0);
 
+// Characters that take no room of their own: combining marks (an accent typed
+// as a second character), joiners and other format characters, variation
+// selectors, controls, and the emoji's skin tones. Unicode's own classes where
+// the engine has them, else the common ranges.
+const ZERO_WIDTH = (() => {
+  try {
+    return new RegExp("^[\\p{M}\\p{Cf}\\p{Cc}\\u{1F3FB}-\\u{1F3FF}]$", "u");
+  } catch {
+    return /^(?:[\u0000-\u001f\u007f-\u009f\u00ad\u0300-\u036f\u0483-\u0489\u1ab0-\u1aff\u1dc0-\u1dff\u200b-\u200f\u202a-\u202e\u2060-\u2064\u20d0-\u20ff\ufe00-\ufe0f\ufe20-\ufe2f\ufeff]|\ud83c[\udffb-\udfff]|\udb40[\udc00-\udfff])$/;
+  }
+})();
+// A regional indicator, two of which make a flag.
+const isFlagHalf = (ch) => ch >= "\u{1F1E6}" && ch <= "\u{1F1FF}" && ch.length === 2;
+// What the lettering draws for one character (a code point) of any text: the
+// character itself (lower case as a capital); a space for any white space;
+// nothing for a character of no width (above); else its base letters, an
+// accented Latin letter folding to its plain capital ("é" to "E", "ﬁ" to
+// "FI"); else UNKNOWN. Never a character outside LETTERS.
+function letterOf(ch) {
+  const c = capitalOf(ch);
+  if (letterWidth(c)) return c;
+  if (/^\s$/.test(ch)) return " ";
+  if (ZERO_WIDTH.test(ch)) return "";
+  let base = [];
+  try {
+    base = [...ch.normalize("NFKD")].filter((b) => !ZERO_WIDTH.test(b)).map(capitalOf);
+  } catch {
+    // no normalize(): a placeholder
+  }
+  return base.length > 0 && base.length <= 3 && base.every((b) => b !== " " && letterWidth(b) > 0) ? base.join("") : UNKNOWN;
+}
+// How many art px the lettering takes to set `text` (all of it in LETTERS):
+// each character its width plus 1, and 1 for the last one's shadow.
+export const lettersWidth = (text) => [...text].reduce((x, ch) => x + letterWidth(ch) + 1, 1);
+// Any text (a name a user typed: lower case, accents, emoji, any script, any
+// length) as the lettering draws it, every character in LETTERS (letterOf; an
+// emoji joined into one with zero-width joiners, or a flag, is one UNKNOWN; a
+// run of spaces is one), and at most `max` art px wide (lettersWidth): a
+// longer one is cut after the last character that leaves room for an
+// ELLIPSIS, spaces before it dropped.
+// It stops reading once past `max`, and after FIT_READ characters whatever
+// they are (ones that take no room never fill it), so a very long name costs
+// no more than a short one; what it gives never starts or ends with a space.
+// Anything that is not a string is "".
+const FIT_READ = 256;
+export function letterFit(text, max = Infinity) {
+  if (typeof text !== "string") return "";
+  const kept = [];
+  let w = 1;
+  let read = 0;
+  const cut = () => {
+    const room = max - (letterWidth(ELLIPSIS) + 1);
+    while (kept.length && (w > room || kept[kept.length - 1] === " ")) w -= letterWidth(kept.pop()) + 1;
+    return w + letterWidth(ELLIPSIS) + 1 <= max ? `${kept.join("")}${ELLIPSIS}` : "";
+  };
+  let joined = false; // the character after a joiner is part of the one before it
+  let flag = false; // and so is a flag's second half
+  for (const ch of text) {
+    if (++read > FIT_READ) return cut();
+    if (joined) {
+      joined = false;
+      continue;
+    }
+    if (ch === "\u200d") {
+      joined = kept[kept.length - 1] === UNKNOWN; // only an emoji takes the next one into itself
+      continue;
+    }
+    if (isFlagHalf(ch)) {
+      flag = !flag;
+      if (!flag) continue;
+    } else flag = false;
+    for (const c of letterOf(ch)) {
+      if (c === " " && (!kept.length || kept[kept.length - 1] === " ")) continue; // a run of spaces is one, and none lead
+      const cw = letterWidth(c) + 1;
+      if (w + cw > max) return cut();
+      kept.push(c);
+      w += cw;
+    }
+  }
+  if (kept[kept.length - 1] === " ") kept.pop();
+  return kept.join("");
+}
+
 // Every label the HUD sets in the lettering, as text (main.js draws them in
 // capitals; CI and the tests check each can be drawn): the sign's title, its
 // button, its line while nobody is in; the stage section's stage and farm
 // mark; a failed attempt's note (fail() in main.js: why, then where it went
-// back to) and the countdown to the next stage. The numbers beside them are
-// shortNumber's and clockText's.
+// back to) and the countdown to the next stage; the boss's plate once it is
+// down; the tags of you and the stations in town. The numbers beside them are
+// shortNumber's and clockText's. (An agent's tag is its space and tab names,
+// any text: see letterFit.)
 export const LABELS = {
   title: "Raid Party",
   start: "Start Raid",
@@ -409,6 +508,11 @@ export const LABELS = {
   wiped: "Wiped!",
   back: (why, n) => `${why} Back to stage ${n}`,
   moving: (n, s) => `Moving to stage ${n} in ${s}`,
+  slain: (name) => `${name} slain!`,
+  you: "You",
+  codex: "Codex",
+  training: "Training",
+  shop: "Shop",
 };
 
 const MAX = Number.MAX_SAFE_INTEGER;

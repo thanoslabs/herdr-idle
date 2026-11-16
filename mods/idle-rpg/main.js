@@ -46,8 +46,9 @@
 // In the top-right corner, how many agents are in each status (an icon with a
 // count on its corner, hidden at none), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
-// The sign (top left), the stage section (top centre, in a raid) and that
-// corner are pixel frames with their words in a pixel lettering (see hudLayout).
+// The sign (top left), the stage section (top centre, in a raid), that corner
+// and the boss's plate are pixel frames with their words in a pixel lettering
+// (see hudLayout); the name tags under everyone are in it too (see tag).
 // Layout props: { inset } = left edge of the sign (84 leaves room for macOS buttons).
 
 import { View, div, image } from "gpui-kit";
@@ -90,7 +91,9 @@ import {
   healthBonus,
   loadState,
   letterArt,
+  letterFit,
   letterWidth,
+  lettersWidth,
   lookArt,
   maxHpOf,
   monsterArt,
@@ -122,7 +125,7 @@ const ART = "mods/idle-rpg/art";
 // ".png" ("scene/wall.png"). The pictures are in folders by what they show,
 // then by what it is doing (see tools/idle-rpg-sprites.py); rules.js builds the
 // paths that depend on the state or an agent (lookArt, weaponArt, hatArt,
-// attackArt, monsterArt, glyphArt), and the rest are named where they are drawn.
+// attackArt, monsterArt, glyphArt, letterArt), and the rest are named where they are drawn.
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
 //   seen, battle, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
@@ -234,9 +237,31 @@ const ATTACK_SIZE = {
 };
 const sizeOf = (part) => ATTACK_SIZE[part.replace(/\/[lr]$/, "")] ?? [40, 40];
 const MONSTER_Y = 108; // where its feet are on the floor
+// The boss's name plate (see plate): a HUD frame holding the name and HP in
+// the lettering on one line (PLATE_TEXT_Y), the HP bar under them
+// (PLATE_BAR_Y, PLATE_BAR_H: a 2px outline round its fill) and, while the boss
+// has a status or the party's hex on it, a row of icons (PLATE_ICON_Y, 2
+// screen px an art px), the plate PLATE_ICON_H + 2 taller. The stage and the
+// time are in the stage section. Its width is fixed for each kind of boss:
+// its name, PLATE_GAP, and room for the widest HP it can show (HP_ROOM_TEXT:
+// shortNumber's widest, twice), at least BAR_W inside the frame and PLATE_PAD.
 const BAR_W = 136;
-const PLATE_H = 28; // the boss's name plate: the name and HP, and the health bar (the stage and the time are in the stage section)
-const PLATE_ICON_H = 18; // and under them, while the boss has a status or the party's hex on it, a row of icons (2 screen px an art px)
+const PLATE_PAD = 4;
+const PLATE_GAP = 8;
+const HP_ROOM_TEXT = "9.9E99/9.9E99";
+const PLATE_TEXT_Y = 6;
+const PLATE_BAR_Y = 22;
+const PLATE_BAR_H = 10;
+const PLATE_ICON_Y = 34;
+const PLATE_H = 38;
+const PLATE_ICON_H = 18;
+// the HP bar's colours by the share left (above a half, above a fifth, else),
+// each with a lighter top edge
+const PLATE_TONES = [
+  { above: 1 / 2, fill: "#4cd47b", edge: "#9ff0bd" },
+  { above: 1 / 5, fill: "#ffd166", edge: "#ffe7a3" },
+  { above: -Infinity, fill: "#ff5d5d", edge: "#ff9b9b" },
+];
 // Weapon effects (effects.js). Damage over time is gathered tick by tick and
 // lands once a second (as the attempt's time shown turns, when the stage section is
 // drawn anyway; every DOT_TICKS ticks while it stands still), one sum per
@@ -371,30 +396,71 @@ function pixelText(text, colour, scale) {
     .children(parts);
 }
 
-// Words and numbers on the HUD in the lettering (LETTERS in rules.js: capitals,
-// digits and a few signs; lower case is drawn as capitals), as a row of
-// pictures at 2 screen px an art px in one of LETTER_COLOURS, set like
+// Words and numbers on the HUD and the name tags in the lettering (LETTERS in
+// rules.js: capitals, digits and signs; lower case is drawn as capitals), as a
+// row of pictures at 2 screen px an art px in one of LETTER_COLOURS, set like
 // pixelText: each its width (letterWidth) plus 1 after the last, so neighbours
-// share an outline column; a space is only its width. Characters it does not
-// have are left out. letterW gives the width it takes up.
+// share an outline column; a space is only its width. Any text can be given:
+// letterFit turns what the face lacks into its base letters or a placeholder,
+// never nothing. letterW gives the width it takes up. The row is a relative box,
+// or at `at` ({ left, top }) an absolute one, which saves a box round it.
 const LETTER_H = GLYPH_H * 2;
-const letterW = (text) => ([...String(text)].reduce((x, ch) => x + (letterWidth(ch) ? letterWidth(ch) + 1 : 0), 0) + 1) * 2;
-function letterText(text, colour) {
+const letterW = (text) => lettersWidth(letterFit(String(text))) * 2;
+function letterText(text, colour, at = null) {
   const parts = [];
   let x = 0;
-  for (const ch of String(text)) {
-    const w = letterWidth(ch);
-    if (!w) continue;
+  for (const ch of letterFit(String(text))) {
     const art = letterArt(colour, ch);
-    if (art) parts.push(div().absolute().left(x * 2).top(0).child(image(src(art)).w((w + 2) * 2).h(LETTER_H)));
-    x += w + 1;
+    if (art) parts.push(div().absolute().left(x * 2).top(0).child(image(src(art)).w((letterWidth(ch) + 2) * 2).h(LETTER_H)));
+    x += letterWidth(ch) + 1;
   }
-  return div()
-    .relative()
+  return (at ? div().absolute().left(at.left).top(at.top) : div().relative())
     .flex_none()
     .w((x + 1) * 2)
     .h(LETTER_H)
     .children(parts);
+}
+
+// A name tag (an agent's space and tab, yours, a station's): its text in the
+// lettering on a small pixel plate, lighter than the HUD's frames since many
+// may show: a flat fill with a 2px outline, its corners cut like a frame's, no
+// bevel. TAG_H high and as wide as its text plus TAG_PAD a side; `fit` is the
+// text as letterFit gives it, at most TAG_TEXT art px (tagFit), so a tag is at
+// most TAG_MAX_W wide: agents' default spots are CELL_W (88) apart, so
+// neighbours' tags keep 4px between them. `tone` is TAG.plain or TAG.hot (a
+// station under the pointer, or you with your card open). The caller places it.
+const TAG_H = 18;
+const TAG_PAD = 4; // 2px of outline and 2 of fill each side of the text
+const TAG_MAX_W = CELL_W - 4;
+const TAG_TEXT = (TAG_MAX_W - 2 * TAG_PAD) / 2; // 38 art px of text
+const TAG = {
+  plain: { fill: "#2b3649b8", edge: "#141a26", text: "white" },
+  hot: { fill: "#2b3649", edge: "#ffffff", text: "white" },
+};
+const tagFit = (text) => letterFit(text, TAG_TEXT);
+const tagW = (fit) => lettersWidth(fit) * 2 + 2 * TAG_PAD;
+// The boss's plate's width for a kind of boss (MONSTERS): see PLATE_PAD.
+const plateW = (kind) => 2 * (FRAME + PLATE_PAD) + Math.max(BAR_W, letterW(kind.name) + PLATE_GAP + letterW(HP_ROOM_TEXT));
+
+// An agent's tag reads "SPACE·TAB" (TAG_SEP between its space and tab
+// names, either left out when blank; "·" when both are).
+const TAG_SEP = "\u00b7";
+// (a part with nothing to draw, like one of zero-width characters, is left out;
+// a part is read no further than letterFit would.)
+const tagName = (a) =>
+  [a.space_name, a.tab_name]
+    .map((n) => (typeof n === "string" ? n.slice(0, 512).trim() : ""))
+    .filter((n) => letterFit(n) !== "")
+    .join(TAG_SEP) || TAG_SEP;
+function tag(fit, tone = TAG.plain) {
+  const w = tagW(fit);
+  return div()
+    .w(w)
+    .h(TAG_H)
+    .child(div().absolute().left(2).top(0).w(w - 4).h(TAG_H).bg(tone.fill).border_t(2).border_b(2).border_color(tone.edge))
+    .child(div().absolute().left(0).top(2).w(2).h(TAG_H - 4).bg(tone.edge))
+    .child(div().absolute().left(w - 2).top(2).w(2).h(TAG_H - 4).bg(tone.edge))
+    .child(letterText(fit, tone.text, { left: TAG_PAD, top: 2 }));
 }
 
 // A pixel frame `w` x `h` px, as the pieces to lay first in a box that size
@@ -1221,9 +1287,10 @@ export default class RaidParty extends View {
     const icons = dead ? [] : plateIcons(this.statuses, this.auras());
     const plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
     const mid = left + Math.round(kind.w / 2);
+    const half = plateW(kind) / 2;
     const hud = this.hudBox ?? {};
     const clear = [hud.sign, hud.strip, hud.stage]
-      .filter((b) => b && b.x < mid + BAR_W / 2 + 4 && mid - BAR_W / 2 - 4 < b.x + b.w)
+      .filter((b) => b && b.x < mid + half && mid - half < b.x + b.w)
       .reduce((y, b) => Math.max(y, b.y + b.h + 4), 4);
     const plateTop = Math.max(top - plateH - 4, clear - this.wallH);
     const plate = this.plate(m, kind, mid, plateTop, icons);
@@ -1308,46 +1375,61 @@ export default class RaidParty extends View {
   }
 
   // The boss's name plate, over its head (kept inside the scene, and clear of
-  // the HUD, when the wall is low): the boss's name and HP, and its health bar
-  // (the stage and the time left are in the stage section, see stageSection).
-  // The bar glides between renders. `icons` (plateIcons in effects.js): a last
-  // row of icons for the statuses on it (burn, chill, venom with its stacks)
-  // and the party's hex.
+  // the HUD, when the wall is low): a HUD frame (framePieces) plateW(kind)
+  // wide holding the boss's name in gold, its HP right of it in white (both
+  // rounded up, so a boss at full HP never reads more than its maximum), and
+  // under them its HP bar, green, yellow or red by the share left
+  // (PLATE_TONES), gliding between renders; once it is down, "<NAME> SLAIN!"
+  // over the empty bar. `icons` (plateIcons in effects.js): a last row of
+  // icons for the statuses on it (burn, chill, venom with its stacks) and the
+  // party's hex. The stage and the time left are in the stage section.
   plate(m, kind, x, top, icons = []) {
     const dead = m.hp <= 0;
-    const tone = m.hp > m.maxHp / 2 ? "#4cd47b" : m.hp > m.maxHp / 5 ? "#ffd166" : "#ff5d5d";
-    return v_flex()
+    const w = plateW(kind);
+    const h = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
+    const share = m.hp / m.maxHp;
+    const tone = PLATE_TONES.find((t) => share > t.above) ?? PLATE_TONES[PLATE_TONES.length - 1];
+    const inner = w - 2 * (FRAME + PLATE_PAD);
+    const hp = `${shortNumber(Math.ceil(m.hp))}/${shortNumber(Math.ceil(m.maxHp))}`;
+    return div()
       .id("idle-rpg-plate")
       .absolute()
-      .left(x - BAR_W / 2 - 4)
+      .left(x - w / 2)
       .top(top)
-      .w(BAR_W + 8)
-      .p(3)
-      .gap(2)
-      .bg("#000000a0")
-      .child(
-        h_flex()
-          .justify_between()
-          .text_size(10)
-          .font_semibold()
-          .text_color(CREAM)
-          .child(div().child(dead ? `${kind.name} slain!` : kind.name))
-          // both rounded up, so a boss at full HP never reads more than its maximum
-          .child(div().child(dead ? "" : `${shortNumber(Math.ceil(m.hp))}/${shortNumber(Math.ceil(m.maxHp))}`)),
-      )
+      .w(w)
+      .h(h)
+      .children(framePieces(w, h))
+      .child(letterText(dead ? LABELS.slain(kind.name) : kind.name, "gold", { left: FRAME + PLATE_PAD, top: PLATE_TEXT_Y }))
+      .when(!dead, (el) => el.child(letterText(hp, "white", { left: w - FRAME - PLATE_PAD - letterW(hp), top: PLATE_TEXT_Y })))
       .child(
         div()
-          .w(BAR_W)
-          .h(8)
-          .bg("#1b2233")
-          .child(div().id("idle-rpg-monster-hp").h(8).w(Math.round((BAR_W * m.hp) / m.maxHp)).bg(tone).transition("width", { duration: 150, easing: "ease-out" })),
+          .absolute()
+          .left(FRAME + PLATE_PAD)
+          .top(PLATE_BAR_Y)
+          .w(inner)
+          .h(PLATE_BAR_H)
+          .bg(FRAME_COLOURS.dark)
+          .border(2)
+          .border_color(FRAME_COLOURS.outline)
+          .child(
+            div()
+              .id("idle-rpg-monster-hp")
+              .h(PLATE_BAR_H - 4)
+              .w(Math.round(((inner - 4) * Math.max(0, m.hp)) / m.maxHp))
+              .bg(tone.fill)
+              .border_t(2)
+              .border_color(tone.edge)
+              .transition("width", { duration: 150, easing: "ease-out" }),
+          ),
       )
       .when(icons.length > 0, (el) =>
         el.child(
           h_flex()
             .id("idle-rpg-plate-icons")
+            .absolute()
+            .left(FRAME + PLATE_PAD)
+            .top(PLATE_ICON_Y)
             .h(PLATE_ICON_H)
-            .flex_none()
             .gap(3)
             .items_center()
             .children(
@@ -1631,7 +1713,7 @@ export default class RaidParty extends View {
   }
 
   // An agent at rest: shadow, sprite, bubble, name. Returns elements for the floor.
-  critter(a) {
+  critter(a, W) {
     const c = this.sprites[a.address];
     const { x, y } = this.at[a.address];
     const fighting = this.fighting && a.status === "working";
@@ -1649,6 +1731,8 @@ export default class RaidParty extends View {
         ? div().relative().w(72).h(72).child(div().absolute().left(dir > 0 ? 0 : -24).top(0).child(this.sprite(c, `${frame}/${dir > 0 ? "r" : "l"}`, 96, 72)))
         : this.sprite(c, "stand", 72, 72);
     const where = `${a.space_name} · ${a.tab_name}`;
+    const name = tagName(a);
+    const fit = tagFit(name); // as drawn: cut, folded, unknown characters boxed
     const open = this.card === a.address;
     return [
       div()
@@ -1684,17 +1768,17 @@ export default class RaidParty extends View {
       // in a fight a working agent attacks instead of showing the swords
       // overhead, and has its HP bar there (or, knocked out, its stars and rest)
       ...(fighting ? this.vitals(a.address, x, y) : [this.bubble(a, x, y)]),
-      v_flex()
+      // named for where it works (when the tag cannot show the name as typed,
+      // the whole of it is in its tooltip, and on its card, in the app's font);
+      // what kind of agent it is, is on its card
+      tag(fit)
         .id(`idle-rpg-label-${a.address}`)
+        .absolute()
+        .left(clamp(Math.round(x - tagW(fit) / 2), 2, W - tagW(fit) - 2))
+        .top(y + 11)
         .transition("left", MOVE)
         .transition("top", MOVE)
-        .absolute()
-        .left(x - CELL_W / 2)
-        .top(y + 11)
-        .w(CELL_W)
-        .items_center()
-        // named for where it works; what kind of agent it is, is on its card
-        .child(div().max_w(CELL_W - 4).px(5).rounded(7).bg("#00000066").truncate().text_size(10).font_semibold().text_color(CREAM).child(where)),
+        .when(fit !== name.toUpperCase(), (el) => el.tooltip(where)),
     ];
   }
 
@@ -2050,7 +2134,8 @@ export default class RaidParty extends View {
               )
           : this.sprite(c, this.walking ? (this.step ? "walk/r" : "walk/l") : "stand", 72, 72),
       )
-      .child(div().px(6).rounded(7).bg(this.card === YOU ? "#00000080" : "#00000040").text_size(10).font_semibold().text_color(CREAM).child("You"));
+      // your tag, outlined in white while your card is open
+      .child(tag(tagFit(LABELS.you), this.card === YOU ? TAG.hot : TAG.plain).id("idle-rpg-you-tag").relative());
   }
 
   // One line of a card: a level, and a bar and numbers for the way to the next.
@@ -2309,7 +2394,7 @@ export default class RaidParty extends View {
       s.x = Math.round(clamp(s.x, 36, W - 36));
       s.y = Math.round(s.y);
       if (fire !== null && !foeKind) this.at[a.address] = this.clearOfFire(s, fire);
-      actors.push({ y: this.at[a.address].y, draw: () => this.critter(a) });
+      actors.push({ y: this.at[a.address].y, draw: () => this.critter(a, W) });
       if (this.fighting && a.status === "working" && this.monster.hp > 0) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: a.address, cls: this.sprites[a.address], ...this.at[a.address] }, W, foeKind) });
     }
     // level-up notes and critical blows' numbers, drawn after the HUD with the
@@ -2998,10 +3083,11 @@ export default class RaidParty extends View {
     // Under the pointer a station shows it can be used, plainly enough for
     // broad daylight and in the scene's own style: its picture gains a white
     // pixel outline (each station's "hot" picture) and hops up a pixel of art, a white
-    // arrow bobs over it, and its name goes white on a darker pill.
+    // arrow bobs over it, and its name's tag is outlined in white on a solid fill.
     // `inside(hot)` is what hops; `still(hot)` stays put behind it
     const station = (id, left, top, w, h, name, act, inside, still = () => []) => {
       const hot = this.hot === id;
+      const fit = tagFit(name);
       return div()
         .id(`idle-rpg-station-${id}`)
         .absolute()
@@ -3031,22 +3117,11 @@ export default class RaidParty extends View {
             .children(inside(hot)),
         )
         .child(
-          h_flex()
+          tag(fit, hot ? TAG.hot : TAG.plain)
+            .id(`idle-rpg-station-${id}-tag`)
             .absolute()
-            .left(w / 2 - 40)
-            .top(h + 3)
-            .w(80)
-            .justify_center()
-            .child(
-              div()
-                .px(5)
-                .rounded(7)
-                .bg(hot ? "#000000b8" : "#00000066")
-                .text_size(10)
-                .font_semibold()
-                .text_color(hot ? "#ffffff" : CREAM)
-                .child(name),
-            ),
+            .left(Math.round(w / 2 - tagW(fit) / 2))
+            .top(h + 3),
         )
         .when(hot, (el) =>
           el.child(
@@ -3074,7 +3149,7 @@ export default class RaidParty extends View {
         -34,
         112,
         56,
-        "Codex",
+        LABELS.codex,
         () => this.openCodex(!this.codex),
         (hot) => [art("book", hot, 32, 24, 36, -8)],
         (hot) => (hot ? [art("table", true, 112, 56)] : []), // outlined over the table that is always there
@@ -3085,11 +3160,11 @@ export default class RaidParty extends View {
         -52,
         48,
         72,
-        "Training", // the skill points waiting are on the sign's star
+        LABELS.training, // the skill points waiting are on the sign's star
         () => this.openSkills(this.skillsOpen ? null : (CLASSES.find((c) => pointsLeft(this.progress, c) > 0) ?? this.sprites[YOU])),
         (hot) => [art("dummy", hot, 48, 72)],
       ),
-      station("shop", 304, -64, 104, 84, "Shop", () => this.openShop(this.shopOpen ? null : this.sprites[YOU]), (hot) => [art("stall", hot, 104, 84)]),
+      station("shop", 304, -64, 104, 84, LABELS.shop, () => this.openShop(this.shopOpen ? null : this.sprites[YOU]), (hot) => [art("stall", hot, 104, 84)]),
     ];
   }
 
