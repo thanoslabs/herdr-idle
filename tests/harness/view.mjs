@@ -356,6 +356,30 @@ export class Handle {
   clickFloor(x, y) {
     this.click({ x, y: y + (this.size.height - 152) });
   }
+  // A press where several elements overlap: as GPUI delivers it, to each of
+  // `ids` in turn (the top-most, drawn last, first), each its own handler
+  // only, until one stops propagation, then to the scene's root; at the first's point.
+  pressStack(ids) {
+    const position = this.pointOf(this.get(ids[0]));
+    const ev = { button: "left", click_count: 1, position, modifiers: {} };
+    this.lastPress = position;
+    let stopped = false;
+    for (const id of ids) {
+      const el = this.get(id);
+      const cx = new Cx(this);
+      const fn = el.handlers["mouse_down:left"];
+      if (!fn) continue;
+      fn({ ...ev, position: { x: position.x + this.origin.x, y: position.y + this.origin.y } }, cx);
+      if ((stopped = cx.stopped)) break;
+    }
+    if (!stopped) this.dispatch(this.tree, "mouse_down:left", ev, { bubble: false });
+    this.flush();
+  }
+  // The pointer arriving (`on` true) or leaving where several overlap: each of `ids` hears it in turn.
+  hoverStack(ids, on = true) {
+    for (const id of ids) this.dispatch(this.get(id), "hover", on, { bubble: false });
+    this.flush();
+  }
   // The pointer enters (`on` true) or leaves `id`.
   hover(id, on = true) {
     this.dispatch(this.get(id), "hover", on, { bubble: false });

@@ -1,7 +1,7 @@
 // Many agents at once (PLAN.md, Many agents at once). Small parties stand
 // where they always have (place()'s default spots in town, formation()'s in a
 // raid), pinned here against the old code. Past that a crowd stands on a brick
-// lattice in one pass (main.js, townCrowd and raidCrowd): each on a spot of
+// lattice in one pass (main.js, townLattice and raidCrowd): each on a spot of
 // its own until every spot at the densest pitch is taken, clear of the
 // stations, the campfire and the boss, warriors nearest the boss, a spot a
 // drag chose kept; and once it is tighter than a tag is wide, only some tags
@@ -14,7 +14,10 @@
 // place() and formation() alone, as the ratio of the fastest of several runs.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { agent, mountView, raid } from "./harness/view.mjs";
+import { loadState } from "../mods/idle-rpg/rules.js";
+import { KO_TICKS } from "../mods/idle-rpg/party.js";
+import { Fight, seeded } from "../tools/sim.mjs";
+import { agent, mountRaid, mountView, raid, timeAt } from "./harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
 const CLASSES = ["wizard", "healer", "warrior", "archer"];
@@ -235,10 +238,14 @@ describe("a crowd in town", () => {
   test("the stations, their tags and the campfire are kept clear; the crowd spreads over the width", async () => {
     for (const W of THOROUGH ? [640, 800, 1280, 1459, 1920, 2918] : [1280, 1459, 2918])
       for (const n of [30, 100, 400]) {
-        const { v } = await arrive(n, { width: W });
+        // (a5 dropped by a drag before the training dummy, its bubble over the dummy's tag)
+        const dropped = { x: 228, y: 100 };
+        const { v } = await arrive(n, { width: W, spots: { a5: dropped } });
         if (v.view.pitch === null) continue; // a small party at this width: the default spots (above)
+        assert.deepEqual(v.view.at.a5, dropped);
+        assert.ok(!v.view.bubbled.has("a5"), "the dropped one's bubble is left out");
         const fire = fireX(W);
-        const spots = spotsOf(v);
+        const spots = v.world.agents.filter((a) => a.address !== "a5").map((a) => v.view.at[a.address]);
         for (const s of spots) {
           assert.ok(s.y >= 110 || s.x >= STATION_X, `${key(s)} before the stations at ${W}`);
           if (fire !== null) assert.ok(Math.abs(s.x - fire) >= FIRE_CLEAR, `${key(s)} in the campfire (${fire}) at ${W}`);
@@ -275,7 +282,18 @@ describe("a crowd in town", () => {
     }
   });
 
-  test("an older save with a crowd stacked on the default spots spreads out", async () => {
+  test("an older save with agents stacked on one spot spreads out: a default one, or one a narrow window clamped them to", async () => {
+    for (const spot of [{ x: 250, y: 64 }, { x: 864, y: 64 }]) {
+      // a small party: all 8 on the one spot
+      const { v } = await arrive(8, { spots: Object.fromEntries(Array.from({ length: 8 }, (_, i) => [`a${i}`, spot])) });
+      assert.equal(v.view.pitch, null);
+      assert.equal(new Set(spotsOf(v).map(key)).size, 8, `8 saved on ${key(spot)}`);
+      assert.deepEqual(v.view.at.a0, spot, "the first keeps it");
+      // in a crowd: 4 of 100 on the one spot
+      const { v: c } = await arrive(100, { width: 1459, spots: Object.fromEntries(Array.from({ length: 4 }, (_, i) => [`a${i}`, spot])) });
+      assert.equal(new Set(spotsOf(c).map(key)).size, 100, `4 of 100 saved on ${key(spot)}`);
+    }
+    // an older save with a crowd stacked on the default spots
     const spots = Object.fromEntries(Array.from({ length: 100 }, (_, i) => [`a${i}`, { x: 250 + (i % 11) * 88, y: i % 22 < 11 ? 64 : 104 }]));
     const { v } = await arrive(100, { spots });
     assert.equal(new Set(spotsOf(v).map(key)).size, 100);
@@ -283,6 +301,41 @@ describe("a crowd in town", () => {
     v.setAgents(v.world.agents.slice(0, 8));
     assert.equal(v.view.pitch, null);
     assert.equal(new Set(v.world.agents.map((a) => key(v.view.at[a.address]))).size, 8);
+  });
+
+  test("seats are kept: one leaving or joining moves nobody else while the lattice stays", async (t) => {
+    for (const n of [30, 100, 400]) {
+      const { v } = await arrive(n, { width: 1459 });
+      const before = { ...v.view.at };
+      const lattice = { ...v.view.seats };
+      // one from the middle leaves
+      const gone = v.world.agents[Math.floor(n / 2)].address;
+      v.setAgents(v.world.agents.filter((a) => a.address !== gone));
+      assert.equal(v.view.seats.dx, lattice.dx, `${n}: the lattice stays as one leaves`);
+      for (const a of v.world.agents) assert.deepEqual(v.view.at[a.address], before[a.address], `${n}: ${a.address} moved as ${gone} left`);
+      // and one joins
+      const after = { ...v.view.at };
+      const was = { dx: v.view.seats.dx, rows: v.view.seats.rows.join() };
+      v.setAgents([...v.world.agents, agent("new1", "idle")]);
+      const same = v.view.seats.dx === was.dx && v.view.seats.rows.join() === was.rows;
+      if (same) for (const a of v.world.agents) if (a.address !== "new1") assert.deepEqual(v.view.at[a.address], after[a.address], `${n}: ${a.address} moved as one joined`);
+      assert.ok(!spotsOf(v).some((s, i) => v.world.agents[i].address !== "new1" && key(s) === key(v.view.at.new1)), "the newcomer on a seat of its own");
+      t.diagnostic(`${n}: a join ${same ? "kept the lattice" : "changed the lattice"}`);
+    }
+  });
+
+  test("the seats' memory holds only those here, over 1,000 comings and goings", async () => {
+    const { v } = await arrive(100, { width: 1459 });
+    // (place() alone, as each render calls it: a render a step would only be slower)
+    let list = v.world.agents;
+    for (let i = 0; i < 1000; i++) {
+      list = [...list.slice(1), agent(`m${i}`, STATUSES[i % 4])];
+      v.view.sprites[`m${i}`] = CLASSES[i % 4];
+      v.view.place(list, 1459);
+      assert.ok(v.view.seats.seat.size <= 100, `${v.view.seats.seat.size} seats`);
+    }
+    v.setAgents(list);
+    assert.equal(new Set(spotsOf(v).map(key)).size, 100);
   });
 });
 
@@ -522,6 +575,87 @@ describe("name tags in a crowd", () => {
     assert.ok(closest >= 4, "two tags one above the other keep 4px apart");
   });
 
+  test("YOU is never covered: no agent's tag or bubble over your tag, and you are drawn over every agent", async () => {
+    for (const youAt of [{ x: 600, y: 70 }, { x: 1000, y: 110 }]) {
+      const list = Array.from({ length: 100 }, (_, i) => agent(`a${i}`, STATUSES[i % 4], { space_name: `s${i}`, tab_name: "t" }));
+      const { saved } = raid({ battle: false, classes: [], youAt });
+      saved.sprites = { you: "archer", ...Object.fromEntries(list.map((a, i) => [a.address, CLASSES[i % 4]])) };
+      saved.seen = Object.fromEntries(list.map((a) => [a.address, 1_800_000_000_000]));
+      const v = await mountView({ saved, agents: list, width: 1459 });
+      assert.ok(v.view.thin);
+      // your tag is under your sprite, centred (a column the harness does not lay out: worked out here)
+      const w = v.box("idle-rpg-you-tag").w;
+      const yours = { x: v.view.you.x - w / 2, y: v.view.you.y + 6 + (360 - 152), w, h: 18 };
+      for (const id of v.ids("idle-rpg-label-")) assert.ok(!overlap(v.box(id), yours), `${id} over YOU at ${key(youAt)}`);
+      for (const a of list.filter((a) => v.view.bubbled.has(a.address))) {
+        const { x, y } = v.view.at[a.address];
+        const bubble = { idle: { x: x + 4, y: y - 120, w: 64, h: 64 }, working: { x: x - 30, y: y - 104, w: 60, h: 40 }, blocked: { x: x - 18, y: y - 114, w: 36, h: 46 }, done: { x: x - 18, y: y - 108, w: 36, h: 40 } }[a.status];
+        assert.ok(!overlap({ ...bubble, y: bubble.y + (360 - 152) }, yours), `${a.address}'s bubble over YOU`);
+      }
+      // drawn over every agent (paint order: later is on top)
+      const order = v.all(() => true);
+      const mine = order.findIndex((el) => el.key === "idle-rpg-you");
+      const last = Math.max(...order.map((el, i) => (el.key?.startsWith("critter-") ? i : -1)));
+      assert.ok(mine > last, "you after every agent");
+    }
+  });
+
+  test("the pointer's agent: forgotten once the crowd loosens or it goes; coming back to it is no render", async () => {
+    const { v } = await arrive(100, { width: 1459 });
+    v.hover("critter-a41"); // idle: its tag shows only for the pointer
+    assert.ok(v.has("idle-rpg-label-a41"));
+    const renders = v.renders;
+    v.hover("critter-a41"); // the pointer arriving again on the one it is over
+    assert.equal(v.renders, renders, "no render");
+    // the crowd loosens (no hover tracked then), then grows back: a41's tag is not left showing
+    const all = v.world.agents;
+    v.setAgents(all.slice(0, 20));
+    assert.equal(v.view.hover, null);
+    v.setAgents(all);
+    assert.ok(v.view.thin);
+    assert.ok(!v.has("idle-rpg-label-a41"), "no tag without the pointer");
+    // and an agent that goes is forgotten
+    v.hover("critter-a45");
+    v.setAgents(all.filter((a) => a.address !== "a45"));
+    assert.equal(v.view.hover, null);
+  });
+
+  test("where characters overlap, the top-most takes a press and the pointer; leaving another changes nothing", async () => {
+    const { v } = await arrive(400, { width: 1459 });
+    // two neighbours in rows next to each other, their sprites overlapping: the nearer (lower) one is drawn on top
+    const list = v.world.agents;
+    let pair = null;
+    for (const p of list)
+      for (const q of list) {
+        const [a, b] = [v.view.at[p.address], v.view.at[q.address]];
+        if (!pair && a.y > b.y && a.y - b.y < 30 && Math.abs(a.x - b.x) < 20) pair = [p.address, q.address];
+      }
+    assert.ok(pair, "two overlapping");
+    const [front, back] = pair;
+    v.pressStack([`critter-${front}`, `critter-${back}`]);
+    assert.equal(v.view.press.address, front, "the top-most takes the press");
+    v.release();
+    assert.equal(v.view.card, front);
+    v.click("idle-rpg-card-x");
+    v.hoverStack([`critter-${front}`, `critter-${back}`]);
+    assert.equal(v.view.hover, front, "and the pointer");
+    v.hoverStack([`critter-${back}`], false);
+    assert.equal(v.view.hover, front, "leaving one that is not it");
+  });
+
+  test("tags thin under 88px apart and come back only from 96 (the band between keeps them as they were)", async () => {
+    const { v } = await arrive(30, { width: 1459 });
+    assert.ok(v.view.pitch >= 88 && v.view.pitch < 96 && !v.view.thin, `pitch ${v.view.pitch}`);
+    const all = v.world.agents;
+    v.setAgents([...all, ...Array.from({ length: 70 }, (_, i) => agent(`b${i}`, "idle"))]);
+    assert.ok(v.view.thin);
+    v.setAgents(all);
+    assert.ok(v.view.pitch >= 88 && v.view.pitch < 96, `pitch ${v.view.pitch}`);
+    assert.ok(v.view.thin, "still thinned in the band");
+    v.setAgents(all.slice(0, 25));
+    assert.ok(v.view.pitch >= 96 && !v.view.thin, `pitch ${v.view.pitch}`);
+  });
+
   test("tighter than a tag is wide: bubbles and HP bars are laid the same way, none over another", async () => {
     const { v } = await arrive(400, { width: 1459 });
     assert.ok(v.view.bubbled.size > 0 && v.view.bubbled.size < 400);
@@ -531,5 +665,83 @@ describe("name tags in a crowd", () => {
     const bars = r.ids("idle-rpg-hp-").filter((id) => id !== "idle-rpg-hp-you").map((id) => r.box(id));
     assert.ok(bars.length > 20 && bars.length < 400, `${bars.length} bars`);
     for (let i = 0; i < bars.length; i++) for (let j = i + 1; j < bars.length; j++) assert.ok(!overlap(bars[i], bars[j]), `bars ${i} and ${j}`);
+  });
+});
+
+describe("the boss's area attack in a crowd", () => {
+  const EVEN = ["warrior", "wizard", "archer", "healer"];
+  const inRing = (p, x, y) => ((p.x - x) / 70) ** 2 + ((p.y - y) / 35) ** 2 <= 1;
+  // Plays `n` working agents (an even mix) and you against the boss of `stage`
+  // and checks every area attack that lands: as many caught as the old
+  // formation (main's) has standing inside the ring round the target's spot
+  // there, the target among them if it stands; and `exact`: they are exactly
+  // those (a small party, drawn where main draws it). Returns the counts.
+  async function areas(n, { stage = 3, exact = false, want = 3, seed = 1 } = {}) {
+    const classes = Array.from({ length: n }, (_, i) => EVEN[i % 4]);
+    const v = await mountRaid({ classes, you: "archer", stage, health: 40, level: 30 }, { width: 1459, seed });
+    const view = v.view;
+    const counts = [];
+    let seen = null;
+    for (let i = 0; i < 2400 && counts.length < want; i++) {
+      v.advance(250);
+      const a = view.party.foe.last;
+      if (!a || a.kind !== "area" || a.id === seen || a.lands !== view.clock) continue;
+      seen = a.id;
+      const members = view.party.members;
+      const keys = Object.keys(members);
+      // on their feet as it landed: up, or knocked out by this very blow
+      const stood = keys.filter((k) => members[k].down === null || (members[k].hitAt === a.lands && members[k].down === a.lands + KO_TICKS));
+      const hit = keys.filter((k) => members[k].hitAt === a.lands);
+      const order = v.world.agents.map((ag) => ag.address);
+      // (the boss now: one killed in the meantime has made way for the next)
+      const old = oldFormation(order.map((k) => view.sprites[k]), 1459, MONSTERS[view.monster.kind]);
+      const oldAt = (k) => (k === "you" ? view.you : old[order.indexOf(k)]);
+      // the spot it was aimed at as the attack started: the target's there, in the old formation
+      const target = { x: a.ox ?? a.x, y: a.oy ?? a.y };
+      const want = stood.filter((k) => inRing(oldAt(k), target.x, target.y));
+      assert.equal(hit.length, want.length, `${n} agents: caught ${hit}, main would catch ${want} (target ${a.target} at ${JSON.stringify(target)})`);
+      if (stood.includes(a.target) && inRing(view.party.members[a.target], a.x, a.y)) assert.ok(hit.includes(a.target), "the target is among them");
+      if (exact) assert.deepEqual(hit.sort(), want.sort());
+      counts.push(hit.length);
+    }
+    assert.equal(counts.length, want, `${n} agents: only ${counts.length} area attacks landed`);
+    return counts;
+  }
+
+  test("a party of up to 12 is caught exactly as in main", async () => {
+    for (const n of [3, 8, 12]) await areas(n, { exact: true });
+  });
+
+  test("13, 30, 100 and 400: as many caught as main's formation puts in the ring", async (t) => {
+    for (const n of [13, 30, 100, 400]) {
+      const counts = await areas(n, { want: n >= 100 ? (THOROUGH ? 2 : 1) : 3 });
+      t.diagnostic(`${n} agents: caught ${counts.join(", ")}`);
+    }
+  });
+
+  test("30 agents: the simulation's first area attack catches as many as the view's", async () => {
+    const o = { classes: Array.from({ length: 30 }, (_, i) => EVEN[i % 4]), you: "archer", stage: 3, health: 40, level: 30 };
+    const v = await mountRaid(o, { seed: 5 });
+    const s = loadState(raid({ now: timeAt(), ...o }).saved);
+    const progress = { stage: s.stage, best: s.best, farming: s.farming, slain: s.slain, gold: s.gold, kills: s.kills, xp: s.xp, skills: s.skills, training: s.training, looks: s.looks, hats: s.hats };
+    const all = v.world.agents;
+    const f = new Fight({ progress, agents: all.map((a) => a.address), idle: [], order: all.map((a) => a.address), sprites: s.sprites, you: s.you, settings: s.settings, random: seeded(5) });
+    // the first area attack each lands, and how many it caught, seen tick by tick
+    const first = { view: null, sim: null };
+    const look = (x, which) => {
+      const a = x.party.foe.last;
+      if (first[which] || a?.kind !== "area" || a.lands !== x.clock) return;
+      first[which] = { lands: a.lands, hits: Object.values(x.party.members).filter((m) => m.hitAt === a.lands).length };
+    };
+    for (let tick = 0; tick < 2400 && !(first.view && first.sim); tick++) {
+      v.advance(250);
+      f.step();
+      look(v.view, "view");
+      look(f, "sim");
+      if (!first.view) assert.equal(v.view.clock, f.clock, "in step until then");
+    }
+    assert.ok(first.view && first.sim, "an area attack landed in both");
+    assert.deepEqual(first.view, first.sim);
+    assert.ok(first.sim.hits >= 2, `a catch of several: ${first.sim.hits}`);
   });
 });

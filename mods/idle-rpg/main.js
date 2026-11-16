@@ -542,10 +542,11 @@ function stationTagBox([left, top, w, h, name]) {
 // roomy (TAG_ROOM or more: every tag fits beside its neighbours) down to
 // PITCH_MIN (nobody overlaps: two characters overlap when closer than NEAR
 // both ways); then rows and pitch shrink together, overlapping evenly, down to
-// PITCH_FLOOR; past that spots are shared, in turn (see townCrowd).
+// PITCH_FLOOR; past that spots are shared, in turn (see townLattice and place).
 const NEAR = { x: 50, y: 30 };
 const ROW_DY = NEAR.y;
 const TAG_ROOM = CELL_W; // a row this far apart shows every tag (TAG_MAX_W and 4px)
+const THIN_BACK = TAG_ROOM + 8; // once thinned (see crowdMarks), tags all show again only from this far apart
 const PITCH_MIN = NEAR.x;
 const PITCH_FLOOR = 16;
 const EDGE_X = 36; // nobody's feet nearer a side of the scene than this
@@ -564,6 +565,7 @@ const RAID_FRONT = MONSTER_Y + 6;
 const RAID_BACK = 24;
 const BOSS_CLEAR = 30;
 const SMALL_PARTY = 12; // a party this size or smaller keeps the old formation, overlaps and all
+const CROWD_JOINERS = 16; // more newcomers than this at once and the town's crowd is seated afresh (see place)
 const RANK_GAP = 24; // between the warriors' ranks and the ranged, beyond a warriors' step
 
 // The lattices to try, roomiest first, as [rows (y, front first), lowest pitch,
@@ -609,11 +611,11 @@ const between = (a, b, base, dx) => Math.max(0, Math.floor((b - base) / dx) - Ma
 // A row's shift in the brick pattern: none in the front row, half a pitch in the next, and so on.
 const brick = (r, dx) => (r % 2 ? Math.floor(dx / 2) : 0);
 
-// Where a crowd of `n` stands in town on a scene W wide with the campfire at
-// `fire` (or null): `cells`, n spots in the order given out (front row first,
-// left to right; when the lattice has more than n, the spare ones are spread
-// evenly between), and the lattice's pitch `dx`. Linear in n.
-function townCrowd(n, W, fire) {
+// The town's crowd lattice on a scene W wide with the campfire at `fire` (or
+// null): `room(rows, dx)`, how many spots a lattice has; `pick(n)`, the one a
+// crowd of n stands on (pickLattice); `cells(rows, dx)`, its spots, front row
+// first, left to right. Each linear in the spots.
+function townLattice(W, fire) {
   const right = Math.floor(W) - EDGE_X;
   const segments = (y) => {
     const left = y >= TOWN_FRONT ? EDGE_X : Math.max(EDGE_X, STATION_X);
@@ -622,15 +624,46 @@ function townCrowd(n, W, fire) {
   };
   const origin = (dx) => EDGE_X + Math.floor(((right - EDGE_X) % dx) / 2); // the lattice centred on the floor
   const room = (rows, dx) => rows.reduce((sum, y, r) => sum + segments(y).reduce((m, [a, b]) => m + between(a, b, origin(dx) + brick(r, dx), dx), 0), 0);
-  const { rows, dx, over } = pickLattice(ladder(TOWN_FRONT, TOWN_BACK, right), (rows, dx) => room(rows, dx) >= n);
-  const all = [];
-  rows.forEach((y, r) => {
-    const base = origin(dx) + brick(r, dx);
-    for (const [a, b] of segments(y)) for (let k = Math.ceil((a - base) / dx); base + k * dx <= b; k++) all.push({ x: base + k * dx, y });
-  });
-  if (!all.length) all.push({ x: EDGE_X, y: TOWN_FRONT });
-  const cells = Array.from({ length: n }, (_, i) => all[over ? i % all.length : Math.floor((i * all.length) / n)]);
-  return { cells, dx };
+  const cells = (rows, dx) => {
+    const all = [];
+    rows.forEach((y, r) => {
+      const base = origin(dx) + brick(r, dx);
+      for (const [a, b] of segments(y)) for (let k = Math.ceil((a - base) / dx); base + k * dx <= b; k++) all.push({ x: base + k * dx, y });
+    });
+    if (!all.length) all.push({ x: EDGE_X, y: TOWN_FRONT });
+    return all;
+  };
+  return { room, cells, pick: (n) => pickLattice(ladder(TOWN_FRONT, TOWN_BACK, right), (rows, dx) => room(rows, dx) >= n) };
+}
+
+// The free spot of `cells` (townLattice's, row by row) a newcomer takes, given
+// which are `taken`: in the run of free spots in a row that leaves it
+// furthest from a taken one (counted in spots), its middle when taken spots
+// close the run at both ends, else its end away from the one taken spot (an
+// empty row: its middle), so the crowd stays about evenly spread; the first
+// such on a tie. Linear in the spots.
+function freeSpot(cells, taken) {
+  let best = -1;
+  let score = -1;
+  for (let i = 0; i < cells.length; ) {
+    let j = i;
+    while (j < cells.length && cells[j].y === cells[i].y) j++; // a row: i to j - 1
+    for (let k = i; k < j; ) {
+      if (taken[k]) {
+        k++;
+        continue;
+      }
+      let e = k;
+      while (e < j && !taken[e]) e++; // a run of free spots: k to e - 1
+      const run = e - k;
+      const [at, far] =
+        k > i && e < j ? [k + Math.floor((run - 1) / 2), Math.floor((run + 1) / 2)] : k > i ? [e - 1, run] : e < j ? [k, run] : [k + Math.floor((run - 1) / 2), run];
+      if (far > score) [best, score] = [at, far];
+      k = e;
+    }
+    i = j;
+  }
+  return best;
 }
 
 // Where a crowd stands in a raid on a scene W wide against a boss of `kind`
@@ -651,7 +684,7 @@ function townCrowd(n, W, fire) {
 // tightest pitch either side stands at }.
 function raidCrowd(sides, W, kind, mid) {
   const right = Math.floor(W) - EDGE_X;
-  const at = {};
+  const at = Object.create(null);
   let tightest = Infinity;
   for (const side of [-1, 1]) {
     const g = { front: kind.core.half + SWORD + side * kind.core.x, back: kind.w / 2 + BOSS_CLEAR, edge: side < 0 ? mid - EDGE_X : right - mid };
@@ -897,11 +930,14 @@ export default class RaidParty extends View {
     // a crowd's layout (see place, formation and crowdMarks), worked out on every render
     this.home = Object.create(null); // <address>: where it stands between raids
     this.pitch = null; // the town crowd's lattice's pitch, or null for a small party
+    this.seats = null; // the town crowd's lattice and each agent's seat on it, in memory only (see place)
     this.formed = null; // the same for the raid's formation
+    this.legacy = null; // the old formation's spots while the raid party is a crowd (see formation)
     this.tagged = null; // whose tags show (a Set), or null for everyone's
     this.bubbled = this.barred = null; // whose bubbles and HP bars show, the same
     this.thin = false; // the crowd is too tight for every tag
     this.hover = null; // the agent under the pointer, tracked while `thin`
+    this.hoverTaken = false; // the pointer's arrival since the last render has been taken (see critter)
   }
 
   // Combat is only saved on a kill, so a fight in progress is saved once more
@@ -1161,8 +1197,14 @@ export default class RaidParty extends View {
     const keys = this.fighters();
     const W = Math.max(320, this.size.width);
     const kind = MONSTERS[this.monster?.kind];
-    const at = keys.length && kind ? this.formation(agents(), W, kind) : {};
-    const fighters = keys.map((key) => ({ key, maxHp: maxHpOf(this.progress, this.sprites[key]), ...(key === YOU ? this.you : at[key]) }));
+    const at = keys.length && kind ? this.formation(agents(), W, kind) : Object.create(null);
+    // in a crowd, also where each would stand in the old formation (the area attack's count: party.js caught)
+    const old = keys.length && kind ? this.legacy : null;
+    const fighters = keys.map((key) => {
+      const s = key === YOU ? this.you : at[key];
+      const o = key === YOU || !old ? s : old[key];
+      return { key, maxHp: maxHpOf(this.progress, this.sprites[key]), x: s.x, y: s.y, ...(old ? { ox: o.x, oy: o.y } : {}) };
+    });
     syncParty(this.party, fighters, this.clock, Math.random);
     return keys;
   }
@@ -1476,7 +1518,7 @@ export default class RaidParty extends View {
     const half = kind.w / 2;
     const reach = Math.max(110, Math.min(RANGE, mid - half - 60));
     const rows = [96, 60]; // each next one on a side stands a step further out, staggered
-    const spots = {};
+    const spots = Object.create(null);
     const count = { melee: 0, ranged: 0 };
     const sides = { [-1]: { melee: [], ranged: [] }, 1: { melee: [], ranged: [] } };
     for (const a of list) {
@@ -1495,9 +1537,11 @@ export default class RaidParty extends View {
       };
     }
     this.formed = null;
+    this.legacy = null;
     if (list.length <= SMALL_PARTY || !crowded(Object.values(spots))) return spots;
     const crowd = raidCrowd(sides, W, kind, mid);
     this.formed = crowd.dx;
+    this.legacy = spots; // where a small party would stand: the boss's area attack counts its catch there (party.js caught)
     return crowd.at;
   }
 
@@ -1861,17 +1905,24 @@ export default class RaidParty extends View {
 
   // Where everyone stands between raids: `this.home`, a spot for each agent in
   // `list` by address, and `this.pitch`, the crowd's lattice's pitch (see
-  // townCrowd), or null when they stand as a small party does.
+  // townLattice), or null when they stand as a small party does.
   // A small party (everyone fits on the default spots, DEFAULT_ROWS: two rows
   // CELL_W apart from x 250, none behind the campfire) stands as it always
   // has: each at its remembered spot (saved), a newcomer on the first default
   // spot clear of everyone (NEAR), kept from then on. Two agents remembered on
-  // the same default spot (an older version stacked a crowd that way) are
-  // one there and one a newcomer. Past that the party is a crowd: everyone
-  // stands on townCrowd's lattice in agents() order, nothing saved, except
-  // whoever was put somewhere by a drag (a remembered spot that is not a
-  // default one), who stays there; their lattice spot is left empty, so
-  // nobody else moves. Linear in the number of agents.
+  // the same spot (an older version stacked a crowd that way, or clamped
+  // several to a narrow window's edge) are one there and one a newcomer.
+  // Past that the party is a crowd: everyone stands on the town's lattice
+  // (townLattice), nothing saved, except whoever was put somewhere by a drag
+  // (a remembered spot that is not a default one), who stays there. Seats on
+  // the lattice are kept in memory (`this.seats`) while the lattice stays
+  // (the same width and campfire, everyone fits, and the lattice that fits
+  // them now is no more than a tenth roomier): a leaver's seat stays empty, a
+  // newcomer takes the free seat furthest from the taken ones in its row
+  // (freeSpot), so one coming or going moves nobody else. When the lattice
+  // changes (or more than CROWD_JOINERS arrive at once) everyone is seated
+  // afresh, spread evenly in agents() order (a dropped one's seat left
+  // empty). Linear in the number of agents.
   place(list, W) {
     for (const a of list) this.seen[a.address] = Date.now();
     // A newcomer gets a random class, kept from then on.
@@ -1898,7 +1949,7 @@ export default class RaidParty extends View {
       const newcomers = [];
       for (const a of list) {
         const s = kept(a);
-        const at = s && onDefault(s) ? `${s.x},${s.y}` : null;
+        const at = s ? `${s.x},${s.y}` : null;
         if (!s || stacked.has(at)) newcomers.push(a);
         else {
           if (at) stacked.add(at);
@@ -1919,12 +1970,50 @@ export default class RaidParty extends View {
         return;
       }
     }
-    const crowd = townCrowd(list.length, W, fire);
-    this.pitch = crowd.dx;
-    list.forEach((a, i) => {
+    // a crowd: who stays where a drag put them (once each spot: two saved on
+    // the same spot, as an older version's clamping left them, are one there
+    // and one a newcomer), and everyone else's seat on the lattice
+    const dropped = new Set();
+    const put = new Set();
+    for (const a of list) {
       const s = kept(a);
-      this.home[a.address] = s && !onDefault(s) ? s : crowd.cells[i];
-    });
+      if (!s || onDefault(s) || put.has(`${s.x},${s.y}`)) continue;
+      put.add(`${s.x},${s.y}`);
+      dropped.add(a.address);
+      this.home[a.address] = s;
+    }
+    const lattice = townLattice(W, fire);
+    const n = list.length;
+    const fresh = lattice.pick(n);
+    const where = `${Math.floor(W)}|${fire}`;
+    let seats = this.seats;
+    // the lattice stays while everyone fits on it and the one that fits them now is no more than a tenth roomier
+    const keep = seats && seats.where === where && !seats.over && !fresh.over && lattice.room(seats.rows, seats.dx) >= n && fresh.dx <= seats.dx * 1.1;
+    if (!keep) seats = { where, rows: fresh.rows, dx: fresh.dx, over: fresh.over, seat: new Map() };
+    const spots = lattice.cells(seats.rows, seats.dx);
+    const seat = seats.seat;
+    // a leaver's seat (or one whose spot a drag chose) is let go; it stays empty
+    const here = new Set(list.filter((a) => !dropped.has(a.address)).map((a) => a.address));
+    for (const k of seat.keys()) if (!here.has(k)) seat.delete(k);
+    const newcomers = list.filter((a) => here.has(a.address) && !seat.has(a.address));
+    if (!keep || newcomers.length > CROWD_JOINERS) {
+      // everyone afresh, spread evenly in agents() order (a dropped one's spot left empty)
+      seat.clear();
+      list.forEach((a, i) => {
+        if (here.has(a.address)) seat.set(a.address, seats.over ? i % spots.length : Math.floor((i * spots.length) / n));
+      });
+    } else if (newcomers.length) {
+      const taken = new Uint8Array(spots.length);
+      for (const i of seat.values()) taken[i] = 1;
+      for (const a of newcomers) {
+        const i = freeSpot(spots, taken);
+        seat.set(a.address, i);
+        taken[i] = 1;
+      }
+    }
+    this.seats = seats;
+    this.pitch = seats.dx;
+    for (const a of list) if (here.has(a.address)) this.home[a.address] = spots[seat.get(a.address)];
   }
 
   // Whether someone standing at p would be in the campfire at x: anywhere
@@ -2128,14 +2217,23 @@ export default class RaidParty extends View {
         .transition("left", MOVE)
         .transition("top", this.fighting ? MOVE : { duration: 260, easing: "ease-in" })
         .cursor_pointer()
+        // where characters overlap, a press reaches each of them, the top-most
+        // (nearest) first: the first takes it, and the rest of that press (the
+        // same point, while it is held) is left to it
         .on_mouse_down("left", (e) => {
+          if (this.press?.kind === "critter" && this.press.px === e.position.x && this.press.py === e.position.y) return;
           this.press = { kind: "critter", address: a.address, px: e.position.x, py: e.position.y };
         })
-        // in a crowd too tight for every tag, the one under the pointer shows its own (see crowdMarks)
+        // in a crowd too tight for every tag, the one under the pointer shows its own
+        // (see crowdMarks); where several overlap, the first to hear the pointer come
+        // in takes it until the next render, and leaving one that is not it changes nothing
         .when(Boolean(this.thin), (el) =>
           el.on_hover((hovered, cx) => {
-            if (hovered) this.hover = a.address;
-            else if (this.hover === a.address) this.hover = null;
+            if (hovered) {
+              if (this.hover === a.address || this.hoverTaken) return;
+              this.hoverTaken = true;
+              this.hover = a.address;
+            } else if (this.hover === a.address) this.hover = null;
             else return;
             cx.notify();
           }),
@@ -2180,7 +2278,8 @@ export default class RaidParty extends View {
   // overlap one laid before (or come within 4px of it): the agent whose card is open, the one under the
   // pointer, those that need you (blocked), those finished (done), then
   // everyone else, each in agents() order. Once the crowd stands tighter than
-  // a tag is wide (`pitch` under TAG_ROOM: `this.thin`), everyone else's tag
+  // a tag is wide (`pitch` under TAG_ROOM, or under THIN_BACK once thinned:
+  // `this.thin`), everyone else's tag
   // is left out (their names are a hover away, the one under the pointer
   // showing its tag, and on their cards), and what shows over their heads is
   // laid the same way, so a crowd is not a wall of icons and bars and those
@@ -2188,11 +2287,18 @@ export default class RaidParty extends View {
   // before resting) and, in a fight, the fighters' HP bars (`this.barred`:
   // knocked out first, then the hurt, then the rest). In any crowd in town a
   // bubble that would cover a station's tag is left out (the front row stands
-  // before the stations). Yours always show. Linear in the number of agents.
+  // before the stations). Yours always show, and nothing of anyone's is laid
+  // over your tag or your HP bar. Linear in the number of agents.
   crowdMarks(list, W, pitch) {
-    this.thin = pitch !== null && pitch < TAG_ROOM;
+    // (with a little hysteresis: once thinned, until the crowd is THIN_BACK apart)
+    this.thin = pitch !== null && pitch < (this.thin ? THIN_BACK : TAG_ROOM);
+    // the agent under the pointer is tracked only while thinned, and only while it is here
+    if (!this.thin || (this.hover !== null && !list.some((a) => a.address === this.hover))) this.hover = null;
     this.tagged = this.bubbled = this.barred = null;
     if (pitch === null) return;
+    // yours are in the way of everyone's: your tag (under your sprite, see you_), and in a fight your HP bar
+    const ytw = tagW(tagFit(LABELS.you));
+    const yourTag = { x: this.you.x - ytw / 2 - 2, y: this.you.y + 6 - 2, w: ytw + 4, h: TAG_H + 4 };
     const order = (rest, who = list) => {
       const tiers = [[], [], [], [], [], []];
       for (const a of who) {
@@ -2218,21 +2324,28 @@ export default class RaidParty extends View {
       return shown;
     };
     // (each tag's box 2px larger all round, so two shown keep 4px apart, as neighbours on the default spots do)
-    this.tagged = lay(order((a) => (asked(a) >= 0 ? asked(a) : this.thin ? -1 : 4)), TAG_MAX_W + 4, TAG_H + 4, (a, { x, y }) => {
-      const w = tagW(tagFit(tagName(a)));
-      return { x: clamp(Math.round(x - w / 2), 2, W - w - 2) - 2, y: y + 11 - 2, w: w + 4, h: TAG_H + 4 };
-    });
+    this.tagged = lay(
+      order((a) => (asked(a) >= 0 ? asked(a) : this.thin ? -1 : 4)),
+      TAG_MAX_W + 4,
+      TAG_H + 4,
+      (a, { x, y }) => {
+        const w = tagW(tagFit(tagName(a)));
+        return { x: clamp(Math.round(x - w / 2), 2, W - w - 2) - 2, y: y + 11 - 2, w: w + 4, h: TAG_H + 4 };
+      },
+      [yourTag],
+    );
     // a fighter (working, in a fight) has its HP bar there instead of a bubble
     const fights = (a) => this.fighting && a.status === "working";
     const stations = this.battle ? [] : Object.values(STATIONS).map(stationTagBox);
-    this.bubbled = lay(order((a) => (fights(a) ? -1 : asked(a) >= 0 ? asked(a) : a.status === "working" ? 4 : 5)), BUBBLE.w, BUBBLE.h, (a, { x, y }) => bubbleBox(a.status, x, y), stations, this.thin);
+    this.bubbled = lay(order((a) => (fights(a) ? -1 : asked(a) >= 0 ? asked(a) : a.status === "working" ? 4 : 5)), BUBBLE.w, BUBBLE.h, (a, { x, y }) => bubbleBox(a.status, x, y), [...stations, yourTag], this.thin);
     if (!this.thin || !this.fighting) return;
     const members = this.party.members;
     const hurt = (a) => {
       const m = Object.hasOwn(members, a.address) ? members[a.address] : null;
       return !fights(a) || !m ? -1 : m.down !== null ? 2 : m.hp < m.maxHp ? 3 : 4;
     };
-    this.barred = lay(order(hurt), VITALS.w, VITALS.h, (a, { x, y }) => vitalsBox(members[a.address], x, y));
+    const yourBar = Object.hasOwn(members, YOU) && !this.walking ? [vitalsBox(members[YOU], this.you.x, this.you.y)] : [];
+    this.barred = lay(order(hurt), VITALS.w, VITALS.h, (a, { x, y }) => vitalsBox(members[a.address], x, y), [yourTag, ...yourBar]);
   }
 
   // What shows over someone in the fight whose feet are at x, y (see
@@ -2850,6 +2963,7 @@ export default class RaidParty extends View {
         this.at[a.address] = fire !== null ? this.clearOfFire(s, fire, W) : s;
       }
     // whose name tags and bubbles show (see crowdMarks): everyone's, unless the party is a crowd
+    this.hoverTaken = false; // a new render: the pointer's next arrival may take the hover (see critter)
     this.crowdMarks(list, W, pitch);
     // in a crowd you are drawn over everyone, so you (and your tag) are never lost in it
     if (this.tagged) yours.y = FLOOR_H + 1;
