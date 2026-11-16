@@ -164,7 +164,7 @@ describe("a small party stands as it always has", () => {
         }
       }
   });
-  test("in a raid: the old formation, for every boss, while none of its spots overlap", async () => {
+  test("in a raid: the old formation, for every boss, up to 12 always and beyond while none of its spots overlap", async () => {
     const mixes = [CLASSES, ["warrior", "archer"], ["archer", "wizard", "healer"], ["warrior"]];
     let pinned = 0;
     for (const W of widths)
@@ -173,7 +173,7 @@ describe("a small party stands as it always has", () => {
           for (const n of THOROUGH ? [1, 2, 4, 6, 8, 10, 12] : [3, 6, 12]) {
             const classes = Array.from({ length: n }, (_, i) => mix[i % mix.length]);
             const old = oldFormation(classes, W, MONSTERS[kind]);
-            if (overlapping(old)) continue; // piled in the corners: the crowd's to place
+            if (n > 12 && overlapping(old)) continue; // piled in the corners: the crowd's to place
             pinned += 1;
             const list = classes.map((cls, i) => ({ address: `p${i}`, status: "working" }));
             const { v } = await arrive(0, { width: W });
@@ -366,15 +366,101 @@ describe("a crowd in a raid", () => {
         }
     });
 
-  test("the ranged keep their range while there is room (from the old first spot outward)", async () => {
-    // 20 archers against the dragon at 2918: the old formation piles none, but a crowd of 40 does
-    const W = 2918;
+  // The widest a crowd stands at 88px or more (every tag fits) with an even class mix
+  // (warrior, wizard, archer, healer in turn), by width and boss; and from how
+  // many the lattice takes over from the old formation (13 at the earliest: up
+  // to 12 always keep it).
+  const ROOMY = {
+    1280: { slime: [15, 38], ogre: [13, 38], dragon: [13, 27] },
+    1459: { slime: [18, 48], ogre: [15, 40], dragon: [13, 38] },
+    1920: { slime: [28, 70], ogre: [26, 70], dragon: [23, 59] },
+  };
+  const EVEN = ["warrior", "wizard", "archer", "healer"];
+  async function raidAt(n, W, kindName, mix = EVEN) {
     const { v } = await arrive(0, { width: W });
-    const list = Array.from({ length: 40 }, (_, i) => ({ address: `r${i}`, status: "working" }));
-    for (const a of list) v.view.sprites[a.address] = "archer";
-    const f = v.view.formation(list, W, MONSTERS.dragon);
-    const reach = Math.min(360, Math.round(W / 2) - 164 - 60);
-    for (const a of list) assert.ok(Math.abs(f[a.address].x - Math.round(W / 2)) >= 164 + reach, `${a.address} at ${key(f[a.address])}`);
+    const list = Array.from({ length: n }, (_, i) => ({ address: `r${i}`, status: "working" }));
+    list.forEach((a, i) => (v.view.sprites[a.address] = mix[i % mix.length]));
+    const f = v.view.formation(list, W, MONSTERS[kindName]);
+    return { v, list, f };
+  }
+
+  test("16 to 40 agents: every row 88px or more apart while the side has room (counts above), the ranged spread over their whole zone", async (t) => {
+    for (const W of [1280, 1459, 1920])
+      for (const kindName of Object.keys(MONSTERS))
+        for (const n of [16, 24, 30, 40]) {
+          const { v, list, f } = await raidAt(n, W, kindName);
+          const [from, roomy] = ROOMY[W][kindName];
+          const where = `${n} against the ${kindName} at ${W}`;
+          if (n < from) {
+            assert.equal(v.view.formed, null, `${where}: the old formation`);
+            continue;
+          }
+          assert.ok(v.view.formed !== null, `${where}: a crowd`);
+          const kind = MONSTERS[kindName];
+          const mid = Math.round(W / 2);
+          for (const side of [-1, 1]) {
+            const mine = list.filter((a) => (f[a.address].x < mid ? -1 : 1) === side);
+            const d = (a) => Math.abs(f[a.address].x - mid);
+            const warriors = mine.filter((a) => v.view.sprites[a.address] === "warrior");
+            const ranged = mine.filter((a) => v.view.sprites[a.address] !== "warrior");
+            // neighbours in a row
+            let step = Infinity;
+            let rangedStep = Infinity;
+            const rows = new Map();
+            for (const a of mine) rows.set(f[a.address].y, [...(rows.get(f[a.address].y) ?? []), a]);
+            for (const row of rows.values()) {
+              row.sort((p, q) => d(p) - d(q));
+              for (let i = 1; i < row.length; i++) {
+                const gap = d(row[i]) - d(row[i - 1]);
+                step = Math.min(step, gap);
+                if (v.view.sprites[row[i].address] !== "warrior" && v.view.sprites[row[i - 1].address] !== "warrior") rangedStep = Math.min(rangedStep, gap);
+              }
+            }
+            if (n <= roomy) assert.ok(step >= 88, `${where}, side ${side}: neighbours ${step}px apart`);
+            else assert.ok(step >= 50 || n > 2 * roomy, `${where}, side ${side}: neighbours ${step}px apart`);
+            if (!ranged.length || !Number.isFinite(rangedStep)) continue;
+            // the ranged block reaches the edge, and starts within a step of the warriors'
+            // ranks plus the fixed gap (one warriors' step, at most 88, and 24px)
+            const edge = side < 0 ? mid - 36 : W - 36 - mid;
+            const outer = Math.max(...ranged.map(d));
+            const inner = Math.min(...ranged.map(d));
+            const ranks = warriors.length ? Math.max(...warriors.map(d)) + 88 + 24 : kind.w / 2 + 30;
+            assert.ok(outer >= edge - rangedStep, `${where}, side ${side}: the outermost ranged at ${outer} of ${edge}`);
+            assert.ok(inner <= Math.max(ranks, kind.w / 2 + 30) + rangedStep, `${where}, side ${side}: the innermost ranged at ${inner}, the warriors' ranks end at ${ranks - 112}`);
+            assert.ok(inner >= kind.w / 2 + 30, "outside the boss's picture");
+          }
+          t.diagnostic(`${where}: pitch ${v.view.formed}`);
+        }
+  });
+
+  test("the lattice takes over from the old formation at 13 at the earliest: up to 12 keep it, piled or not", async () => {
+    for (const W of [1280, 1459])
+      for (const kindName of Object.keys(MONSTERS)) {
+        const { v, list, f } = await raidAt(12, W, kindName);
+        assert.equal(v.view.formed, null);
+        const old = oldFormation(list.map((a) => v.view.sprites[a.address]), W, MONSTERS[kindName]);
+        list.forEach((a, i) => assert.deepEqual(f[a.address], old[i]));
+        const [from] = ROOMY[W][kindName];
+        assert.equal((await raidAt(from - 1, W, kindName)).v.view.formed, null);
+        assert.ok((await raidAt(from, W, kindName)).v.view.formed !== null);
+      }
+  });
+
+  test("at the hand-over nobody crosses the floor: each keeps its side and moves less than half of it", async (t) => {
+    let most = 0;
+    for (const W of [1280, 1459, 1920])
+      for (const kindName of Object.keys(MONSTERS)) {
+        const [from] = ROOMY[W][kindName];
+        const { v, list, f } = await raidAt(from, W, kindName);
+        const old = oldFormation(list.map((a) => v.view.sprites[a.address]), W, MONSTERS[kindName]);
+        list.forEach((a, i) => {
+          assert.equal(Math.sign(f[a.address].x - W / 2), Math.sign(old[i].x - W / 2), `${a.address} keeps its side`);
+          const moved = Math.abs(f[a.address].x - old[i].x);
+          most = Math.max(most, moved / (W / 2));
+          assert.ok(moved <= W / 4, `${a.address} moves ${moved}px against the ${kindName} at ${W}`);
+        });
+      }
+    t.diagnostic(`the most anyone moves at the hand-over: ${(most * 100).toFixed(0)}% of its side`);
   });
 });
 
@@ -412,6 +498,28 @@ describe("name tags in a crowd", () => {
     v.release("critter-a44");
     assert.equal(v.view.card, "a44");
     assert.ok(v.has("idle-rpg-label-a44"));
+  });
+
+  test("400 in a raid, the same name each, 60% working, 20% idle, 10% done, 10% blocked: no tag over another, as drawn", async (t) => {
+    const statuses = (i) => (i % 10 < 6 ? "working" : i % 10 < 8 ? "idle" : i % 10 === 8 ? "done" : "blocked");
+    const list = Array.from({ length: 400 }, (_, i) => agent(`k${i}`, statuses(i), { space_name: "Keep", tab_name: "Hall" }));
+    const { saved } = raid({ battle: true, classes: [], stage: 3 });
+    saved.best = 3;
+    saved.sprites = { you: "archer", ...Object.fromEntries(list.map((a, i) => [a.address, ["warrior", "wizard", "archer", "healer"][i % 4]])) };
+    saved.seen = Object.fromEntries(list.map((a) => [a.address, 1_800_000_000_000]));
+    const v = await mountView({ saved, agents: list, width: 1459 });
+    v.advance(3000);
+    v.render();
+    const tags = v.ids("idle-rpg-label-").map((id) => v.box(id));
+    assert.ok(tags.length >= 20, `${tags.length} tags`);
+    let closest = Infinity;
+    for (let i = 0; i < tags.length; i++)
+      for (let j = i + 1; j < tags.length; j++) {
+        assert.ok(!overlap(tags[i], tags[j]), `${JSON.stringify(tags[i])} and ${JSON.stringify(tags[j])}`);
+        if (tags[i].x < tags[j].x + tags[j].w && tags[j].x < tags[i].x + tags[i].w) closest = Math.min(closest, Math.abs(tags[i].y - tags[j].y) - 18);
+      }
+    t.diagnostic(`${tags.length} tags; the closest one above another leaves ${closest}px between them`);
+    assert.ok(closest >= 4, "two tags one above the other keep 4px apart");
   });
 
   test("tighter than a tag is wide: bubbles and HP bars are laid the same way, none over another", async () => {

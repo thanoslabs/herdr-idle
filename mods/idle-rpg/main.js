@@ -562,8 +562,9 @@ const TOWN_BACK = 20;
 // BOSS_CLEAR outside the boss's picture.
 const RAID_FRONT = MONSTER_Y + 6;
 const RAID_BACK = 24;
-const RAID_PITCH_MAX = 124; // the old formation's pitch within a row of the ranged (62 a step, rows alternating)
 const BOSS_CLEAR = 30;
+const SMALL_PARTY = 12; // a party this size or smaller keeps the old formation, overlaps and all
+const RANK_GAP = 24; // between the warriors' ranks and the ranged, beyond a warriors' step
 
 // The lattices to try, roomiest first, as [rows (y, front first), lowest pitch,
 // highest pitch], from `front` back to `back` (kept for the last few widths).
@@ -634,60 +635,69 @@ function townCrowd(n, W, fire) {
 
 // Where a crowd stands in a raid on a scene W wide against a boss of `kind`
 // (MONSTERS), its middle at `mid`: `sides` is { -1: left, 1: right }, each
-// { melee: [<key>], ranged: [<key>] } in order. On each side the lattice's
-// spots are taken in order of their distance from the boss: the warriors
-// the nearest (the front row alone in front of the boss, from where they
-// swing at it; behind it only outside its picture), the ranged classes and
-// the healers a run of them starting at the old first ranged spot (`anchor`
-// px from the middle) or as near it as the rest leaves room for: out to the
-// edge, then back toward the warriors. The pitch is the widest at which the
-// ranged all stand from `anchor` out without overlapping; failing that, the
-// widest at which everyone fits (ladder). Returns { at: { <key>: { x, y, dir } }, dx }.
-function raidCrowd(sides, W, kind, mid, anchor) {
+// { melee: [<key>], ranged: [<key>] } in order. Each side is laid out on its
+// own, in two blocks on brick lattices with the same rows:
+// - the warriors nearest the boss, in order of distance from it: the front
+//   row alone before the boss (from 44px outside its bulk, where they swing
+//   at it), the rows behind only outside its picture (BOSS_CLEAR), at the
+//   pitch `dx` but never wider than TAG_ROOM, so they stay close to it;
+// - the ranged classes and healers spread evenly over the whole rest of the
+//   side (their zone): from one warriors' step and RANK_GAP outside the
+//   outermost warrior (outside the boss's picture with no warriors) to the
+//   scene's edge, at the pitch `dx`, centred in it.
+// `dx` is the widest at which both blocks fit (ladder: 3 rows from 88px, 4
+// rows from 88, 4 rows down to 50, then overlapping down to 16; past that
+// spots are shared). Returns { at: { <key>: { x, y, dir } }, dx: the
+// tightest pitch either side stands at }.
+function raidCrowd(sides, W, kind, mid) {
   const right = Math.floor(W) - EDGE_X;
-  const geo = (side) => ({ front: kind.core.half + SWORD + side * kind.core.x, back: kind.w / 2 + BOSS_CLEAR, edge: side < 0 ? mid - EDGE_X : right - mid });
-  const G = { [-1]: geo(-1), 1: geo(1) };
-  const from = (g, r) => (r === 0 ? g.front : Math.max(g.front, g.back));
-  const room = (g, rows, dx) => ({
-    cap: rows.reduce((sum, _y, r) => sum + between(from(g, r), g.edge, g.front + brick(r, dx), dx), 0),
-    strip: between(g.front, Math.min(g.edge, g.back - 1), g.front, dx), // in front of the boss: warriors only
-  });
-  // everyone fits on each side; `ranging`: the ranged from their old first spot outward
-  const fits = (ranging) => (rows, dx) =>
-    [-1, 1].every((side) => {
-      const g = G[side];
-      const { cap, strip } = room(g, rows, dx);
-      const { melee, ranged } = sides[side];
-      const out = ranging ? rows.reduce((sum, _y, r) => sum + between(Math.max(from(g, r), anchor), g.edge, g.front + brick(r, dx), dx), 0) : cap;
-      return melee.length <= cap && ranged.length <= Math.min(out, cap - Math.max(melee.length, strip));
-    });
-  // the ranged keep their range while nobody need overlap for it; then the widest pitch that fits all
-  const steps = ladder(RAID_FRONT, RAID_BACK, RAID_PITCH_MAX);
-  const ranging = pickLattice(steps.slice(0, 3), fits(true));
-  const { rows, dx } = ranging.over ? pickLattice(steps, fits(false)) : ranging;
   const at = {};
+  let tightest = Infinity;
   for (const side of [-1, 1]) {
-    const g = G[side];
-    // nearest first: in each column the rows on it (front first), then those half a pitch out
-    const slots = [];
-    const byShift = rows.map((y, r) => r).sort((p, q) => (p % 2) - (q % 2) || p - q);
-    for (let k = 0; g.front + k * dx <= g.edge; k++)
-      for (const r of byShift) {
-        const d = g.front + brick(r, dx) + k * dx;
-        if (d >= from(g, r) && d <= g.edge) slots.push({ d, y: rows[r] });
-      }
-    if (!slots.length) slots.push({ d: g.front, y: RAID_FRONT });
-    const put = (key, s) => (at[key] = { x: Math.round(clamp(mid + side * s.d, EDGE_X, right)), y: s.y, dir: -side });
+    const g = { front: kind.core.half + SWORD + side * kind.core.x, back: kind.w / 2 + BOSS_CLEAR, edge: side < 0 ? mid - EDGE_X : right - mid };
     const { melee, ranged } = sides[side];
-    melee.forEach((key, i) => put(key, slots[i % slots.length]));
-    const first = Math.min(slots.length, Math.max(melee.length, room(g, rows, dx).strip));
-    let near = slots.findIndex((s) => s.d >= anchor);
-    if (near < 0) near = slots.length;
-    const start = Math.max(first, Math.min(near, slots.length - ranged.length));
-    const spare = slots.length - first;
-    ranged.forEach((key, i) => put(key, slots[start + i < slots.length ? start + i : spare > 0 ? first + ((start + i - first) % spare) : (start + i) % slots.length]));
+    // the warriors' spots at pitch wdx, nearest first (each column's rows on it, then those half a step out), at most n
+    const warriorSpots = (rows, wdx, n) => {
+      const out = [];
+      const byShift = rows.map((_y, r) => r).sort((p, q) => (p % 2) - (q % 2) || p - q);
+      for (let k = 0; out.length < n && g.front + k * wdx <= g.edge; k++)
+        for (const r of byShift) {
+          const d = g.front + brick(r, wdx) + k * wdx;
+          if (out.length < n && d >= (r === 0 ? g.front : Math.max(g.front, g.back)) && d <= g.edge) out.push({ d, y: rows[r] });
+        }
+      return out;
+    };
+    // the ranged zone's start for warriors standing at `w` (pitch wdx), its lattice's first spot, and its room
+    const zone = (w, wdx) => Math.max(g.back, w.length ? w[w.length - 1].d + wdx + RANK_GAP : 0);
+    const origin = (from, dx) => from + Math.floor(((g.edge - from) % dx) / 2);
+    const room = (rows, from, dx) => (from > g.edge ? 0 : rows.reduce((sum, _y, r) => sum + between(from, g.edge, origin(from, dx) + brick(r, dx), dx), 0));
+    const fits = (rows, dx) => {
+      const wdx = Math.min(dx, TAG_ROOM);
+      const w = warriorSpots(rows, wdx, melee.length);
+      return w.length === melee.length && room(rows, zone(w, wdx), dx) >= ranged.length;
+    };
+    const { rows, dx, over } = pickLattice(ladder(RAID_FRONT, RAID_BACK, Math.max(TAG_ROOM, g.edge)), fits);
+    const wdx = Math.min(dx, TAG_ROOM);
+    const put = (key, s) => (at[key] = { x: Math.round(clamp(mid + side * s.d, EDGE_X, right)), y: s.y, dir: -side });
+    // past every spot at the densest pitch, the warriors share theirs in turn
+    const w = warriorSpots(rows, wdx, over ? Infinity : melee.length);
+    if (!w.length) w.push({ d: g.front, y: RAID_FRONT });
+    melee.forEach((key, i) => put(key, w[i % w.length]));
+    if (melee.length) tightest = Math.min(tightest, wdx);
+    if (!ranged.length) continue;
+    tightest = Math.min(tightest, dx);
+    // the ranged zone's spots, nearest first, and n of them spread evenly over it
+    const from = zone(w.slice(0, melee.length), wdx);
+    const slots = [];
+    rows.forEach((y, r) => {
+      const base = origin(from, dx) + brick(r, dx);
+      for (let k = Math.ceil((from - base) / dx); base + k * dx <= g.edge; k++) slots.push({ d: base + k * dx, y });
+    });
+    slots.sort((p, q) => p.d - q.d || q.y - p.y);
+    if (!slots.length) slots.push({ d: Math.min(from, g.edge), y: RAID_FRONT });
+    ranged.forEach((key, i) => put(key, slots[over || slots.length < ranged.length ? i % slots.length : Math.floor((i * slots.length) / ranged.length)]));
   }
-  return { at, dx };
+  return { at, dx: Number.isFinite(tightest) ? tightest : TAG_ROOM };
 }
 
 // Boxes ({ x, y, w, h }) laid down one at a time, and whether a new one would
@@ -1456,9 +1466,10 @@ export default class RaidParty extends View {
 
   // Where everyone stands for the fight: warriors beside the monster, the
   // others RANGE away (less if the scene is narrow), alternating sides. That
-  // is a small party's formation; once two of its spots would overlap (NEAR:
-  // they reach the scene's edge, or the warriors' line reaches the ranged),
-  // the party stands as a crowd (raidCrowd), still alternating sides, and
+  // is a small party's formation: up to SMALL_PARTY always, and beyond while
+  // none of its spots overlap. Once two would (NEAR: they reach the scene's
+  // edge, or the warriors' line reaches the ranged) a party larger than that
+  // stands as a crowd (raidCrowd), still alternating sides, and
   // `this.formed` is the lattice's pitch (else null). Linear in the party.
   formation(list, W, kind) {
     const mid = Math.round(W / 2);
@@ -1484,8 +1495,8 @@ export default class RaidParty extends View {
       };
     }
     this.formed = null;
-    if (!crowded(Object.values(spots))) return spots;
-    const crowd = raidCrowd(sides, W, kind, mid, half + reach);
+    if (list.length <= SMALL_PARTY || !crowded(Object.values(spots))) return spots;
+    const crowd = raidCrowd(sides, W, kind, mid);
     this.formed = crowd.dx;
     return crowd.at;
   }
@@ -2166,7 +2177,7 @@ export default class RaidParty extends View {
   // a crowd (`pitch` null: see place and formation), when everyone's show as
   // ever. In a crowd the tags are drawn over everyone (see render) and none
   // over another: they are laid in this order, each left out if it would
-  // overlap one laid before: the agent whose card is open, the one under the
+  // overlap one laid before (or come within 4px of it): the agent whose card is open, the one under the
   // pointer, those that need you (blocked), those finished (done), then
   // everyone else, each in agents() order. Once the crowd stands tighter than
   // a tag is wide (`pitch` under TAG_ROOM: `this.thin`), everyone else's tag
@@ -2206,9 +2217,10 @@ export default class RaidParty extends View {
       }
       return shown;
     };
-    this.tagged = lay(order((a) => (asked(a) >= 0 ? asked(a) : this.thin ? -1 : 4)), TAG_MAX_W, TAG_H, (a, { x, y }) => {
+    // (each tag's box 2px larger all round, so two shown keep 4px apart, as neighbours on the default spots do)
+    this.tagged = lay(order((a) => (asked(a) >= 0 ? asked(a) : this.thin ? -1 : 4)), TAG_MAX_W + 4, TAG_H + 4, (a, { x, y }) => {
       const w = tagW(tagFit(tagName(a)));
-      return { x: clamp(Math.round(x - w / 2), 2, W - w - 2), y: y + 11, w, h: TAG_H };
+      return { x: clamp(Math.round(x - w / 2), 2, W - w - 2) - 2, y: y + 11 - 2, w: w + 4, h: TAG_H + 4 };
     });
     // a fighter (working, in a fight) has its HP bar there instead of a bubble
     const fights = (a) => this.fighting && a.status === "working";
