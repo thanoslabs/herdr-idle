@@ -18,8 +18,8 @@ import { recordImage } from "./world.mjs";
 export const METHODS = new Set(
   (
     "absolute active bg border border_b border_color border_l border_r border_t bottom child children cursor_pointer flex flex_1 flex_none " +
-    "font_semibold gap h hover id items_center items_start justify_between justify_center left line_height loop max_w max_w_full min_w " +
-    "on_click on_hover on_mouse_down on_mouse_move on_mouse_up on_size_change opacity overflow_hidden p pt px py relative right rounded " +
+    "font_semibold gap h hover id items_center items_start justify_between justify_center left line_height loop max_h max_w max_w_full min_w " +
+    "on_click on_hover on_mouse_down on_mouse_move on_mouse_up on_size_change opacity overflow_hidden overflow_y_scroll p pt px py relative right rounded " +
     "size_full text_center text_color text_size tooltip top transition truncate w when " +
     // not used by main.js today, but gpui-kit has them (common next steps)
     "pb pl pr m mt mb ml mr mx my min_h max_h size text_left text_right font_bold italic underline shadow_sm shadow_md shadow_lg cursor_default justify_start justify_end items_end flex_col flex_row flex_wrap"

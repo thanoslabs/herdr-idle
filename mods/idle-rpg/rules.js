@@ -22,11 +22,13 @@
 // weapon and its hat (a hat, once bought, can be worn by any class). Levels are
 // worked out from total experience, never stored; skill ranks and training
 // levels are stored, and points left are worked out from levels and ranks.
-// Settings (SETTINGS) are kept with the rest of the state.
+// The town's decorations (SEASONS) are sold too: bought once, the town puts
+// up the one equipped all year. Settings (SETTINGS) are kept with the rest of
+// the state.
 
 export const CLASSES = ["wizard", "healer", "warrior", "archer"];
 export const YOU = "you"; // the person's key in `sprites`, `xp` and as an open card
-export const STATE_VERSION = 7;
+export const STATE_VERSION = 8;
 // The kinds of boss, in the order the stages cycle through them (slime, ogre,
 // dragon, slime, ...). main.js draws them (MONSTERS there), each needs its
 // pictures in MONSTER_ART below.
@@ -149,6 +151,57 @@ export const ATTACK_TICKS = [12, 11, 10, 9, 8, 7];
 // go under MIN_ATTACK_TICKS, so the average stays the rank's).
 export const ATTACK_JITTER = 2;
 
+// Seasons: decorations the town (never a raid) puts up for part of the year,
+// following the calendar in the machine's local time, while the "Decorate in
+// season" setting is on: jack-o'-lanterns in October, string lights and a
+// decorated tree in December. Each is also a set of town decor the shop sells
+// (SHOP.decor) for `price` gold, shown all year while equipped (see decorOf).
+// Each { id, name, months: [1-12], price }; adding a season is a row here, its
+// pictures in SEASON_ART (drawn by tools/idle-rpg-sprites.py into
+// seasons/<id>/) and drawing them in main.js.
+export const DECOR_PRICE = 25; // gold for each set of town decor: between the Santa Hat and the Pumpkin
+export const SEASONS = [
+  { id: "halloween", name: "Halloween", months: [10], price: DECOR_PRICE },
+  { id: "winter", name: "Winter", months: [12], price: DECOR_PRICE },
+];
+
+// The season (SEASONS' id) at `when`, a Date or a timestamp in ms, in local
+// time; null out of every season, or for anything that is not a time.
+export function seasonOf(when) {
+  const d = when instanceof Date ? when : typeof when === "number" ? new Date(when) : null;
+  const t = d ? d.getTime() : NaN;
+  if (!Number.isFinite(t)) return null;
+  const month = d.getMonth() + 1;
+  return SEASONS.find((s) => s.months.includes(month))?.id ?? null;
+}
+
+// Each season's pictures in seasons/<id>/, without ".png": "icon", its
+// preview in the shop, and its decorations. Halloween:
+// "lantern", a jack-o'-lantern, and "flicker", its carving burning brighter,
+// laid over it and fading in and out. Winter: "lights-a" and "lights-b", a
+// stretch of the string of bulbs along the rampart with alternate bulbs lit,
+// and "tree", the decorated fir, with "twinkle", its star and baubles lit,
+// laid over it. And "light/<name>": the night's darkness (as light/ in art/)
+// with the decorations' own pools of light, standing in for the plain ones:
+// the jack-o'-lanterns' on the barrel (candle) and in a torch's stretch
+// (torch-<which>: "p" the one on the battlements over the torch, "a" and
+// "b" those at the foot of the wall before and after it, each set that can
+// be up: never "a" and "b" together), the bulbs' all along the rampart (every picture, the campfire's
+// fire-0 to fire-23, its 24 places, included).
+export const FIRE_LIGHTS = Array.from({ length: 24 }, (_, i) => `light/fire-${i}`);
+export const LANTERN_LIGHTS = ["a", "b", "p", "pa", "pb"].map((set) => `light/torch-${set}`);
+export const SEASON_ART = {
+  halloween: ["icon", "lantern", "flicker", "light/candle", ...LANTERN_LIGHTS],
+  winter: ["icon", "lights-a", "lights-b", "tree", "twinkle", "light/candle", "light/torch", "light/fill", ...FIRE_LIGHTS],
+};
+
+// The path in art/ of picture `part` of season `id` ("seasons/winter/tree.png"),
+// or null for a season or a part it does not have.
+export function seasonArt(id, part) {
+  const s = SEASONS.find((x) => x.id === id);
+  return s && typeof part === "string" && SEASON_ART[s.id].includes(part) ? `seasons/${s.id}/${part}.png` : null;
+}
+
 // The shop. Gold buys looks for a class (never an agent, which is short-lived):
 // everyone with that class on, agents and you alike, wears what the class has
 // equipped. Each kind of item has a catalogue per class, and each class keeps,
@@ -159,8 +212,11 @@ export const ATTACK_JITTER = 2;
 // each class still puts on its own. Weapons are each class's own, like
 // armours: what it fights with, and what its attacks look like (see
 // attackArt), and how it fights: its pace and weight, its element or its
-// vial's aura (see effects.js, which reads these). The first item of
-// every catalogue is the class's default look: free, always owned. Buying is
+// vial's aura (see effects.js, which reads these). Town decor (a season's
+// decorations, SEASONS) belongs to the town, not to a class: every class
+// sells the same, and what is owned and the set equipped are kept once in the
+// state under the kind's `town` key. The first item of every catalogue is the
+// class's default look (for town decor, none): free, always owned. Buying is
 // for good (no refunds), and changing between owned items is free.
 export const DEFAULT_LOOK = "default";
 export const COLOUR_PRICES = [5, 10, 20]; // gold for each class's three colourways after the default, in order
@@ -179,6 +235,8 @@ const COLOUR_NAMES = {
 // tools/idle-rpg-sprites.py, which draws each over every class.
 const HAT_NAMES = [[DEFAULT_LOOK, "No hat"], ["party", "Party Hat"], ["santa", "Santa Hat"], ["pumpkin", "Pumpkin"]];
 const HATS = HAT_NAMES.map(([id, name], i) => ({ id, name, price: i ? HAT_PRICES[i - 1] : 0 }));
+// Every set of town decor: none, then each season's, at its price.
+const DECOR = [{ id: DEFAULT_LOOK, name: "None", price: 0 }, ...SEASONS.map(({ id, name, price }) => ({ id, name, price }))];
 // What a weapon's attacks carry (effects.js says what each does): an element,
 // or null for none, and for the healer's potions, which potion it is.
 export const ELEMENTS = ["fire", "frost", "storm", "poison"];
@@ -195,9 +253,11 @@ const WEAPON_NAMES = {
   archer: [[DEFAULT_LOOK, "Longbow", null], ["crossbow", "Crossbow", null], ["flame", "Fire Bow", "fire"], ["frost", "Ice Bow", "frost"]],
 };
 // Kinds of item: { name (for the shop), items: { <class>: [{ id, name, price }] },
-// shared? }; a weapon also has { element } and the healer's { potion }. `shared` names the state's key for a kind whose items are bought
+// shared?, town? }; a weapon also has { element } and the healer's { potion }. `shared` names the state's key for a kind whose items are bought
 // once for every class: it sells the same to each, and what is owned is kept
-// there, once, instead of per class.
+// there, once, instead of per class. `town` names the state's key for a kind
+// that belongs to the town: { owned, equipped } kept there, once, as a class's
+// slot is (no class wears it).
 export const SHOP = {
   armour: {
     name: "Armours",
@@ -215,6 +275,7 @@ export const SHOP = {
     ),
   },
   hat: { name: "Hats", items: Object.fromEntries(CLASSES.map((c) => [c, HATS])), shared: "hats" },
+  decor: { name: "Town decor", items: Object.fromEntries(CLASSES.map((c) => [c, DECOR])), town: "decor" },
 };
 export const SHOP_KINDS = Object.keys(SHOP);
 
@@ -341,60 +402,14 @@ export function biomeArt(id, part) {
   return b && typeof part === "string" && BIOME_ART[b.id].includes(part) ? `scene/${b.id}/${part}.png` : null;
 }
 
-// Seasons: decorations the town (never a raid) puts up for part of the year,
-// following the calendar in the machine's local time, while the "Seasonal
-// decorations" setting is on: jack-o'-lanterns in October, string lights and
-// a decorated tree in December. Each { id, name, months: [1-12] }; adding a
-// season is a row here, its pictures in SEASON_ART (drawn by
-// tools/idle-rpg-sprites.py into seasons/<id>/) and drawing them in main.js.
-export const SEASONS = [
-  { id: "halloween", name: "Halloween", months: [10] },
-  { id: "winter", name: "Winter holiday", months: [12] },
-];
-
-// The season (SEASONS' id) at `when`, a Date or a timestamp in ms, in local
-// time; null out of every season, or for anything that is not a time.
-export function seasonOf(when) {
-  const d = when instanceof Date ? when : typeof when === "number" ? new Date(when) : null;
-  const t = d ? d.getTime() : NaN;
-  if (!Number.isFinite(t)) return null;
-  const month = d.getMonth() + 1;
-  return SEASONS.find((s) => s.months.includes(month))?.id ?? null;
-}
-
-// Each season's pictures in seasons/<id>/, without ".png". Halloween:
-// "lantern", a jack-o'-lantern, and "flicker", its carving burning brighter,
-// laid over it and fading in and out. Winter: "lights-a" and "lights-b", a
-// stretch of the string of bulbs along the rampart with alternate bulbs lit,
-// and "tree", the decorated fir, with "twinkle", its star and baubles lit,
-// laid over it. And "light/<name>": the night's darkness (as light/ in art/)
-// with the decorations' own pools of light, standing in for the plain ones:
-// the jack-o'-lanterns' on the barrel (candle) and in a torch's stretch
-// (torch-<which>: "p" the one on the battlements over the torch, "a" and
-// "b" those at the foot of the wall before and after it, each set that can
-// be up: never "a" and "b" together), the bulbs' all along the rampart (every picture, the campfire's
-// fire-0 to fire-23, its 24 places, included).
-export const FIRE_LIGHTS = Array.from({ length: 24 }, (_, i) => `light/fire-${i}`);
-export const LANTERN_LIGHTS = ["a", "b", "p", "pa", "pb"].map((set) => `light/torch-${set}`);
-export const SEASON_ART = {
-  halloween: ["lantern", "flicker", "light/candle", ...LANTERN_LIGHTS],
-  winter: ["lights-a", "lights-b", "tree", "twinkle", "light/candle", "light/torch", "light/fill", ...FIRE_LIGHTS],
-};
-
-// The path in art/ of picture `part` of season `id` ("seasons/winter/tree.png"),
-// or null for a season or a part it does not have.
-export function seasonArt(id, part) {
-  const s = SEASONS.find((x) => x.id === id);
-  return s && typeof part === "string" && SEASON_ART[s.id].includes(part) ? `seasons/${s.id}/${part}.png` : null;
-}
-
 // The settings menu (the gear in the top-right corner): one switch per entry,
 // in this order, each { key, name, default }. A setting is a boolean saved under
 // `settings.<key>`; adding one is adding an entry here and reading it in main.js.
 export const SETTINGS = [
   { key: "damageNumbers", name: "Show damage numbers", default: true },
   { key: "advance", name: "Advance after a kill", default: true }, // else a kill repeats the stage (farming)
-  { key: "seasonal", name: "Seasonal decorations", default: true }, // the town's, in season (SEASONS)
+  { key: "seasonal", name: "Decorate in season", default: true }, // the town's, in season (SEASONS)
+  { key: "seasonFirst", name: "Season over my decor", default: true }, // in season, its decor over the set equipped (decorOf)
 ];
 
 // The pixel font (main.js lays numbers out with it): the characters it has,
@@ -728,15 +743,19 @@ function noRanks(cls) {
 
 // The kinds bought once for every class, and the state's key for what of each is owned.
 const SHARED = SHOP_KINDS.filter((k) => SHOP[k].shared).map((k) => [k, SHOP[k].shared]);
+// The kinds that belong to the town, and the state's key for each one's slot;
+// and the kinds a class wears (in its `looks`).
+const TOWN = SHOP_KINDS.filter((k) => SHOP[k].town).map((k) => [k, SHOP[k].town]);
+const WORN = SHOP_KINDS.filter((k) => !SHOP[k].town);
 
-// A class's slot for one kind with nothing bought: { owned: [DEFAULT_LOOK],
+// A class's (or the town's) slot for one kind with nothing bought: { owned: [DEFAULT_LOOK],
 // equipped: DEFAULT_LOOK }, or only { equipped } for a kind bought for every class.
 const noSlot = (kind) => (SHOP[kind].shared ? { equipped: DEFAULT_LOOK } : { owned: [DEFAULT_LOOK], equipped: DEFAULT_LOOK });
 
 // Every class in its default look, owning nothing else:
 // { <class>: { <kind>: { owned: [DEFAULT_LOOK], equipped: DEFAULT_LOOK } | { equipped: DEFAULT_LOOK } } }.
 function noLooks() {
-  return Object.fromEntries(CLASSES.map((c) => [c, Object.fromEntries(SHOP_KINDS.map((k) => [k, noSlot(k)]))]));
+  return Object.fromEntries(CLASSES.map((c) => [c, Object.fromEntries(WORN.map((k) => [k, noSlot(k)]))]));
 }
 
 // Fresh progress: what a new party starts with.
@@ -753,6 +772,7 @@ export function newProgress() {
     training: Object.fromEntries(CLASSES.map((c) => [c, noTraining()])),
     looks: noLooks(),
     ...Object.fromEntries(SHARED.map(([, key]) => [key, []])), // hats: [<id>], bought for every class
+    ...Object.fromEntries(TOWN.map(([kind, key]) => [key, noSlot(kind)])), // decor: { owned: [<id>], equipped: <id> }, the town's
   };
 }
 
@@ -984,10 +1004,17 @@ function itemOf(cls, kind, id) {
   return catalogue(cls, kind).find((it) => it.id === id);
 }
 
+// The slot of a known kind that `cls` keeps ({ owned, equipped } or { equipped }):
+// the class's own, or for a kind that belongs to the town, the town's.
+function slotOf(progress, cls, kind) {
+  const slot = SHOP[kind].town ? progress[SHOP[kind].town] : progress.looks?.[cls]?.[kind];
+  return record(slot) ? slot : undefined;
+}
+
 // What `cls` has bought of `kind` (a known kind): the class's own list, or for
-// a kind bought for every class, everyone's.
+// a kind bought for every class, everyone's, or for the town's, the town's.
 function bought(progress, cls, kind) {
-  const list = SHOP[kind].shared ? progress[SHOP[kind].shared] : progress.looks?.[cls]?.[kind]?.owned;
+  const list = SHOP[kind].shared ? progress[SHOP[kind].shared] : slotOf(progress, cls, kind)?.owned;
   return Array.isArray(list) ? list : [];
 }
 
@@ -998,10 +1025,10 @@ export function owns(progress, cls, kind, id) {
   return id === DEFAULT_LOOK || bought(progress, cls, kind).includes(id);
 }
 
-// The id of the item of `kind` that `cls` has on: the default unless it has
-// put on something it owns.
+// The id of the item of `kind` that `cls` has on (for town decor, the town's,
+// whichever class asks): the default unless it has put on something it owns.
 export function equipped(progress, cls, kind) {
-  const id = progress.looks?.[cls]?.[kind]?.equipped;
+  const id = has(SHOP, kind) ? slotOf(progress, cls, kind)?.equipped : undefined;
   return owns(progress, cls, kind, id) ? id : DEFAULT_LOOK;
 }
 
@@ -1013,15 +1040,19 @@ export function canBuy(progress, cls, kind, id) {
 }
 
 // Buys item `id` of `kind` for `cls` if it can: the price comes off the gold
-// and the class owns it for good (a hat, every class does). It is not put on.
-// Returns whether it bought it.
+// and the class owns it for good (a hat, every class does; town decor, the
+// town). It is not put on. Returns whether it bought it.
 export function buy(progress, cls, kind, id) {
   if (!canBuy(progress, cls, kind, id)) return false;
   progress.gold = count(progress.gold) - itemOf(cls, kind, id).price;
   const key = SHOP[kind].shared;
+  const town = SHOP[kind].town;
   if (key) {
     if (!Array.isArray(progress[key])) progress[key] = [];
     progress[key].push(id);
+  } else if (town) {
+    if (!slotOf(progress, cls, kind) || !Array.isArray(progress[town].owned)) progress[town] = noSlot(kind);
+    progress[town].owned.push(id);
   } else {
     const slot = (((progress.looks ??= {})[cls] ??= {})[kind] ??= noSlot(kind));
     slot.owned.push(id);
@@ -1033,8 +1064,24 @@ export function buy(progress, cls, kind, id) {
 // have it on already. Returns whether anything changed.
 export function equip(progress, cls, kind, id) {
   if (!owns(progress, cls, kind, id) || equipped(progress, cls, kind) === id) return false;
-  (((progress.looks ??= {})[cls] ??= {})[kind] ??= noSlot(kind)).equipped = id; // a hat bought for another class may find no slot
+  const town = SHOP[kind].town;
+  if (town) (slotOf(progress, cls, kind) ?? (progress[town] = noSlot(kind))).equipped = id;
+  else (((progress.looks ??= {})[cls] ??= {})[kind] ??= noSlot(kind)).equipped = id; // a hat bought for another class may find no slot
   return true;
+}
+
+// The season (SEASONS' id) whose decorations the town puts up at `when`, or
+// null for none: the season's own while `settings.seasonal` is on (seasonOf),
+// and the set of town decor equipped (if owned) all year. With both, and
+// different, `settings.seasonFirst` picks the season's, else the one
+// equipped wins. Settings missing or malformed count as their defaults.
+export function decorOf(progress, settings, when) {
+  const on = settingsOf(settings);
+  const season = on.seasonal ? seasonOf(when) : null;
+  const id = equipped(progress ?? {}, CLASSES[0], "decor");
+  const mine = id === DEFAULT_LOOK ? null : id;
+  if (!season || !mine) return season ?? mine;
+  return on.seasonFirst ? season : mine;
 }
 
 // The path in art/ of class `cls`'s picture `frame` (one of FRAMES) in
@@ -1103,6 +1150,20 @@ function kept(list, items) {
 // have been bought.
 const WEAPONS_SINCE = 5;
 
+// The version that first sold town decor: state saved before it owns none,
+// whatever it says.
+const DECOR_SINCE = 8;
+
+// The town's saved slot for `kind` (one that belongs to the town), from state
+// saved by version `version`, as a class's is (see looksOf): what it owns, in
+// catalogue order with the default always among them, and the set on, which
+// falls back to the default if not owned.
+function townOf(saved, kind, version) {
+  const slot = version >= DECOR_SINCE && record(saved) ? saved : {};
+  const owned = [DEFAULT_LOOK, ...kept(slot.owned, catalogue(CLASSES[0], kind))];
+  return { owned, equipped: owned.includes(slot.equipped) ? slot.equipped : DEFAULT_LOOK };
+}
+
 // A class's saved looks, from state saved by version `version`: per kind, the
 // items it owns, in catalogue order with the default always among them and
 // anything unknown or repeated dropped, and the one it has on, which falls
@@ -1111,7 +1172,7 @@ const WEAPONS_SINCE = 5;
 // [<id>] }, already checked).
 function looksOf(saved, cls, shared, version) {
   return Object.fromEntries(
-    SHOP_KINDS.map((kind) => {
+    WORN.map((kind) => {
       // armours were first saved as "colour"
       const key = record(saved) && !has(saved, kind) && kind === "armour" ? "colour" : kind;
       const sold = kind !== "weapon" || version >= WEAPONS_SINCE;
@@ -1157,7 +1218,7 @@ function ranksOf(saved, cls, xp) {
 
 // The saved state as this version keeps it, from whatever was read back:
 // older versions without the progress fields, skill ranks, looks, weapons,
-// hats, settings, stages or training, or anything malformed. Never throws; a
+// hats, settings, stages, training or town decor, or anything malformed. Never throws; a
 // bad field falls back to its default, a bad entry is dropped. The boss is
 // not saved: an attempt starts afresh at the saved stage when the layout
 // loads (main.js makes it, see bossOf).
@@ -1202,8 +1263,11 @@ export function loadState(saved) {
     // versions 1 to 4 sold no weapons: every class owns and holds its default
     looks: Object.fromEntries(CLASSES.map((c) => [c, looksOf(record(s.looks) && has(s.looks, c) ? s.looks[c] : undefined, c, shared, count(s.version))])),
     ...shared, // hats: [<id>], owned by every class
+    // versions 1 to 7 sold no town decor: none owned, none up
+    ...Object.fromEntries(TOWN.map(([kind, key]) => [key, townOf(has(s, key) ? s[key] : undefined, kind, count(s.version))])),
     // versions 1 to 3 had no settings, 1 to 5 not "advance", and a save from before
-    // seasonal decorations not "seasonal" (no new version: a missing key is its default)
+    // seasonal decorations not "seasonal" nor "seasonFirst" (no new version for a
+    // setting: a missing key is its default)
     settings: settingsOf(s.settings),
   };
 }

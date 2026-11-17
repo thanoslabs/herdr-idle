@@ -61,7 +61,8 @@ describe("every picture asked for is in art/", () => {
           keep(v);
         }
       }
-      for (const part of SEASON_ART[season]) assert.ok(drawn.has(seasonArt(season, part)), `${season} ${part}`);
+      // all but its icon, the shop's (see "every panel")
+      for (const part of SEASON_ART[season].filter((p) => p !== "icon")) assert.ok(drawn.has(seasonArt(season, part)), `${season} ${part}`);
     }
   });
 
@@ -183,6 +184,13 @@ describe("every picture asked for is in art/", () => {
     const { saved } = raid({ gold: 1234567, slain: 9, level: 9, stage: 3, best: 5, farming: true });
     saved.kills = { slime: 3, ogre: 3, dragon: 3 };
     const v = await mountView({ saved, agents: [...["blocked", "working", "done", "idle"].map((s, i) => agent(`t${i + 1}`, s)), ...Array.from({ length: 120 }, (_, i) => agent(`w${i}`, "working"))] });
+    // the shop's town decor, each set's icon on its tile
+    v.click("idle-rpg-gold");
+    v.click("idle-rpg-shop-kind-decor");
+    keep(v);
+    for (const id of Object.keys(SEASON_ART)) assert.ok(drawn.has(seasonArt(id, "icon")), `${id}'s icon`);
+    assert.ok(drawn.has("icons/decor.png"));
+    v.click("idle-rpg-gold");
     for (const c of ["idle-rpg-slain", "idle-rpg-points", "idle-rpg-gold", "idle-rpg-gear"]) v.click(c);
     v.click("critter-t1");
     v.release("critter-t1");
