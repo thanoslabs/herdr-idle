@@ -1,7 +1,8 @@
 // Things to feed a view: agents as Herdr's agents() returns them, and saved
 // state as each version of the mod wrote it (see save() in main.js and its
 // history: v1 progress, v2 skills, v3 the shop's colours, v4 hats and
-// settings, v5 weapons, v6 stages and Attack training, v7 Health training).
+// settings, v5 weapons, v6 stages and Attack training, v7 Health training,
+// v8 town decor).
 
 let seq = 0;
 
@@ -40,7 +41,7 @@ const XP = { you: 1200, wizard: 900, healer: 300, warrior: 2500, archer: 40 };
 
 /**
  * Saved state as version `version` of the mod wrote it (0: before versions,
- * under an older key; 8: a later version than this one). `now` is the time
+ * under an older key; 9: a later version than this one). `now` is the time
  * agents were last seen; `extra` is merged over the top.
  */
 export function savedState(version, { now = Date.now(), sprites = {}, extra = {} } = {}) {
@@ -68,7 +69,8 @@ export function savedState(version, { now = Date.now(), sprites = {}, extra = {}
     v.training = { warrior: { attack: 3, health: 2 }, wizard: { attack: 1 } };
     v.settings = { damageNumbers: false, advance: false };
   }
-  if (version >= 8) v.relics = { amulet: 1 }; // something only a later version knows
+  if (version >= 8) v.decor = { owned: ["default", "halloween"], equipped: "halloween" };
+  if (version >= 9) v.relics = { amulet: 1 }; // something only a later version knows
   return { ...v, ...extra };
 }
 
@@ -76,10 +78,11 @@ export function savedState(version, { now = Date.now(), sprites = {}, extra = {}
  * A raid ready to mount: { saved, agents } for mountView. Agents t1..tn are
  * `classes` in turn (all `status`); you are `you`. Every class is at `level`
  * with `attack` and `health` training; `weapons`/`armours`/`hats` put items on
- * ({ <class>: id }, owned too); `stage`/`best`/`farming`/`gold`/`settings` as saved.
+ * ({ <class>: id }, owned too), `decor` the town's ({ owned: [id], equipped: id },
+ * none by default); `stage`/`best`/`farming`/`gold`/`settings` as saved.
  * `statuses` gives agents their own status in turn (t1's first; `status` past its end).
  */
-export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer", status = "working", statuses = [], stage = 1, best = stage, farming = false, gold = 0, slain = 0, level = 1, attack = 0, health = 0, skills = {}, weapons = {}, armours = {}, hats = {}, settings = {}, battle = true, youAt = { x: 154, y: 16 }, now = Date.now() } = {}) {
+export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer", status = "working", statuses = [], stage = 1, best = stage, farming = false, gold = 0, slain = 0, level = 1, attack = 0, health = 0, skills = {}, weapons = {}, armours = {}, hats = {}, decor = null, settings = {}, battle = true, youAt = { x: 154, y: 16 }, now = Date.now() } = {}) {
   const keys = classes.map((_, i) => `t${i + 1}`);
   const xp = 100 * ((level - 1) * level) / 2; // classLevel's curve: level n from 100 x n(n-1)/2
   const CLASSES = ["wizard", "healer", "warrior", "archer"];
@@ -94,7 +97,7 @@ export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer"
     ]),
   );
   const saved = {
-    version: 7,
+    version: 8,
     you: youAt,
     spots: {},
     sprites: { you, ...Object.fromEntries(keys.map((k, i) => [k, classes[i]])) },
@@ -111,6 +114,7 @@ export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer"
     training: Object.fromEntries(CLASSES.map((c) => [c, { attack, health }])),
     looks,
     hats: [...new Set(Object.values(hats).filter((h) => h !== "default"))],
+    ...(decor ? { decor } : {}),
     settings: { damageNumbers: true, advance: true, ...settings },
   };
   return { saved, agents: keys.map((k, i) => agent(k, statuses[i] ?? status)) };

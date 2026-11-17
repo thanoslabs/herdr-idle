@@ -9,15 +9,15 @@ import { savedState } from "./harness/fixtures.mjs";
 
 const NOW = 1_800_000_000_000;
 const load = (v, extra) => R.loadState(savedState(v, { now: NOW, extra }));
-const KEYS = ["version", "you", "spots", "sprites", "seen", "battle", "stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats", "settings"];
+const KEYS = ["version", "you", "spots", "sprites", "seen", "battle", "stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats", "decor", "settings"];
 
 describe("every version", () => {
   test("a fresh start (nothing saved) is a new party", () => {
     const s = R.loadState(undefined);
     assert.deepEqual(Object.keys(s).sort(), [...KEYS].sort());
     const p = R.newProgress();
-    for (const k of ["stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats"]) assert.deepEqual(s[k], p[k], k);
-    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true });
+    for (const k of ["stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats", "decor"]) assert.deepEqual(s[k], p[k], k);
+    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true, seasonFirst: true });
     assert.deepEqual([s.version, s.battle, s.you], [R.STATE_VERSION, true, { x: 154, y: 16 }]);
   });
   test("before versions (an older key's state): positions and classes kept", () => {
@@ -33,7 +33,7 @@ describe("every version", () => {
     assert.equal(R.pointsSpent(s.skills.wizard), 0);
     assert.equal(s.looks.wizard.armour.equipped, "default");
     assert.deepEqual([s.stage, s.best, s.farming], [1, 1, false]);
-    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true });
+    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true, seasonFirst: true });
     assert.equal(s.monster, undefined);
   });
   test("v2: ranks kept while the class earned the points; more than earned resets that class", () => {
@@ -54,7 +54,7 @@ describe("every version", () => {
     const s = load(4);
     assert.deepEqual(s.hats, ["party"]);
     assert.equal(s.looks.wizard.hat.equipped, "party");
-    assert.deepEqual(s.settings, { damageNumbers: false, advance: true, seasonal: true });
+    assert.deepEqual(s.settings, { damageNumbers: false, advance: true, seasonal: true, seasonFirst: true });
   });
   test("v1 to v4 hold only the default weapon whatever they say (weapons came in v5)", () => {
     for (const v of [1, 2, 3, 4]) {
@@ -72,10 +72,10 @@ describe("every version", () => {
     const s = load(6);
     assert.deepEqual([s.stage, s.best, s.farming], [4, 6, true]);
     assert.deepEqual(s.training.warrior, { attack: 3, health: 0 });
-    assert.deepEqual(s.settings, { damageNumbers: false, advance: false, seasonal: true });
+    assert.deepEqual(s.settings, { damageNumbers: false, advance: false, seasonal: true, seasonFirst: true });
   });
   test("seasonal decorations: on in every save from before them, a saved switch kept", () => {
-    for (const v of [0, 1, 2, 3, 4, 5, 6, 7]) assert.equal(load(v).settings.seasonal, true, `v${v}`);
+    for (const v of [0, 1, 2, 3, 4, 5, 6, 7, 8]) assert.equal(load(v).settings.seasonal, true, `v${v}`);
     assert.equal(R.loadState({ version: 7, settings: { seasonal: false } }).settings.seasonal, false);
     assert.equal(R.loadState({ version: 7, settings: { seasonal: "no" } }).settings.seasonal, true, "not a boolean: the default");
   });
@@ -83,16 +83,28 @@ describe("every version", () => {
     const s = load(7);
     assert.deepEqual(s.training.warrior, { attack: 3, health: 2 });
     assert.deepEqual(s.training.wizard, { attack: 1, health: 0 });
-    assert.equal(s.version, 7);
+    assert.equal(s.version, R.STATE_VERSION, "and saves as this version");
+  });
+  test("v8: town decor, owned and equipped, kept; settings without seasonFirst get it on", () => {
+    const s = load(8);
+    assert.deepEqual(s.decor, { owned: ["default", "halloween"], equipped: "halloween" });
+    assert.equal(s.settings.seasonFirst, true);
+    assert.equal(s.version, 8);
+    assert.equal(R.loadState({ version: 8, settings: { seasonFirst: false } }).settings.seasonFirst, false);
+  });
+  test("v1 to v7 own no town decor whatever they say (it came in v8), and nothing saved is none", () => {
+    for (const v of [0, 1, 2, 3, 4, 5, 6, 7]) assert.deepEqual(load(v, { decor: { owned: ["default", "winter"], equipped: "winter" } }).decor, { owned: ["default"], equipped: "default" }, `v${v}`);
+    assert.deepEqual(R.loadState({ version: 8 }).decor, { owned: ["default"], equipped: "default" });
+    assert.deepEqual(R.loadState(undefined).decor, R.newProgress().decor);
   });
   test("a later version loads what it knows and keeps its number (read-only in main.js)", () => {
-    const s = load(8);
-    assert.equal(s.version, 8);
+    const s = load(9);
+    assert.equal(s.version, 9);
     assert.deepEqual(s.training.warrior, { attack: 3, health: 2 });
     assert.equal(s.relics, undefined, "what it does not know is not carried");
   });
   test("loading is idempotent: a loaded state loads to itself", () => {
-    for (const v of [0, 1, 3, 5, 7]) {
+    for (const v of [0, 1, 3, 5, 7, 8]) {
       const once = load(v);
       assert.deepEqual(R.loadState(JSON.parse(JSON.stringify(once))), once, `v${v}`);
     }
@@ -112,11 +124,13 @@ describe("garbage", () => {
       version: "7", you: { x: "1", y: 2 }, spots: [1], sprites: "x", seen: 5, battle: "yes", stage: "4", best: {}, farming: "true",
       slain: -4, gold: "100", kills: [], xp: null, skills: 7, training: [], looks: "x", hats: {}, settings: [],
     };
+    for (const decor of ["x", 5, null, [], ["winter"], { owned: "winter", equipped: "winter" }, { owned: { 0: "winter" } }, { equipped: "winter" }])
+      assert.deepEqual(R.loadState({ version: 8, decor }).decor, { owned: ["default"], equipped: "default" }, JSON.stringify(decor));
     const s = R.loadState(g);
     assert.deepEqual([s.version, s.you, s.spots, s.sprites, s.seen, s.battle], [R.STATE_VERSION, { x: 154, y: 16 }, {}, {}, {}, true]);
     assert.deepEqual([s.stage, s.best, s.farming, s.slain, s.gold], [1, 1, false, 0, 0]);
     assert.deepEqual(s.hats, []);
-    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true });
+    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true, seasonFirst: true });
   });
   test("bad entries are dropped one by one, good ones kept", () => {
     const s = R.loadState({
@@ -131,6 +145,10 @@ describe("garbage", () => {
       hats: ["pumpkin", "pumpkin", "crown", "default"],
       settings: { damageNumbers: "no", advance: false, extra: true },
     });
+    const decor = (d) => R.loadState({ version: 8, decor: d }).decor;
+    assert.deepEqual(decor({ owned: ["winter", "winter", "spring", "default", 3, null, "halloween"], equipped: "spring" }), { owned: ["default", "halloween", "winter"], equipped: "default" }, "known ids once, in catalogue order; an unknown one is not on");
+    assert.deepEqual(decor({ owned: ["winter"], equipped: "halloween" }), { owned: ["default", "winter"], equipped: "default" }, "on, but not owned: none");
+    assert.deepEqual(decor({ owned: ["winter"], equipped: "winter" }), { owned: ["default", "winter"], equipped: "winter" });
     assert.deepEqual(s.spots, { a: { x: 1, y: 2 } });
     assert.deepEqual(s.sprites, { a: "wizard", you: "healer" });
     assert.deepEqual(s.seen, { a: 5 });
@@ -140,7 +158,7 @@ describe("garbage", () => {
     assert.deepEqual(s.looks.archer.armour, { owned: ["default", "dusk"], equipped: "default" });
     assert.deepEqual(s.hats, ["pumpkin"]);
     assert.equal(s.looks.archer.hat.equipped, "default", "a hat nobody owns is not worn");
-    assert.deepEqual(s.settings, { damageNumbers: true, advance: false, seasonal: true });
+    assert.deepEqual(s.settings, { damageNumbers: true, advance: false, seasonal: true, seasonFirst: true });
   });
   test("a stage past the best, or not a whole number, is the best", () => {
     assert.equal(R.loadState({ version: 7, stage: 9, best: 6 }).stage, 6);
@@ -153,11 +171,11 @@ describe("garbage", () => {
 describe("prototype keys", () => {
   const hostile = () =>
     JSON.parse(
-      '{"version":7,"__proto__":{"gold":999,"polluted":true},"spots":{"__proto__":{"x":1,"y":2},"constructor":{"x":3,"y":4}},' +
+      '{"version":8,"__proto__":{"gold":999,"polluted":true},"spots":{"__proto__":{"x":1,"y":2},"constructor":{"x":3,"y":4}},' +
         '"sprites":{"__proto__":"wizard","toString":"archer"},"xp":{"__proto__":5,"constructor":7},' +
         '"skills":{"__proto__":{"power":5}},"training":{"__proto__":{"attack":9},"constructor":{"attack":9}},' +
         '"looks":{"__proto__":{"armour":{"owned":["crimson"],"equipped":"crimson"}},"constructor":{}},"settings":{"__proto__":{"advance":false}},' +
-        '"hats":["__proto__","constructor"]}',
+        '"hats":["__proto__","constructor"],"decor":{"__proto__":{"owned":["winter"],"equipped":"winter"},"owned":["__proto__","constructor","toString"],"equipped":"__proto__"}}',
     );
   test("no key reaches a prototype, and nothing is polluted", () => {
     const s = R.loadState(hostile());
@@ -168,8 +186,10 @@ describe("prototype keys", () => {
     assert.equal(Object.hasOwn(s.spots, "__proto__"), false);
     assert.equal(Object.hasOwn(s.sprites, "__proto__"), false);
     assert.equal(s.xp.constructor, Object, "xp keeps only the known keys");
-    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true });
+    assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true, seasonFirst: true });
     assert.deepEqual(s.hats, []);
+    assert.deepEqual(s.decor, { owned: ["default"], equipped: "default" });
+    assert.equal(Object.getPrototypeOf(s.decor), Object.prototype);
     for (const c of R.CLASSES) assert.deepEqual(s.training[c], { attack: 0, health: 0 });
   });
   test("a loaded hostile state still saves and loads cleanly", () => {

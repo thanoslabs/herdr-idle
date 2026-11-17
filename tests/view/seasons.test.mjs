@@ -1,19 +1,22 @@
 // The town's seasonal decorations (SEASONS in rules.js, decor in main.js):
 // jack-o'-lanterns in October, string lights and a tree in December, by the
-// view's clock in local time, while the "Seasonal decorations" setting is on.
+// view's clock in local time, while the "Decorate in season" setting is on;
+// and the same sets bought as town decor, up all year while equipped (decorOf
+// in rules.js; "Season over my decor" says which wins in the other's month).
 // Every test here sets the date (mountView's `at`); the harness's own clock
 // starts out of season, so no other test sees a decoration whatever today is.
 // Checked: what each season puts up, by day and night and at each width;
 // nothing out of season, with the switch off or in a raid (and then the
 // render is the same as before seasons existed); the month turning on the
-// view's tick; old saves loading with the switch on; and that decorations are
+// view's tick; old saves loading with the switch on; a set equipped drawn
+// exactly as in its own month, and which one wins; and that decorations are
 // only scenery: behind everyone, clear of the stations, the campfire and the
 // scene's edges, under the HUD, with no handlers, moving nobody.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { SEASONS, seasonOf } from "../../mods/idle-rpg/rules.js";
 import { El, walk } from "../harness/elements.mjs";
-import { agent, agents, mountRaid, mountView, raid, savedState } from "../harness/view.mjs";
+import { agent, agents, mountRaid, mountView, raid, savedState, timeAt } from "../harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
 const FLOOR_H = 152;
@@ -265,7 +268,7 @@ describe("nothing out of season, with the switch off, or in a raid", () => {
     assert.equal(v.view.settings.seasonal, true);
     assert.ok(decor(v).length > 0);
     v.click("idle-rpg-gear");
-    assert.ok(v.text("idle-rpg-setting-seasonal").includes("Seasonal decorations"));
+    assert.ok(v.text("idle-rpg-setting-seasonal").includes("Decorate in season"));
     assert.equal(v.get("idle-rpg-setting-seasonal-knob").style.left, 14, "on");
     const n = v.saves.length;
     v.click("idle-rpg-setting-seasonal");
@@ -315,7 +318,7 @@ describe("the calendar turns on the view's tick, without a reload", () => {
 
 describe("old saves", () => {
   test("every version's save loads with the switch on, and decorates the town in season", async () => {
-    for (const version of [0, 1, 2, 3, 4, 5, 6, 7]) {
+    for (const version of [0, 1, 2, 3, 4, 5, 6, 7, 8]) {
       const saved = savedState(version, { now: OCT, extra: { battle: false } });
       const v = await mountView({ saved, agents: [agent("t1", "idle")], at: OCT, key: version === 0 ? "raid-party.state" : undefined });
       assert.equal(v.view.settings.seasonal, true, `v${version}`);
@@ -443,4 +446,142 @@ describe("only scenery", () => {
 test("every season has decorations to draw (SEASONS)", async () => {
   const months = { halloween: OCT, winter: DEC };
   assert.deepEqual(SEASONS.map((s) => s.id).sort(), Object.keys(months).sort(), "a new season needs its own tests here");
+});
+
+describe("town decor bought and equipped (decorOf)", () => {
+  const owned = (equipped) => ({ owned: ["default", "halloween", "winter"], equipped });
+  const mountTown = (o, at, phase) => mountView({ saved: raid({ battle: false, now: timeAt(phase, at), ...o }).saved, agents: [...agents(5, "idle"), agent("w1", "working")], phase, at });
+  const what = (v) => (v.has("idle-rpg-season-barrel") ? "halloween" : v.has("idle-rpg-season-string-a") ? "winter" : decor(v).length ? "?" : null);
+
+  test("out of season, an equipped set is drawn exactly as its own month draws it: day and night, every width", async () => {
+    const ws = THOROUGH ? widths : [320, 640, 1280, 2000];
+    for (const phase of [0.25, 0.75])
+      for (const [set, month, outs] of [["halloween", OCT, [OUT.november, OUT.january]], ["winter", DEC, [OUT.september, OCT]]])
+        for (const at of outs) {
+          // in October the winter set needs the season to step aside: "Season over my decor" off
+          const settings = at === OCT ? { seasonFirst: false } : {};
+          const bought = await mountTown({ decor: owned(set), settings }, at, phase);
+          const own = await mountTown({}, month, phase);
+          for (const w of ws) {
+            bought.resize(w);
+            own.resize(w);
+            bought.render();
+            own.render();
+            assert.ok(decor(bought).length > 0, `${set} on ${new Date(at).toDateString()} ${w}px`);
+            assert.deepEqual(snapshot(bought.tree), snapshot(own.tree), `${set} on ${new Date(at).toDateString()} at ${phase} ${w}px: as in its own month`);
+          }
+        }
+  });
+
+  test("nothing bought, out of season: exactly as a save from before town decor", async () => {
+    for (const phase of [0.25, 0.75]) {
+      const list = [...agents(5, "idle"), agent("w1", "working")];
+      const before = await mountView({ saved: savedState(7, { now: timeAt(phase), extra: { battle: false } }), agents: list, phase });
+      const now = await mountView({ saved: savedState(7, { now: timeAt(phase), extra: { battle: false, version: 8, decor: { owned: ["default"], equipped: "default" } } }), agents: list, phase });
+      for (const w of [320, 640, 1280, 2000]) {
+        before.resize(w);
+        now.resize(w);
+        before.render();
+        now.render();
+        assert.deepEqual(decor(now), []);
+        assert.deepEqual(snapshot(now.tree), snapshot(before.tree), `${phase} ${w}px`);
+      }
+    }
+  });
+
+  test("in the other's month the season wins by default; with Season over my decor off, the set equipped does", async () => {
+    for (const [set, at, season] of [["winter", OCT, "halloween"], ["halloween", DEC, "winter"]]) {
+      const v = await town({ decor: owned(set) }, { at });
+      assert.equal(what(v), season, `${set} in ${season}'s month`);
+      v.click("idle-rpg-gear");
+      assert.ok(v.text("idle-rpg-setting-seasonFirst").includes("Season over my decor"));
+      assert.equal(v.get("idle-rpg-setting-seasonFirst-knob").style.left, 14, "on by default");
+      const n = v.saves.length;
+      v.click("idle-rpg-setting-seasonFirst");
+      assert.equal(v.saves.length, n + 1);
+      assert.equal(v.stored.settings.seasonFirst, false);
+      assert.equal(what(v), set, "the set equipped wins");
+      v.click("idle-rpg-setting-seasonFirst");
+      assert.equal(what(v), season, "and back");
+    }
+  });
+
+  test("Decorate in season off takes the season's down but never the set equipped; its own month needs no switch", async () => {
+    for (const [at, set, want] of [[OCT, "winter", "winter"], [OCT, "halloween", "halloween"], [DEC, "default", null], [OUT.november, "winter", "winter"]]) {
+      const v = await town({ decor: owned(set), settings: { seasonal: false } }, { at });
+      assert.equal(what(v), want, `${new Date(at).toDateString()}, ${set}`);
+    }
+  });
+
+  const rows = (v) => v.ids("idle-rpg-setting-").filter((id) => !id.endsWith("-knob"));
+  test("the settings: Season over my decor only once a set is owned, the fourth line; on by default either way", async () => {
+    const none = await town({});
+    none.click("idle-rpg-gear");
+    assert.deepEqual(rows(none), ["idle-rpg-setting-damageNumbers", "idle-rpg-setting-advance", "idle-rpg-setting-seasonal"], "it would decide nothing");
+    assert.equal(none.view.settings.seasonFirst, true);
+    // owning none, the menu is as it was before town decor: 3px either side of a switch, the font's own line
+    assert.equal(none.get("idle-rpg-settings").style.line_height, undefined);
+    assert.equal(none.get("idle-rpg-settings").style.max_h, undefined);
+    for (const id of rows(none)) assert.equal(none.get(id).style.py, 3, id);
+    const v = await town({ decor: owned("default"), settings: { seasonFirst: false } });
+    v.click("idle-rpg-gear");
+    assert.deepEqual(rows(v), ["idle-rpg-setting-damageNumbers", "idle-rpg-setting-advance", "idle-rpg-setting-seasonal", "idle-rpg-setting-seasonFirst"]);
+    assert.deepEqual(v.text("idle-rpg-settings").slice(2), ["Show damage numbers", "Advance after a kill", "Decorate in season", "Season over my decor"]);
+    assert.equal(v.get("idle-rpg-setting-seasonFirst-knob").style.left, 0, "its saved value, kept while it was hidden");
+    // buying a set brings it up at once
+    const b = await town({ gold: 25 });
+    b.click("idle-rpg-station-shop");
+    b.click("idle-rpg-shop-kind-decor");
+    b.click("idle-rpg-shop-buy-halloween");
+    b.click("idle-rpg-gear");
+    assert.ok(b.has("idle-rpg-setting-seasonFirst"));
+  });
+
+  test("while Decorate in season is off, Season over my decor is dimmed and dead (it decides nothing)", async () => {
+    const v = await town({ decor: owned("winter") }, { at: OCT });
+    v.click("idle-rpg-gear");
+    const live = v.get("idle-rpg-setting-seasonFirst");
+    assert.ok(live.handlers.click && live.style.cursor_pointer);
+    v.click("idle-rpg-setting-seasonal");
+    const dead = v.get("idle-rpg-setting-seasonFirst");
+    assert.equal(dead.handlers.click, undefined);
+    assert.equal(dead.style.cursor_pointer, undefined);
+    assert.equal(dead.hoverStyle, null);
+    assert.ok(dead.tip.includes("Decorate in season"));
+    // greyed as a Buy the gold does not cover: its name, and the switch faded
+    assert.equal(dead.kids[0].style.text_color, "#5d7088");
+    assert.equal(dead.kids[1].style.opacity, 0.4);
+    assert.equal(live.kids[0].style.text_color, "#dbe7f3");
+    const n = v.saves.length;
+    v.click("idle-rpg-setting-seasonFirst");
+    assert.equal(v.saves.length, n, "a click does nothing");
+    assert.equal(v.view.settings.seasonFirst, true);
+    assert.equal(what(v), "winter");
+    // the others stay live, and turning it back on brings it back
+    assert.ok(v.get("idle-rpg-setting-seasonal").handlers.click);
+    v.click("idle-rpg-setting-seasonal");
+    assert.ok(v.get("idle-rpg-setting-seasonFirst").handlers.click);
+    assert.equal(what(v), "halloween");
+  });
+
+  test("a raid is never decorated, whatever is equipped; back in town it is up", async () => {
+    for (const set of ["halloween", "winter"])
+      for (const stage of [1, 11, 21, 31]) {
+        const v = await mountRaid({ stage, best: stage, decor: owned(set) });
+        for (const w of [320, 640, 1280]) {
+          v.resize(w);
+          assert.deepEqual(decor(v), [], `${set} stage ${stage} ${w}px`);
+          assert.deepEqual(seasonal(v), [], `${set} stage ${stage} ${w}px`);
+        }
+        v.click("idle-rpg-battle-toggle");
+        assert.equal(what(v), set);
+      }
+  });
+
+  test("the month turning swaps the season for the set equipped on the view's tick", async () => {
+    const v = await town({ decor: owned("winter") }, { at: on(2026, 10, 31, 23, 50) });
+    assert.equal(what(v), "halloween");
+    v.advance(on(2026, 11, 1, 0, 0) - v.now + TICK_MS + 1);
+    assert.equal(what(v), "winter");
+  });
 });

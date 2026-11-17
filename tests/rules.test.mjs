@@ -415,7 +415,7 @@ describe("labels", () => {
     }
   });
   test("the settings list has a key, a name and a boolean default each", () => {
-    assert.deepEqual(R.SETTINGS.map((s) => [s.key, typeof s.name, s.default]), [["damageNumbers", "string", true], ["advance", "string", true], ["seasonal", "string", true]]);
+    assert.deepEqual(R.SETTINGS.map((s) => [s.key, typeof s.name, s.default]), [["damageNumbers", "string", true], ["advance", "string", true], ["seasonal", "string", true], ["seasonFirst", "string", true]]);
   });
 });
 
@@ -450,13 +450,66 @@ describe("seasons", () => {
   test("anything that is not a time is out of season", () => {
     for (const h of [undefined, null, NaN, Infinity, -Infinity, "2026-10-15", "1790000000000", {}, [], new Date(NaN), true, () => 0]) assert.equal(R.seasonOf(h), null, String(h));
   });
-  test("each season is a row: an id, a name and its months; no month in two", () => {
+  test("each season is a row: an id, a name, its months and its price as town decor; no month in two", () => {
     const months = R.SEASONS.flatMap((s) => s.months);
     assert.equal(new Set(months).size, months.length);
     for (const s of R.SEASONS) {
       assert.match(s.id, /^[a-z]+$/);
       assert.equal(typeof s.name, "string");
       assert.ok(s.months.every((m) => Number.isInteger(m) && m >= 1 && m <= 12), s.id);
+      assert.ok(Number.isInteger(s.price) && s.price > 0, s.id);
+      assert.notEqual(s.id, R.DEFAULT_LOOK);
     }
+  });
+});
+
+describe("which decorations the town puts up (decorOf)", () => {
+  const at = (m) => new Date(2026, m - 1, 15, 12).getTime();
+  const OCT = at(10);
+  const DEC = at(12);
+  const NOV = at(11);
+  // progress with `owned` bought and `on` equipped
+  const town = (on = "default", owned = on === "default" ? [] : [on]) => {
+    const p = R.newProgress();
+    p.decor = { owned: ["default", ...owned], equipped: on };
+    return p;
+  };
+  const settings = (seasonal = true, seasonFirst = true) => ({ damageNumbers: true, advance: true, seasonal, seasonFirst });
+  test("the truth table: in season or out, the switch, a set equipped or none, which wins", () => {
+    const rows = [
+      // when, seasonal, seasonFirst, equipped, shows
+      [NOV, true, true, "default", null],
+      [NOV, false, true, "default", null],
+      [OCT, true, true, "default", "halloween"],
+      [OCT, false, true, "default", null],
+      [DEC, true, false, "default", "winter"],
+      [NOV, true, true, "winter", "winter"],
+      [NOV, false, true, "winter", "winter"],
+      [NOV, true, false, "halloween", "halloween"],
+      [OCT, false, true, "winter", "winter"],
+      [OCT, false, false, "winter", "winter"],
+      [OCT, true, true, "winter", "halloween"],
+      [OCT, true, false, "winter", "winter"],
+      [DEC, true, true, "halloween", "winter"],
+      [DEC, true, false, "halloween", "halloween"],
+      [OCT, true, true, "halloween", "halloween"],
+      [OCT, true, false, "halloween", "halloween"],
+      [DEC, false, false, "winter", "winter"],
+    ];
+    for (const [when, seasonal, seasonFirst, on, want] of rows)
+      assert.equal(R.decorOf(town(on), settings(seasonal, seasonFirst), when), want, `${new Date(when).getMonth() + 1}, seasonal ${seasonal}, season first ${seasonFirst}, ${on}`);
+  });
+  test("a set equipped but not owned, or anything malformed, is none", () => {
+    const p = town("winter", []);
+    assert.equal(R.decorOf(p, settings(), NOV), null);
+    assert.equal(R.decorOf(p, settings(), OCT), "halloween");
+    for (const bad of [undefined, null, {}, { decor: "winter" }, { decor: { owned: ["winter"], equipped: "__proto__" } }]) assert.equal(R.decorOf(bad, settings(), NOV), null, JSON.stringify(bad));
+  });
+  test("settings missing or malformed count as their defaults (both on); a bad time is out of season", () => {
+    assert.equal(R.decorOf(town("winter"), undefined, OCT), "halloween");
+    assert.equal(R.decorOf(town("winter"), { seasonFirst: "no" }, OCT), "halloween");
+    assert.equal(R.decorOf(town(), null, DEC), "winter");
+    assert.equal(R.decorOf(town("winter"), settings(), NaN), "winter");
+    assert.equal(R.decorOf(town(), settings(), "October"), null);
   });
 });

@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { trainingPrice } from "../../mods/idle-rpg/rules.js";
-import { misshapen, mountRaid, mountView, savedState, timeAt } from "../harness/view.mjs";
+import { misshapen, mountRaid, mountView, raid, savedState, timeAt } from "../harness/view.mjs";
 
 const PANELS = ["idle-rpg-codex", "idle-rpg-skills", "idle-rpg-shop", "idle-rpg-settings"];
 const open = (v) => PANELS.filter((id) => v.has(id));
@@ -160,6 +160,89 @@ describe("the shop", () => {
   });
 });
 
+describe("the shop's town decor", () => {
+  const OCT = new Date(2026, 9, 15, 12).getTime();
+  const tiles = (v) => ["default", "halloween", "winter"].map((id) => v.text(`idle-rpg-shop-item-${id}`));
+  test("down the left after the hats; the same tiles on every class tab, with a picture of each set", async () => {
+    const v = await mountRaid({ gold: 30 });
+    v.click("idle-rpg-gold");
+    assert.deepEqual(v.ids("idle-rpg-shop-kind-"), ["idle-rpg-shop-kind-armour", "idle-rpg-shop-kind-weapon", "idle-rpg-shop-kind-hat", "idle-rpg-shop-kind-decor"]);
+    assert.deepEqual(v.text("idle-rpg-shop-kind-decor"), ["Town decor"]);
+    assert.ok(v.images("idle-rpg-shop-kind-decor")[0].endsWith("/icons/decor.png"));
+    v.click("idle-rpg-shop-kind-decor");
+    assert.deepEqual(v.text("idle-rpg-shop").filter((t) => t.startsWith("Bought once")), ["Bought once, for the town"]);
+    for (const c of ["wizard", "healer", "warrior", "archer"]) {
+      v.click(`idle-rpg-shop-${c}`);
+      assert.deepEqual(tiles(v), [["None", "Equipped"], ["Halloween", "Buy 25"], ["Winter", "Buy 25"]], c);
+      assert.deepEqual(v.images("idle-rpg-shop-item-default"), [], `${c}: None has no picture`);
+      for (const id of ["halloween", "winter"]) {
+        assert.deepEqual(v.images(`idle-rpg-shop-item-${id}`).map((p) => p.split("/art/")[1]), [`seasons/${id}/icon.png`], `${c} ${id}`);
+        const img = v.all((n) => n.type === "image" && n.src.endsWith(`/seasons/${id}/icon.png`))[0];
+        assert.deepEqual([img.style.w, img.style.h], [54, 36]);
+      }
+      assert.deepEqual([v.text("idle-rpg-shop-about-1"), v.text("idle-rpg-shop-about-2")], [["None"], ["No decor of your own"]]);
+      v.click("idle-rpg-shop-item-winter");
+      assert.deepEqual([v.text("idle-rpg-shop-about-1"), v.text("idle-rpg-shop-about-2")], [["Winter"], ["Looks only, for the town, all year"]]);
+    }
+    // the tiles are the hats' size: the panel's rows are unchanged
+    assert.equal(v.get("idle-rpg-shop-item-winter").style.h, 78);
+  });
+  test("buying: dimmed and dead while short, the price exactly is enough; it goes up at once and saves; for every class", async () => {
+    const v = await mountRaid({ gold: 24, battle: false, status: "idle" });
+    v.click("idle-rpg-station-shop");
+    v.click("idle-rpg-shop-kind-decor");
+    assert.equal(v.get("idle-rpg-shop-buy-winter").handlers.click, undefined, "24 gold, 25 the price");
+    v.click("idle-rpg-shop-buy-winter");
+    assert.equal(v.view.progress.gold, 24);
+    assert.deepEqual(v.ids("idle-rpg-season-"), [], "out of season, nothing bought: nothing up");
+    v.view.progress.gold = 25; // a kill's worth more
+    v.render();
+    const n = v.saves.length;
+    v.click("idle-rpg-shop-buy-winter");
+    assert.equal(v.saves.length, n + 1, "saved at once");
+    assert.equal(v.view.progress.gold, 0);
+    assert.deepEqual(v.stored.decor, { owned: ["default", "winter"], equipped: "winter" }, "bought and put up, as a hat is put on");
+    assert.deepEqual(tiles(v), [["None", "Equip"], ["Halloween", "Buy 25"], ["Winter", "Equipped"]]);
+    assert.ok(v.has("idle-rpg-season-string-a"), "the town is decorated for winter in January");
+    for (const c of ["wizard", "healer", "warrior", "archer"]) {
+      v.click(`idle-rpg-shop-${c}`);
+      assert.deepEqual(tiles(v), [["None", "Equip"], ["Halloween", "Buy 25"], ["Winter", "Equipped"]], c);
+    }
+  });
+  test("None takes it down and Equip puts it back up, free, from any class's tab", async () => {
+    const decor = { owned: ["default", "halloween", "winter"], equipped: "halloween" };
+    const v = await mountView({ saved: raid({ battle: false, gold: 7, decor, now: timeAt() }).saved, agents: [] });
+    v.click("idle-rpg-station-shop");
+    v.click("idle-rpg-shop-kind-decor");
+    assert.ok(v.has("idle-rpg-season-barrel"));
+    const classes = ["wizard", "healer", "warrior", "archer"];
+    for (const [i, c] of classes.entries()) {
+      v.click(`idle-rpg-shop-${c}`);
+      const n = v.saves.length;
+      v.click("idle-rpg-shop-equip-default");
+      assert.equal(v.saves.length, n + 1, c);
+      assert.deepEqual(v.ids("idle-rpg-season-"), [], `${c}: taken down`);
+      assert.equal(v.stored.decor.equipped, "default");
+      const next = i % 2 ? "halloween" : "winter";
+      v.click(`idle-rpg-shop-equip-${next}`);
+      assert.equal(v.stored.decor.equipped, next, c);
+      assert.ok(v.has(next === "winter" ? "idle-rpg-season-tree" : "idle-rpg-season-barrel"), `${c}: ${next} up`);
+      assert.deepEqual(v.text(`idle-rpg-shop-item-${next}`), [next === "winter" ? "Winter" : "Halloween", "Equipped"]);
+    }
+    assert.equal(v.view.progress.gold, 7, "equipping is free");
+    assert.deepEqual(v.stored.decor.owned, ["default", "halloween", "winter"]);
+    for (const c of classes) for (const k of ["armour", "weapon", "hat"]) assert.equal(v.stored.looks[c][k].equipped, "default", `${c} ${k}`);
+  });
+  test("in October with the winter set on, the shop says it is on though the season's shows (Season over my decor)", async () => {
+    const decor = { owned: ["default", "winter"], equipped: "winter" };
+    const v = await mountView({ saved: raid({ battle: false, decor, now: timeAt(0.25, OCT) }).saved, agents: [], at: OCT });
+    assert.ok(v.has("idle-rpg-season-barrel") && !v.has("idle-rpg-season-string-a"));
+    v.click("idle-rpg-station-shop");
+    v.click("idle-rpg-shop-kind-decor");
+    assert.deepEqual(v.text("idle-rpg-shop-item-winter"), ["Winter", "Equipped"]);
+  });
+});
+
 describe("the shop's pictures", () => {
   test("every picture in the shop has a box of its own shape", { todo: "the Hats tab's icon (icons/hat.png, 72x64) is given an 18x18 box: Herdr draws it at 18x16, centred (main.js shopCard nav, SHOP_ICONS)" }, async () => {
     const v = await mountRaid({ gold: 50 });
@@ -192,13 +275,13 @@ describe("settings", () => {
     v.click("idle-rpg-gear");
     v.click("idle-rpg-setting-advance");
     assert.equal(v.saves.length, n + 1);
-    assert.deepEqual(v.stored.settings, { damageNumbers: true, advance: false, seasonal: true });
+    assert.deepEqual(v.stored.settings, { damageNumbers: true, advance: false, seasonal: true, seasonFirst: true });
   });
 });
 
 describe("a later version's state", () => {
   test("is read and played, never written: buying, settings, kills and closing save nothing", async () => {
-    const saved = savedState(8, { now: timeAt(), extra: { gold: 300, xp: { you: 0, wizard: 5000, healer: 5000, warrior: 5000, archer: 5000 } } });
+    const saved = savedState(9, { now: timeAt(), extra: { gold: 300, xp: { you: 0, wizard: 5000, healer: 5000, warrior: 5000, archer: 5000 } } });
     const v = await mountView({ saved, agents: [] });
     assert.equal(v.view.readOnly, true);
     v.click("idle-rpg-gold");
@@ -209,6 +292,6 @@ describe("a later version's state", () => {
     v.clickFloor(400, 90);
     v.close();
     assert.deepEqual(v.saves, []);
-    assert.equal(v.stored.version, 8);
+    assert.equal(v.stored.version, 9);
   });
 });

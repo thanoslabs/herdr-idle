@@ -36,15 +36,16 @@
 #   stations/   <station>/{idle,hot}, and the arrow over the one under the pointer
 #   campfire/   base, flame-1 to flame-4
 #   light/      the night's darkness: candle, torch, fill, fire-0 to fire-23
-#   seasons/    the town's decorations in season (SEASON_ART in rules.js):
-#               halloween/ lantern, flicker; winter/ lights-a, lights-b, tree,
+#   seasons/    the town's decorations in season or bought (SEASON_ART in rules.js):
+#               each one's icon (its preview in the shop); halloween/ lantern,
+#               flicker; winter/ lights-a, lights-b, tree,
 #               twinkle; and each one's light/, the night's darkness with their
 #               pools of light (halloween: candle, torch-a, -b, -p, -pa,
 #               -pb; winter: candle, torch, fill, fire-0 to fire-23)
 #   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark,
 #               dizzy-1, dizzy-2 (knocked out), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
-#               coin, star, armour, hat, gear, map (the stage picker), the
+#               coin, star, armour, hat, decor, gear, map (the stage picker), the
 #               card's wrench, and the stage section's arrows: prev, next
 #   effects/    weapon effects (effects.js): icons/ (burn, chill, venom, hex, haste,
 #               might), marks/ (weak, resist), and on the boss burn/flame-1, -2,
@@ -2515,7 +2516,7 @@ def lit_only(g, keep):
 # and fading in and out. It sits on the battlements over each torch, on the
 # barrel by the stations, and at the foot of the wall near the campfire.
 LANTERN_PAL = {"O": "#ec8a2c", "Q": "#c4661c", "G": "#3f8f55", "g": "#2c6b3e", "K": "#3a1f12", "Y": "#ffd75e"}
-LANTERN = ring([
+LANTERN_ROWS = [
     ".....Gg.....",
     "..OOOGgOOO..",
     ".OQOOOOOOQO.",
@@ -2526,7 +2527,8 @@ LANTERN = ring([
     "OQKYKYYKYKQO",
     ".OQKYYYYKQO.",
     "..OOOOOOOO..",
-], LANTERN_PAL)
+]
+LANTERN = ring(LANTERN_ROWS, LANTERN_PAL)
 save("seasons/halloween/lantern.png", LANTERN)
 HOT = {LANTERN_PAL["Y"]: "#fff3b0", LANTERN_PAL["K"]: "#ff9d3c"}
 save("seasons/halloween/flicker.png", lit_only(LANTERN, lambda x, y, c: HOT.get(c)))
@@ -2585,6 +2587,35 @@ TREE = ring(tree(), TREE_PAL)
 save("seasons/winter/tree.png", TREE)
 GLINT = {TREE_PAL["*"]: "#fff3b0", TREE_PAL["r"]: "#ff9a9a", TREE_PAL["b"]: "#bfe3ff", TREE_PAL["o"]: "#ffd08a", TREE_PAL["w"]: "#ffffff"}
 save("seasons/winter/twinkle.png", lit_only(TREE, lambda x, y, c: GLINT.get(c)))
+
+# Each season's "icon" (16x10 and its outline): its preview on a tile of the
+# shop's Town decor, shown at 3 screen px per art px (54x36). Halloween: the
+# jack-o'-lantern with a small one beside it, its eyes lit; winter: a small
+# decorated fir and a wrapped present.
+save("seasons/halloween/icon.png", ring([r + x for r, x in zip(LANTERN_ROWS, [
+    "....", "....", "....", "....", "....", "....", "..g.", ".OOO", ".YOY", ".OOO"])], LANTERN_PAL))
+save("seasons/winter/icon.png", ring([
+    "...*............",
+    "...M............",
+    "..LMD...........",
+    ".LMrMD.....Y.Y..",
+    "..LMD....PPPYPPP",
+    ".LMbMD...PPPYPPP",
+    "LMM*MMD..YYYYYYY",
+    "SSSSSSS..PPPYPPP",
+    "...t.....PPPYPPP",
+    "...t.....QQQYQQQ",
+], {**TREE_PAL, "P": "#4a6fd0", "Q": "#3a5aa8", "Y": "#f2c14e"}))
+# The shop's Town decor, down its left side: a small fir with a star.
+icon("icons/decor.png", [
+    "...y...",
+    "..gGg..",
+    ".gGrGg.",
+    "..gGg..",
+    ".gbGGg.",
+    "gggGggg",
+    "...t...",
+], {"y": "#ffd75e", "g": "#3f8f55", "G": "#5fae6a", "r": "#e84a4a", "b": "#5fb3ff", "t": "#7a5230"})
 
 # The seasons' darkness. Where each picture starts along the scene, in art px:
 # the candle's at the left edge, the torches' and the plain ones' at 68 + 96k,

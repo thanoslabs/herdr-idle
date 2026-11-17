@@ -54,6 +54,8 @@
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
 // The town follows the calendar (SEASONS in rules.js, see decor): jack-o'-lanterns
 // in October, string lights and a tree in December, unless that setting is off.
+// Each set is also town decor the shop sells, up all year while equipped
+// (decorOf in rules.js says which shows when both could).
 // The sign (top left), the stage section (top centre, in a raid), that corner
 // and the boss's plate are pixel frames with their words in a pixel lettering
 // (see hudLayout); the name tags under everyone are in it too (see tag).
@@ -95,6 +97,7 @@ import {
   credit,
   critChanceOf,
   damageOf,
+  decorOf,
   equip,
   equipped,
   failStage,
@@ -121,7 +124,6 @@ import {
   resetSkills,
   SETTINGS,
   seasonArt,
-  seasonOf,
   selectStage,
   shortNumber,
   slay,
@@ -148,8 +150,8 @@ const src = (file) => `${ART}/${file}`;
 //   seen, battle, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
 //   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack, health } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
-//   hats: [<id>], settings: { damageNumbers, advance, seasonal } }
-//   (hats are owned by every class; the boss is not saved, see loadState)
+//   hats: [<id>], decor: { owned: [<id>], equipped: <id> }, settings: { damageNumbers, advance, seasonal, seasonFirst } }
+//   (hats are owned by every class, decor by the town; the boss is not saved, see loadState)
 const STATE = "idle-rpg.state";
 const randomClass = () => CLASSES[Math.floor(Math.random() * CLASSES.length)];
 const STATUS = {
@@ -205,7 +207,7 @@ const FIRE_Y = 100;
 const FIRE_W = 216;
 const FIRE_H = 180;
 const FIRE_LIGHT_W = 320;
-// The town's seasonal decorations (SEASONS in rules.js; see decor): the size
+// The town's seasonal decorations (SEASONS in rules.js, or bought; see decor): the size
 // of a jack-o'-lantern, of a stretch of the string of bulbs along the rampart
 // and of the tree; where the ones standing on the floor have their feet, at
 // its back edge, behind wherever anyone can stand (YOU_Y, CRITTER_Y), so they
@@ -228,8 +230,8 @@ const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
 // a 1px border and 6px of padding round 16 (title), then beside the kinds of
 // item down the left, 24 (class tabs) + 78 (the items) + 26 (two lines on the
 // item picked: what a weapon does), 3px apart: 167px, so under the sign (top
-// 54) it ends at 221 in the lowest scene (230px). The kinds down the left are
-// 22 each, with a 13px line under them, shorter than that.
+// 54) it ends at 221 in the lowest scene (230px). The four kinds down the left
+// are 22 each, 3px apart, with a 15px line under them: 115px, shorter than that.
 const PANEL_MAX_H = 167; // the tallest panel under the sign: the shop (the skills panel is 165, the codex less)
 const SHOP_ROW = { nav: 22, about: 26, tab: 80 }; // tab: the class picked, its sprite and name ("Warrior" is 33px at 9px)
 // The skills and training panel is built from rows of fixed height, its text
@@ -239,7 +241,8 @@ const SHOP_ROW = { nav: 22, about: 26, tab: 80 }; // tab: the class picked, its 
 // 129 + 18n: 147 with Attack alone, 165 with a second kind, so under the sign
 // (top 54) it ends at 219 in the lowest scene (230px) with two.
 const PANEL = { line: "13px", pad: 6, gap: 3, title: 16, tab: 24, row: 15 };
-const SHOP_ICONS = { armour: "icons/armour.png", weapon: "status/sword-l.png", hat: "icons/hat.png" };
+const SHOP_ICONS = { armour: "icons/armour.png", weapon: "status/sword-l.png", hat: "icons/hat.png", decor: "icons/decor.png" };
+const DECOR_ICON = { w: 54, h: 36 }; // a set of town decor's preview in the shop (seasonArt's "icon", 18x12 art px at 3px each)
 // Battle mode. Sizes are on-screen px (art px x 4, plus the outline). A new
 // kind also needs to be in KINDS in rules.js, the order the stages cycle
 // through, and its pictures in MONSTER_ART there.
@@ -885,6 +888,7 @@ export default class RaidParty extends View {
       training: saved.training,
       looks: saved.looks,
       hats: saved.hats,
+      decor: saved.decor, // the town's: { owned, equipped }
     };
     // The boss of the stage being fought, { kind, hp, maxHp, stage, id, slainAt? },
     // and the attempt's time left in ms. Neither is saved: an attempt starts
@@ -3260,8 +3264,9 @@ export default class RaidParty extends View {
     // a raid is in its stage's biome, the town on the rampart
     const biome = this.backdrop();
     // in town, the season's decorations (SEASONS: by the view's clock, so they go up and come
-    // down on its tick as a month turns), while the setting is on
-    const decor = this.decor(W, fire, !biome && this.settings.seasonal ? seasonOf(this.now) : null, hud);
+    // down on its tick as a month turns) while the setting is on, or the set of town decor
+    // equipped (decorOf says which when both could)
+    const decor = this.decor(W, fire, biome ? null : decorOf(this.progress, this.settings, this.now), hud);
     const scenery = this.scenery(W, biome, decor); // also works out how dark it is
     const ground = biome ? biomeArt(biome, "ground") : "scene/floor.png";
     const boards = Array.from({ length: Math.ceil(W / 128) }, (_, i) => div().absolute().left(i * 128).top(0).child(image(src(ground)).w(128).h(FLOOR_H)));
@@ -3985,25 +3990,44 @@ export default class RaidParty extends View {
   // The settings menu, under the gear at the scene's right edge, in the codex's
   // style: a line per entry of SETTINGS with a pixel on/off switch (square, dark
   // outlined, its knob sliding across). Clicking a line flips it and saves at
-  // once. `top` is the top of the strip the gear is on.
+  // once. `top` is the top of the strip the gear is on. "Season over my decor"
+  // shows only once a set of town decor is owned (it decides nothing before),
+  // and while "Decorate in season" is off it is dimmed and dead, as a Buy the
+  // gold does not cover. With that fourth line its text is on a 13px line, so
+  // its height is known: a 1px border and 8px of padding round 20 (title) and
+  // 20 per setting (the 16px switch and 2px either side), 3px apart: 130px,
+  // so under a strip in the second row (the card at 100) it ends at 230 in
+  // the lowest scene; lower down (a strip in a third row, under 420px wide in
+  // a raid) it is cut at the scene's bottom and scrolls. Without it, the three
+  // lines are as they always were (3px either side, the font's own line).
   settingsCard(top) {
+    const owner = catalogue(CLASSES[0], "decor").some((it) => it.id !== DEFAULT_LOOK && owns(this.progress, CLASSES[0], "decor", it.id));
+    const shown = SETTINGS.filter(({ key }) => key !== "seasonFirst" || owner);
+    const four = shown.length > 3;
+    const cardTop = top + HUD_H + 4;
     const line = ({ key, name }) => {
       const on = this.settings[key];
+      const live = key !== "seasonFirst" || this.settings.seasonal;
       return h_flex()
         .id(`idle-rpg-setting-${key}`)
+        .when(four, (el) => el.flex_none())
         .gap(8)
         .items_center()
         .px(4)
-        .py(3)
+        .py(four ? 2 : 3)
         .rounded(6)
-        .cursor_pointer()
-        .hover((st) => st.bg("#ffffff14"))
-        .on_click((_e, cx) => {
-          this.settings[key] = !this.settings[key];
-          this.save();
-          cx.notify();
-        })
-        .child(div().flex_1().min_w(0).truncate().text_color("#dbe7f3").child(name))
+        .when(live, (el) =>
+          el
+            .cursor_pointer()
+            .hover((st) => st.bg("#ffffff14"))
+            .on_click((_e, cx) => {
+              this.settings[key] = !this.settings[key];
+              this.save();
+              cx.notify();
+            }),
+        )
+        .when(!live, (el) => el.tooltip("Only while Decorate in season is on"))
+        .child(div().flex_1().min_w(0).truncate().text_color(live ? "#dbe7f3" : "#5d7088").child(name))
         .child(
           div()
             .relative()
@@ -4013,6 +4037,7 @@ export default class RaidParty extends View {
             .border(2)
             .border_color("#141a26")
             .bg(on ? "#4cd47b" : "#3a4658")
+            .when(!live, (el) => el.opacity(0.4))
             .child(
               div()
                 .id(`idle-rpg-setting-${key}-knob`)
@@ -4030,7 +4055,7 @@ export default class RaidParty extends View {
       .id("idle-rpg-settings")
       .absolute()
       .right(HUD_EDGE)
-      .top(top + HUD_H + 4)
+      .top(cardTop)
       .w(200)
       .p(8)
       .gap(3)
@@ -4039,9 +4064,11 @@ export default class RaidParty extends View {
       .border(1)
       .border_color("#ffffff24")
       .text_size(11)
+      .when(four, (el) => el.line_height(PANEL.line).max_h(Math.max(FLOOR_H, this.size.height) - cardTop).overflow_y_scroll())
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(
         h_flex()
+          .when(four, (el) => el.flex_none())
           .gap(6)
           .items_center()
           .child(image(src("icons/gear.png")).w(20).h(20))
@@ -4061,7 +4088,7 @@ export default class RaidParty extends View {
               .child("×"),
           ),
       )
-      .children(SETTINGS.map(line));
+      .children(shown.map(line));
   }
 
   // Opens the skills panel on class `cls` (null closes it), closing the codex,
@@ -4388,12 +4415,15 @@ export default class RaidParty extends View {
   // of the sprite in it, its name, and "Equipped", an Equip button (owned) or a
   // Buy button with its price, dimmed and dead while the gold is short. Buying
   // puts it on as well; buying and equipping save straight away. Down its left
-  // side are the kinds of item (SHOP in rules.js): armours, weapons, hats, with
-  // room under them for more. A weapon is shown in the class's hand as it
+  // side are the kinds of item (SHOP in rules.js): armours, weapons, hats and
+  // town decor, with room under them for more. A weapon is shown in the class's hand as it
   // winds up to attack, where every weapon shows best (the healer's potion
   // only shows then). A hat is bought once for every class, which the
   // panel says under them while hats are shown; each class still has its own
-  // on. A kind with nothing for sale yet says so. Under the items, two lines on
+  // on. Town decor (a season's decorations, shown all year while equipped)
+  // belongs to the town: the same tiles, owned and on whichever class is
+  // picked, each a picture of the set ("None" takes it down). A kind with
+  // nothing for sale yet says so. Under the items, two lines on
   // the one picked (clicking an item picks it; the one on until then): for a
   // weapon what it does (shopLines in effects.js: its pace, its element's
   // status and the bosses weak to it or resisting it, a vial's aura), the
@@ -4410,6 +4440,7 @@ export default class RaidParty extends View {
       armour: (it) => this.sprite(cls, "stand", 36, 36, it.id),
       weapon: (it) => this.sprite(cls, "windup/r", 48, 36, undefined, undefined, it.id),
       hat: (it) => this.sprite(cls, "stand", 36, 36, undefined, it.id),
+      decor: (it) => (it.id === DEFAULT_LOOK ? div().h(36) : image(src(seasonArt(it.id, "icon"))).w(DECOR_ICON.w).h(DECOR_ICON.h)),
     };
     // the item whose lines show under the items: the one picked, else the one on
     const pick = items.find((it) => it.id === this.shopPick) ?? items.find((it) => it.id === equipped(this.progress, cls, kind)) ?? items[0];
@@ -4417,7 +4448,7 @@ export default class RaidParty extends View {
       ? ["", ""]
       : kind === "weapon"
         ? shopLines(cls, pick.id)
-        : [pick.name, SHOP[kind].shared ? "Looks only, worn by any class" : `Looks only, for every ${capital(cls)}`];
+        : [pick.name, SHOP[kind].town ? (pick.id === DEFAULT_LOOK ? "No decor of your own" : "Looks only, for the town, all year") : SHOP[kind].shared ? "Looks only, worn by any class" : `Looks only, for every ${capital(cls)}`];
     const nav = (k) =>
       h_flex()
         .id(`idle-rpg-shop-kind-${k}`)
@@ -4550,8 +4581,15 @@ export default class RaidParty extends View {
               .flex_none()
               .gap(PANEL.gap)
               .children(SHOP_KINDS.map(nav))
-              // under the hats, in place of "More soon": what one costs buys it for everyone
-              .child(div().px(4).pt(2).text_size(9).text_color(SHOP[kind].shared ? GOLD : "#8ea3bb").child(SHOP[kind].shared ? "Bought once, for every class" : "More soon")),
+              // under the hats, in place of "More soon": what one costs buys it for everyone (or the town)
+              .child(
+                div()
+                  .px(4)
+                  .pt(2)
+                  .text_size(9)
+                  .text_color(SHOP[kind].shared || SHOP[kind].town ? GOLD : "#8ea3bb")
+                  .child(SHOP[kind].shared ? "Bought once, for every class" : SHOP[kind].town ? "Bought once, for the town" : "More soon"),
+              ),
           )
           .child(
             v_flex()

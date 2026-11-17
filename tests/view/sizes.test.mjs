@@ -276,6 +276,49 @@ describe("staying inside the scene", () => {
     assert.ok(!found.length, summary(found));
   });
 
+  // The settings menu with its four lines (a set of town decor owned): its
+  // height from what main.js gives it (settingsCard), a 1px border and its
+  // padding round a 20px title and a 20px line per switch (the 16px switch,
+  // 2px either side, the text on a 13px line), 3px apart, cut to its max_h,
+  // inside which it scrolls. (Owning none, it is the three lines it always
+  // was, sized by the font's own line, which the harness cannot measure.)
+  const settingsHeight = (v) => {
+    const card = v.get("idle-rpg-settings");
+    const rows = v.ids("idle-rpg-setting-").filter((id) => !id.endsWith("-knob"));
+    assert.equal(rows.length, 4);
+    assert.equal(card.style.line_height, "13px");
+    assert.equal(card.style.overflow_y_scroll, true);
+    for (const id of rows) assert.equal(v.get(id).style.py, 2, id);
+    const full = 2 * (1 + card.style.p) + 20 + rows.length * (20 + card.style.gap);
+    assert.equal(full, 130);
+    return Math.min(full, card.style.max_h);
+  };
+  test("the settings menu with four switches never runs past the scene: whole from 420px wide, cut and scrolling under it in a raid", async () => {
+    const v = await mountRaid({ classes: ["warrior", "archer", "wizard", "healer"], statuses: ["working", "blocked", "done", "idle"], stage: 999, best: 1000, gold: 1e15, slain: 1e15, decor: { owned: ["default", "winter"], equipped: "default" } });
+    v.click("idle-rpg-gear");
+    const found = [];
+    const cut = new Set();
+    for (const battle of [true, false]) {
+      if (v.view.battle !== battle) v.click("idle-rpg-battle-toggle");
+      if (!v.has("idle-rpg-settings")) v.click("idle-rpg-gear");
+      for (const h of HEIGHTS)
+        for (const w of [...new Set([...WIDTHS, ...range(320, 416, 8)])]) {
+          v.resize(w, h);
+          const b = { ...v.box("idle-rpg-settings"), h: settingsHeight(v) };
+          found.push(...outside("settings", b, w, h).map((p) => ({ w, h, ...p })));
+          if (b.h < 130) cut.add(`${battle ? "raid" : "town"} ${w}x${h}`);
+        }
+    }
+    assert.ok(!found.length, summary(found));
+    // only in a raid under 420px wide, in the lowest scenes, is it cut
+    for (const c of cut) {
+      const [where, size] = c.split(" ");
+      const [w] = size.split("x").map(Number);
+      assert.ok(where === "raid" && w < 420, c);
+    }
+    assert.ok(cut.has("raid 320x230"));
+  });
+
   test("the cards (yours and an agent's)", async () => {
     const found = await sweep(
       () => mountRaid({ classes: ["archer", "wizard"] }),

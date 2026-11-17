@@ -11,13 +11,13 @@ const NOW = timeAt();
 const mount = (saved, o = {}) => mountView({ saved, agents: [agent("t1", "working")], ...o });
 
 describe("each version's save", () => {
-  for (const version of [1, 2, 3, 4, 5, 6, 7]) {
+  for (const version of [1, 2, 3, 4, 5, 6, 7, 8]) {
     test(`v${version} loads as loadState reads it, starts a fresh attempt and renders`, async () => {
       const saved = savedState(version, { now: NOW });
       const v = await mount(saved);
       const want = loadState(saved);
       const p = v.view.progress;
-      for (const k of ["stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats"]) assert.deepEqual(p[k], want[k], k);
+      for (const k of ["stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats", "decor"]) assert.deepEqual(p[k], want[k], k);
       assert.deepEqual(v.view.settings, want.settings);
       assert.deepEqual([v.view.monster.stage, v.view.monster.hp, v.view.left], [want.stage, bossHp(want.stage), 600000], "the saved monster is not restored");
       assert.equal(v.view.readOnly, false);
@@ -69,7 +69,7 @@ describe("older keys and garbage", () => {
 
 describe("a later version's save", () => {
   test("is read and played but never written, not even its new fields lost", async () => {
-    const saved = savedState(8, { now: NOW });
+    const saved = savedState(9, { now: NOW });
     const v = await mount(saved);
     assert.equal(v.view.readOnly, true);
     assert.equal(v.view.progress.stage, 4);
