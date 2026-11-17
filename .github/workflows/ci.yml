@@ -37,6 +37,18 @@ jobs:
             exit 1
           fi
 
+      - name: Check the recipe's size
+        run: |
+          # Herdr's gallery drops a layout's whole listing when its RECIPE.md is
+          # over 64 KB. Fail well before that, leaving room to grow.
+          limit=60000
+          size="$(wc -c < RECIPE.md | tr -d ' ')"
+          if [ "$size" -gt "$limit" ]; then
+            echo "Error: RECIPE.md is $size bytes, over $limit. Herdr's gallery drops the layout's listing past 64 KB: tighten the recipe (state each fact once, tables for runs of numbers) before adding to it."
+            exit 1
+          fi
+          echo "RECIPE.md: $size bytes (limit $limit)"
+
       - name: Validate YAML and JSON files
         run: |
           status=0
