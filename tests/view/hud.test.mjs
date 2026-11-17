@@ -159,7 +159,8 @@ describe("hudLayout", () => {
       const h = (await mountView({ saved, agents: list, width: W })).view.hudBox;
       rows.push([W, h.titled, h.stage.y, h.strip.y]);
     }
-    // the section never shrinks below its fullest line, so it stays in the second row up to about 900px
-    assert.deepEqual(rows, [[640, false, 54, 8], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
+    // the section never shrinks below its fullest line, so it stays in the second row up to about 900px;
+    // at 640 the strip, the map's chip wider in a raid, joins it there (beside it)
+    assert.deepEqual(rows, [[640, false, 54, 54], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
   });
 });

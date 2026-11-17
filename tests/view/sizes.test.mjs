@@ -149,24 +149,39 @@ describe("the night's darkness", () => {
   });
 });
 
+// What each backdrop tiles across the scene (BIOME_ART in rules.js), and the
+// layers of colour that span it: the town's rampart, and in a raid each biome
+// (stages 1, 11, 21 and 31).
+const BACKDROPS = {
+  rampart: { mount: { battle: false }, tiles: ["scene/stars.png", "scene/mountains.png", "scene/wall.png", "scene/floor.png"], spans: ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"] },
+  forest: { mount: { stage: 1 }, tiles: ["scene/stars.png", "scene/forest/far.png", "scene/forest/mid.png", "scene/forest/ground.png"], spans: ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"] },
+  hills: { mount: { stage: 11 }, tiles: ["scene/stars.png", "scene/hills/far.png", "scene/hills/mid.png", "scene/hills/ground.png"], spans: ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"] },
+  caves: { mount: { stage: 21 }, tiles: ["scene/caves/ceiling.png", "scene/caves/far.png", "scene/caves/mid.png", "scene/caves/ground.png"], spans: ["idle-rpg-vault"] },
+  hell: { mount: { stage: 31 }, tiles: ["scene/hell/ceiling.png", "scene/hell/far.png", "scene/hell/mid.png", "scene/hell/ground.png"], spans: ["idle-rpg-vault"] },
+};
+
 describe("the scenery", () => {
-  test("stars, mountains, the wall and the floor's boards are tiled across the whole width; the sky's layers span it", async () => {
-    const found = await sweep(
-      () => mountRaid(),
-      (v, w) => {
-        const out = [];
-        for (const art of ["scene/stars.png", "scene/mountains.png", "scene/wall.png", "scene/floor.png"]) {
-          const tiles = v.all((n) => n.type === "image" && n.src.endsWith(art)).map((el) => v.box(el));
-          const right = Math.max(...tiles.map((b) => b.x + b.w));
-          const left = Math.min(...tiles.map((b) => b.x));
-          if (left > 0 || right < w) out.push({ what: art, side: `covers ${left}..${right}`, by: Math.max(left, w - right) });
-        }
-        for (const id of ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"]) if (v.box(id).w !== w) out.push({ what: id, side: "not the width", by: Math.abs(v.box(id).w - w) });
-        return out;
-      },
-    );
-    assert.ok(!found.length, summary(found));
-  });
+  for (const [name, { mount, tiles: arts, spans }] of Object.entries(BACKDROPS))
+    test(`${name}: ${arts.join(", ")} are tiled across the whole width, each at its own shape; ${spans.join(", ")} span it`, async () => {
+      const found = await sweep(
+        () => mountRaid(mount),
+        (v, w) => {
+          const out = [];
+          for (const art of arts) {
+            const tiles = v.all((n) => n.type === "image" && n.src.endsWith(art)).map((el) => v.box(el));
+            const right = Math.max(...tiles.map((b) => b.x + b.w));
+            const left = Math.min(...tiles.map((b) => b.x));
+            if (left > 0 || right < w) out.push({ what: art, side: `covers ${left}..${right}`, by: Math.max(left, w - right) });
+            // laid edge to edge: no gap between one tile and the next
+            const xs = tiles.map((b) => [b.x, b.x + b.w]).sort((a, b) => a[0] - b[0]);
+            for (let i = 1; i < xs.length; i++) if (xs[i][0] > xs[i - 1][1]) out.push({ what: `${art} tiles`, side: `a gap at ${xs[i - 1][1]}`, by: xs[i][0] - xs[i - 1][1] });
+          }
+          for (const id of spans) if (v.box(id).w !== w) out.push({ what: id, side: "not the width", by: Math.abs(v.box(id).w - w) });
+          return out;
+        },
+      );
+      assert.ok(!found.length, summary(found));
+    });
 });
 
 describe("staying inside the scene", () => {

@@ -238,7 +238,37 @@ describe("training", () => {
   });
 });
 
+describe("biomes", () => {
+  test("ten stages each, forest, hills, caves, hell, then round again", () => {
+    assert.deepEqual(R.BIOMES.map((b) => b.id), ["forest", "hills", "caves", "hell"]);
+    const at = (s) => R.biomeOf(s);
+    assert.deepEqual([1, 10, 11, 20, 21, 30, 31, 40, 41, 50, 51, 80, 81].map(at), ["forest", "forest", "hills", "hills", "caves", "caves", "hell", "hell", "forest", "forest", "hills", "hell", "forest"]);
+    assert.equal(at(R.MAX_STAGE), "hell", "stage 1000 ends the 25th round");
+    assert.equal(at(4001), "forest", "and on past it, should a stage ever get there");
+  });
+  test("anything that is not a stage is stage 1's biome", () => {
+    for (const bad of [undefined, null, 0, -5, NaN, Infinity, "11", {}, []]) assert.equal(R.biomeOf(bad), "forest", String(bad));
+    assert.equal(R.biomeOf(10.9), "forest", "a fraction counts as its whole stage");
+  });
+  test("only the forest and the hills are under the sky", () => {
+    assert.deepEqual(R.BIOMES.filter((b) => b.outdoors).map((b) => b.id), ["forest", "hills"]);
+  });
+  test("the monsters still cycle by stage, whatever the biome", () => {
+    assert.deepEqual([10, 11, 12, 13].map(R.stageKind), ["slime", "ogre", "dragon", "slime"]);
+  });
+});
+
 describe("picking, clearing and failing stages", () => {
+  test("canSelectStage is the rule selectStage follows: 1 to best, not the one it is on", () => {
+    const p = fresh();
+    Object.assign(p, { stage: 4, best: 6 });
+    const can = [-1, 0, 1, 2, 3, 4, 5, 6, 7, 2.5, NaN, "3"].filter((s) => R.canSelectStage(p, s));
+    assert.deepEqual(can, [1, 2, 3, 5, 6]);
+    for (const s of [0, 1, 4, 6, 7, 2.5]) {
+      const q = { ...p };
+      assert.equal(R.selectStage(q, s), R.canSelectStage(p, s), String(s));
+    }
+  });
   test("selectStage: 1 to best, not the one it is on; it ends farming", () => {
     const p = fresh();
     Object.assign(p, { stage: 4, best: 6, farming: true });
@@ -374,10 +404,15 @@ describe("clockText", () => {
 describe("labels", () => {
   test("every HUD label can be lettered, with any stage and countdown", () => {
     for (const n of [1, 9, 10, 99, 100, 999, R.MAX_STAGE]) {
-      for (const text of [R.LABELS.title, R.LABELS.start, R.LABELS.stop, R.LABELS.empty, R.LABELS.farm, R.LABELS.stage(n), R.LABELS.timesUp, R.LABELS.back(R.LABELS.timesUp, n), R.LABELS.moving(n, 5)])
+      for (const text of [R.LABELS.title, R.LABELS.start, R.LABELS.stop, R.LABELS.empty, R.LABELS.farm, R.LABELS.stage(n), R.LABELS.timesUp, R.LABELS.back(R.LABELS.timesUp, n), R.LABELS.moving(n, 5), R.LABELS.map, R.LABELS.stages(n, n + 39), R.LABELS.range(n, n + 9)])
         assert.ok(R.letterable(text), text);
     }
     assert.equal(R.LABELS.wiped, undefined, "no wipes, so no note for one");
+    // the stage picker letters each biome's name, a label of its own
+    for (const b of R.BIOMES) {
+      assert.equal(R.LABELS[b.id], b.name);
+      assert.ok(R.letterable(b.name), b.name);
+    }
   });
   test("the settings list has a key, a name and a boolean default each", () => {
     assert.deepEqual(R.SETTINGS.map((s) => [s.key, typeof s.name, s.default]), [["damageNumbers", "string", true], ["advance", "string", true]]);
