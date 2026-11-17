@@ -52,6 +52,17 @@ describe("joining and leaving", () => {
     assert.deepEqual([p.members.k2.hp, p.members.k2.down], [0, 205 + 80]);
     assert.equal(P.standing(p, "k2"), false);
     assert.deepEqual(Object.keys(p.away), [], "taken back");
+    // one back still resting knows when it came back (its countdown counts from there); one back standing does not
+    assert.equal(p.members.k2.back, 205);
+    assert.equal("back" in p.members.k1, false);
+    P.rise(p, 205 + 80);
+    assert.equal("back" in p.members.k2, false, "dropped as it gets up");
+    P.syncParty(p, k0, 300, seeded(2));
+    P.syncParty(p, back.slice(0, 1).concat({ ...back[2] }), 301, seeded(2));
+    assert.equal("back" in p.members.k2, false, "back from away standing");
+    Object.assign(p.members.k2, { hp: 0, down: 400, back: 301 });
+    P.resetParty(p, 302, seeded(2));
+    assert.equal("back" in p.members.k2, false, "dropped by a new attempt");
   });
   test("a new attempt forgets who left: they come back fresh", () => {
     const p = party(2);

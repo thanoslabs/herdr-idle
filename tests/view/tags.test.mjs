@@ -123,16 +123,15 @@ describe("an agent's tag", () => {
     const el = v.get("idle-rpg-label-t1");
     assert.deepEqual([el.transitions.left, el.transitions.top], [{ duration: 700, easing: "ease-in-out" }, { duration: 700, easing: "ease-in-out" }]);
   });
-  test("a knocked-out fighter's rest bar and countdown, and a status bubble, stay clear of the tag", async () => {
+  test("a knocked-out fighter's countdown in its ring, and a status bubble, stay clear of the tag", async () => {
     const v = await mountRaid({ classes: ["archer", "wizard"], you: "healer" });
     v.advance(2000);
     Object.assign(v.view.party.members.t1, { hp: 0, down: v.view.clock + 120 });
     v.setAgents([...v.world.agents, agent("t9", "blocked")]);
     v.advance(1000);
     const tag = v.box("idle-rpg-label-t1");
-    for (const id of ["idle-rpg-rest-count-t1"]) assert.ok(!overlap(v.box(id), tag), id);
-    const rest = v.all((e) => e.key?.startsWith("idle-rpg-rest-t1-"))[0];
-    assert.ok(v.box(rest).y + 7 <= tag.y);
+    for (const id of ["idle-rpg-rest-count-t1", "idle-rpg-rest-ring-t1"]) assert.ok(!overlap(v.box(id), tag), id);
+    assert.ok(v.box("idle-rpg-rest-ring-t1").y + 42 <= tag.y);
     const bubble = v.box(v.get("critter-t9"));
     assert.ok(bubble.y + 72 <= v.box("idle-rpg-label-t9").y + 4, "the tag is under the feet, the bubble over the head");
   });

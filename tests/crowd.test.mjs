@@ -665,6 +665,24 @@ describe("name tags in a crowd", () => {
     const bars = r.ids("idle-rpg-hp-").filter((id) => id !== "idle-rpg-hp-you").map((id) => r.box(id));
     assert.ok(bars.length > 20 && bars.length < 400, `${bars.length} bars`);
     for (let i = 0; i < bars.length; i++) for (let j = i + 1; j < bars.length; j++) assert.ok(!overlap(bars[i], bars[j]), `bars ${i} and ${j}`);
+    // a tenth knocked out: their rings (and the stars under them) are laid first, clear of each other and of every bar
+    const members = r.view.party.members;
+    const felled = Object.keys(members).filter((k, i) => k !== "you" && i % 10 === 0);
+    for (const k of felled) Object.assign(members[k], { hp: 0, down: r.view.clock + 120 });
+    const renders = r.renders;
+    const elements = (h) => h.all(() => true).length;
+    const before = elements(r);
+    r.render();
+    const rings = r.ids("idle-rpg-rest-ring-").map((id) => r.box(id));
+    // what a knocked-out fighter shows over its head: the ring, and the stars from 66px over its feet (75x37 as they bob)
+    const feet = r.ids("idle-rpg-rest-ring-").map((id) => r.box(`idle-rpg-vitals-${id.slice("idle-rpg-rest-ring-".length)}`));
+    const marks = [...rings, ...feet.map((f) => ({ x: f.x - 38, y: f.y - 66, w: 75, h: 37 }))];
+    const now = r.ids("idle-rpg-hp-").filter((id) => id !== "idle-rpg-hp-you").map((id) => r.box(id));
+    assert.ok(rings.length > 5 && rings.length <= felled.length, `${rings.length} rings of ${felled.length} down`);
+    for (let i = 0; i < rings.length; i++) for (let j = i + 1; j < rings.length; j++) assert.ok(!overlap(rings[i], rings[j]), `rings ${i} and ${j}`);
+    for (const m of marks) for (const b of now) assert.ok(!overlap(m, b), "a ring or its stars over a bar");
+    assert.equal(r.renders, renders + 1, "the one render asked for");
+    assert.ok(elements(r) <= before * 1.05, `${elements(r)} elements against ${before}`);
   });
 });
 
