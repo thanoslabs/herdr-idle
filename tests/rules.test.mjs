@@ -1,6 +1,6 @@
 // rules.js: levels, skill points, stages, the boss's numbers, damage and HP,
-// training, picking and failing stages, kills, and how numbers and times are
-// written. (The shop is in rules-shop, the art paths in rules-art, loading
+// training, picking and failing stages, kills, the seasons, and how numbers
+// and times are written. (The shop is in rules-shop, the art paths in rules-art, loading
 // saved state in rules-load.)
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
@@ -415,6 +415,48 @@ describe("labels", () => {
     }
   });
   test("the settings list has a key, a name and a boolean default each", () => {
-    assert.deepEqual(R.SETTINGS.map((s) => [s.key, typeof s.name, s.default]), [["damageNumbers", "string", true], ["advance", "string", true]]);
+    assert.deepEqual(R.SETTINGS.map((s) => [s.key, typeof s.name, s.default]), [["damageNumbers", "string", true], ["advance", "string", true], ["seasonal", "string", true]]);
+  });
+});
+
+describe("seasons", () => {
+  // local time, as the view's clock is read (new Date(y, monthIndex, ...) is local)
+  const at = (y, m, d, h = 0, min = 0) => new Date(y, m - 1, d, h, min);
+  test("October is Halloween and December the winter holiday, whole months, at their boundaries", () => {
+    const cases = [
+      [at(2026, 9, 30, 23, 59), null],
+      [at(2026, 10, 1, 0, 0), "halloween"],
+      [at(2026, 10, 31, 23, 59), "halloween"],
+      [at(2026, 11, 1, 0, 0), null],
+      [at(2026, 11, 30, 23, 59), null],
+      [at(2026, 12, 1, 0, 0), "winter"],
+      [at(2026, 12, 31, 23, 59), "winter"],
+      [at(2027, 1, 1, 0, 0), null],
+      [at(2026, 11, 17, 12), null],
+    ];
+    for (const [d, want] of cases) {
+      assert.equal(R.seasonOf(d), want, d.toString());
+      assert.equal(R.seasonOf(d.getTime()), want, `${d} as a timestamp`);
+    }
+    // the last millisecond of a month and the first of the next
+    assert.equal(R.seasonOf(at(2026, 10, 1).getTime() - 1), null);
+    assert.equal(R.seasonOf(at(2026, 11, 1).getTime() - 1), "halloween");
+    assert.equal(R.seasonOf(at(2027, 1, 1).getTime() - 1), "winter");
+  });
+  test("every month of any year: October and December only", () => {
+    for (const y of [1999, 2026, 2027, 2400])
+      for (let m = 1; m <= 12; m++) for (const d of [1, 15, 28]) assert.equal(R.seasonOf(at(y, m, d, 12)), m === 10 ? "halloween" : m === 12 ? "winter" : null, `${y}-${m}-${d}`);
+  });
+  test("anything that is not a time is out of season", () => {
+    for (const h of [undefined, null, NaN, Infinity, -Infinity, "2026-10-15", "1790000000000", {}, [], new Date(NaN), true, () => 0]) assert.equal(R.seasonOf(h), null, String(h));
+  });
+  test("each season is a row: an id, a name and its months; no month in two", () => {
+    const months = R.SEASONS.flatMap((s) => s.months);
+    assert.equal(new Set(months).size, months.length);
+    for (const s of R.SEASONS) {
+      assert.match(s.id, /^[a-z]+$/);
+      assert.equal(typeof s.name, "string");
+      assert.ok(s.months.every((m) => Number.isInteger(m) && m >= 1 && m <= 12), s.id);
+    }
   });
 });

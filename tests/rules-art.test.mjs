@@ -144,6 +144,40 @@ describe("biomeArt", () => {
   });
 });
 
+describe("seasonArt", () => {
+  test("every season's every part is a picture, in seasons/<season>/", () => {
+    assert.deepEqual(Object.keys(R.SEASON_ART), R.SEASONS.map((s) => s.id));
+    for (const s of R.SEASONS)
+      for (const part of R.SEASON_ART[s.id]) {
+        const p = R.seasonArt(s.id, part);
+        assert.ok(isArt(p), `${s.id} ${part}`);
+        assert.ok(p.startsWith(`seasons/${s.id}/`), p);
+      }
+    assert.equal(R.seasonArt("winter", "tree"), "seasons/winter/tree.png");
+    assert.equal(R.seasonArt("halloween", "light/torch-pb"), "seasons/halloween/light/torch-pb.png");
+    assert.equal(R.seasonArt("halloween", "light/fire-23"), null, "Halloween's campfire stretch is the plain one");
+    assert.equal(R.seasonArt("halloween", "light/torch-ab"), null, "never both gaps of one torch");
+  });
+  test("each season's darkness stands in for the plain one's pictures only (light/ in art/)", () => {
+    for (const s of R.SEASONS)
+      for (const part of R.SEASON_ART[s.id].filter((p) => p.startsWith("light/"))) assert.ok(isArt(`${part.replace(/^light\/torch-[pab]+$/, "light/torch")}.png`), `${s.id}: ${part} stands in for a plain picture`);
+    // the campfire's 24 places, as many as light/ has
+    assert.equal(R.FIRE_LIGHTS.length, [...FILES].filter((f) => /^light\/fire-\d+\.png$/.test(f)).length);
+  });
+  test("an unknown season or part is null, never in the path", () => {
+    for (const h of HOSTILE) {
+      assert.equal(R.seasonArt(h, "tree"), null, String(h));
+      assert.equal(R.seasonArt("winter", h), null, String(h));
+    }
+    assert.equal(R.seasonArt("halloween", "tree"), null, "the tree is December's");
+    assert.equal(R.seasonArt("winter", "light/fire-24"), null, "the campfire has 24 places");
+    assert.equal(R.seasonArt("winter", "light/../lantern"), null);
+    // nothing else in seasons/: every file there is one of SEASON_ART's
+    const listed = new Set(R.SEASONS.flatMap((s) => R.SEASON_ART[s.id].map((part) => R.seasonArt(s.id, part))));
+    assert.deepEqual([...FILES].filter((f) => f.startsWith("seasons/") && !listed.has(f)), []);
+  });
+});
+
 describe("glyphArt and letterArt", () => {
   test("every glyph in every colour, and nothing else", () => {
     for (const c of R.GLYPH_COLOURS) for (const ch of R.GLYPHS) assert.ok(isArt(R.glyphArt(c, ch)), `${c} ${ch}`);

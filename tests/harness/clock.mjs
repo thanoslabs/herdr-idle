@@ -15,9 +15,13 @@ export function seeded(seed) {
 }
 
 // The day-and-night cycle main.js uses (CYCLE_MS): the clock starts at a
-// whole cycle, plus `phase` of one (0.25 noon, 0.75 midnight).
+// whole cycle, plus `phase` of one (0.25 noon, 0.75 midnight). The cycle is
+// the one at or before `at`, by default mid-January 2027 in any time zone:
+// out of every season (SEASONS in rules.js), so the town has no seasonal
+// decorations unless a test starts the clock in one (mountView's `at`).
 export const CYCLE_MS = 20 * 60 * 1000;
-export const timeAt = (phase = 0.25) => 1_800_000_000_000 - (1_800_000_000_000 % CYCLE_MS) + Math.round(phase * CYCLE_MS);
+export const BASE_TIME = 1_800_000_000_000;
+export const timeAt = (phase = 0.25, at = BASE_TIME) => at - (at % CYCLE_MS) + Math.round(phase * CYCLE_MS);
 
 // The timers: { at, seq, every, fn, live }. Ordered by when they are due,
 // then by when they were set, so two due together run in the order set (a

@@ -341,12 +341,60 @@ export function biomeArt(id, part) {
   return b && typeof part === "string" && BIOME_ART[b.id].includes(part) ? `scene/${b.id}/${part}.png` : null;
 }
 
+// Seasons: decorations the town (never a raid) puts up for part of the year,
+// following the calendar in the machine's local time, while the "Seasonal
+// decorations" setting is on: jack-o'-lanterns in October, string lights and
+// a decorated tree in December. Each { id, name, months: [1-12] }; adding a
+// season is a row here, its pictures in SEASON_ART (drawn by
+// tools/idle-rpg-sprites.py into seasons/<id>/) and drawing them in main.js.
+export const SEASONS = [
+  { id: "halloween", name: "Halloween", months: [10] },
+  { id: "winter", name: "Winter holiday", months: [12] },
+];
+
+// The season (SEASONS' id) at `when`, a Date or a timestamp in ms, in local
+// time; null out of every season, or for anything that is not a time.
+export function seasonOf(when) {
+  const d = when instanceof Date ? when : typeof when === "number" ? new Date(when) : null;
+  const t = d ? d.getTime() : NaN;
+  if (!Number.isFinite(t)) return null;
+  const month = d.getMonth() + 1;
+  return SEASONS.find((s) => s.months.includes(month))?.id ?? null;
+}
+
+// Each season's pictures in seasons/<id>/, without ".png". Halloween:
+// "lantern", a jack-o'-lantern, and "flicker", its carving burning brighter,
+// laid over it and fading in and out. Winter: "lights-a" and "lights-b", a
+// stretch of the string of bulbs along the rampart with alternate bulbs lit,
+// and "tree", the decorated fir, with "twinkle", its star and baubles lit,
+// laid over it. And "light/<name>": the night's darkness (as light/ in art/)
+// with the decorations' own pools of light, standing in for the plain ones:
+// the jack-o'-lanterns' on the barrel (candle) and in a torch's stretch
+// (torch-<which>: "p" the one on the battlements over the torch, "a" and
+// "b" those at the foot of the wall before and after it, each set that can
+// be up: never "a" and "b" together), the bulbs' all along the rampart (every picture, the campfire's
+// fire-0 to fire-23, its 24 places, included).
+export const FIRE_LIGHTS = Array.from({ length: 24 }, (_, i) => `light/fire-${i}`);
+export const LANTERN_LIGHTS = ["a", "b", "p", "pa", "pb"].map((set) => `light/torch-${set}`);
+export const SEASON_ART = {
+  halloween: ["lantern", "flicker", "light/candle", ...LANTERN_LIGHTS],
+  winter: ["lights-a", "lights-b", "tree", "twinkle", "light/candle", "light/torch", "light/fill", ...FIRE_LIGHTS],
+};
+
+// The path in art/ of picture `part` of season `id` ("seasons/winter/tree.png"),
+// or null for a season or a part it does not have.
+export function seasonArt(id, part) {
+  const s = SEASONS.find((x) => x.id === id);
+  return s && typeof part === "string" && SEASON_ART[s.id].includes(part) ? `seasons/${s.id}/${part}.png` : null;
+}
+
 // The settings menu (the gear in the top-right corner): one switch per entry,
 // in this order, each { key, name, default }. A setting is a boolean saved under
 // `settings.<key>`; adding one is adding an entry here and reading it in main.js.
 export const SETTINGS = [
   { key: "damageNumbers", name: "Show damage numbers", default: true },
   { key: "advance", name: "Advance after a kill", default: true }, // else a kill repeats the stage (farming)
+  { key: "seasonal", name: "Seasonal decorations", default: true }, // the town's, in season (SEASONS)
 ];
 
 // The pixel font (main.js lays numbers out with it): the characters it has,
@@ -1154,7 +1202,8 @@ export function loadState(saved) {
     // versions 1 to 4 sold no weapons: every class owns and holds its default
     looks: Object.fromEntries(CLASSES.map((c) => [c, looksOf(record(s.looks) && has(s.looks, c) ? s.looks[c] : undefined, c, shared, count(s.version))])),
     ...shared, // hats: [<id>], owned by every class
-    // versions 1 to 3 had no settings, and 1 to 5 not "advance": each starts at its default
+    // versions 1 to 3 had no settings, 1 to 5 not "advance", and a save from before
+    // seasonal decorations not "seasonal" (no new version: a missing key is its default)
     settings: settingsOf(s.settings),
   };
 }

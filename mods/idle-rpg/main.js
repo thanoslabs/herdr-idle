@@ -52,6 +52,8 @@
 // count on its corner, hidden at none), a map that opens the stage
 // picker (see mapCard), and a gear that opens the settings
 // (SETTINGS in rules.js), such as the damage numbers that rise off the monster.
+// The town follows the calendar (SEASONS in rules.js, see decor): jack-o'-lanterns
+// in October, string lights and a tree in December, unless that setting is off.
 // The sign (top left), the stage section (top centre, in a raid), that corner
 // and the boss's plate are pixel frames with their words in a pixel lettering
 // (see hudLayout); the name tags under everyone are in it too (see tag).
@@ -118,6 +120,8 @@ import {
   raise,
   resetSkills,
   SETTINGS,
+  seasonArt,
+  seasonOf,
   selectStage,
   shortNumber,
   slay,
@@ -138,13 +142,13 @@ const ART = "mods/idle-rpg/art";
 // ".png" ("scene/wall.png"). The pictures are in folders by what they show,
 // then by what it is doing (see tools/idle-rpg-sprites.py); rules.js builds the
 // paths that depend on the state or an agent (lookArt, weaponArt, hatArt,
-// attackArt, monsterArt, biomeArt, glyphArt, letterArt), and the rest are named where they are drawn.
+// attackArt, monsterArt, biomeArt, seasonArt, glyphArt, letterArt), and the rest are named where they are drawn.
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
 //   seen, battle, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
 //   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack, health } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
-//   hats: [<id>], settings: { damageNumbers, advance } }
+//   hats: [<id>], settings: { damageNumbers, advance, seasonal } }
 //   (hats are owned by every class; the boss is not saved, see loadState)
 const STATE = "idle-rpg.state";
 const randomClass = () => CLASSES[Math.floor(Math.random() * CLASSES.length)];
@@ -201,6 +205,22 @@ const FIRE_Y = 100;
 const FIRE_W = 216;
 const FIRE_H = 180;
 const FIRE_LIGHT_W = 320;
+// The town's seasonal decorations (SEASONS in rules.js; see decor): the size
+// of a jack-o'-lantern, of a stretch of the string of bulbs along the rampart
+// and of the tree; where the ones standing on the floor have their feet, at
+// its back edge, behind wherever anyone can stand (YOU_Y, CRITTER_Y), so they
+// are behind everyone; the gaps in a torch's stretch (from 272 + 384k)
+// between it and the banners, where a jack-o'-lantern can stand at the foot
+// of the wall, and how far a lantern's pool of light at night reaches (16
+// art px; see tools/idle-rpg-sprites.py); and the right edge of the shop's
+// stall, outlined under the pointer (STATIONS), which they keep clear of.
+const LANTERN = { w: 56, h: 48 };
+const STRING = { w: 128, h: 32 };
+const TREE = { w: 92, h: 128 };
+const DECOR_Y = 8;
+const FOOT_GAPS = { a: 104, b: 294 };
+const LANTERN_REACH = 64;
+const STALL_END = 412;
 const CARD_W = 232;
 const SHOP_NAV_W = 78; // the kinds of item down the shop's left side
 const SHOP_ITEM_H = 78; // one thing for sale: picture, name, button
@@ -2110,7 +2130,11 @@ export default class RaidParty extends View {
   // under a roof (not outdoors) has no sky, day or night either: its dark,
   // its ceiling hanging from the top, and a flickering light (a crystal, a
   // fire vent) where the torches would be, always lit the same.
-  scenery(W, biome = null) {
+  // In town in season (`decor`, see decor), the string of bulbs along the top
+  // of the wall (two pictures, alternate bulbs lit, the second fading in and
+  // out over the first so they twinkle in turn), over the wall and under its
+  // banners and torches, or the jack-o'-lanterns on the battlements over the torches.
+  scenery(W, biome = null, decor = null) {
     const turn = ((this.now % CYCLE_MS) / CYCLE_MS) * Math.PI * 2;
     const up = Math.sin(turn); // the sun's height: 1 at noon, -1 at midnight
     const day = clamp(up * 3 + 0.5, 0, 1);
@@ -2189,6 +2213,26 @@ export default class RaidParty extends View {
       fittings.push(div().absolute().left(x + 200).bottom(FLOOR_H + 8).child(image(src("scene/torch.png")).w(24).h(48)));
     }
 
+    const hung = [];
+    if (decor?.season === "winter")
+      hung.push(
+        ...[["a", null], ["b", { from: 0, to: 1, period: 1100 }]].map(([frame, loop]) =>
+          div()
+            .id(`idle-rpg-season-string-${frame}`)
+            .absolute()
+            .left(0)
+            .bottom(horizon - STRING.h)
+            .w(W)
+            .h(STRING.h)
+            .when(Boolean(loop), (el) => el.loop("opacity", loop))
+            .children(tiles(seasonArt("winter", `lights-${frame}`), STRING.w, STRING.h, (el) => el.top(0))),
+        ),
+      );
+    // (sat a pixel of art down into the merlon's top: the wall's merlon is under each torch)
+    const perched = (decor?.rampart ?? []).map((x, i) =>
+      div().id(`idle-rpg-season-rampart-${i}`).absolute().left(x - LANTERN.w / 2).bottom(horizon - 4).w(LANTERN.w).h(LANTERN.h).children(this.lantern(i)),
+    );
+
     return [
       fade(div().absolute().left(0).top(0).w(W).h(128), "idle-rpg-stars", night).children(tiles("scene/stars.png", 256, 128, (el) => el.top(0))),
       fade(div().absolute().left(0).top(0).bottom(0).w(W).bg(DAY), "idle-rpg-day", day),
@@ -2207,7 +2251,9 @@ export default class RaidParty extends View {
       ...tiles(far, 256, 80, (el) => el.bottom(horizon - 24)),
       fade(div().absolute().left(0).top(0).bottom(FLOOR_H).w(W).bg(TINT), "idle-rpg-night-sky", night * 0.5),
       ...tiles(mid, 128, WALL_H, (el) => el.bottom(FLOOR_H)),
+      ...hung,
       ...fittings,
+      ...perched,
     ];
   }
 
@@ -2654,6 +2700,140 @@ export default class RaidParty extends View {
     ];
   }
 
+  // Where the town's decorations for `season` (SEASONS in rules.js: see
+  // render) go on a scene W wide with the campfire at `fire` (fireX) and the
+  // HUD laid out as `hud` (hudLayout), or null out of season. They are
+  // scenery, never in anyone's way: drawn behind the floor (on the rampart)
+  // or on the floor before the stations and everyone else, with their feet
+  // behind wherever anyone can stand (DECOR_Y, or up on the barrel or the
+  // battlements), clear of the stations, the campfire, the torches and
+  // banners and the scene's edges, with no handlers; they take no spot from
+  // anyone (place and townLattice never see them). One that would be cut off
+  // by the scene's top or meet a frame of the HUD (the sign, the strip with
+  // the map and gear; HUD_GAP / 2 round it), its glow included, is not
+  // drawn, and nor is its pool of light at night. Fewer fit a narrow or short
+  // scene. Returns { season, rampart: [x], lanterns: [{ x, y }], tree: x |
+  // null, light(art, left) }:
+  // - Halloween: a jack-o'-lantern on the battlements over each torch not
+  //   behind the campfire (`rampart`, their middles), one on the barrel by the
+  //   stations, and one at the foot of the wall either side of the campfire,
+  //   in the nearest gap between a torch and a banner (FOOT_GAPS) outside the
+  //   campfire's stretch of the night's darkness and its own pool's reach
+  //   (LANTERN_REACH) (`lanterns`: their middles and feet on the floor);
+  // - winter: the string of bulbs along the whole rampart (see scenery) and
+  //   the tree in a gap between a banner and a torch (`tree`, its middle),
+  //   the rightmost clear one, if any is;
+  // - `light(art, left)`: the season's picture of the night's darkness
+  //   standing in for light/<art>.png laid at `left` (see gloom), with the
+  //   pools of light of what is drawn there, or null for the plain one.
+  decor(W, fire, season, hud) {
+    if (!season) return null;
+    // a box on the floor (y down from its top) inside the scene's top, clear of the HUD's frames (in the view's coordinates)
+    const pad = HUD_GAP / 2;
+    const frames = [hud.sign, hud.strip].filter(Boolean);
+    const clear = (b) =>
+      b.y >= -this.wallH && !frames.some((f) => b.x < f.x + f.w + pad && f.x - pad < b.x + b.w && b.y + this.wallH < f.y + f.h + pad && f.y - pad < b.y + this.wallH + b.h);
+    const out = { season, rampart: [], lanterns: [], tree: null, light: () => null };
+    if (season === "halloween") {
+      // a lantern with its feet at x, y on the floor, and the glow over it (see lantern)
+      const box = (x, y) => ({ x: x - LANTERN.w / 2, y: y - LANTERN.h - 8, w: LANTERN.w, h: LANTERN.h + 8 });
+      const lit = new Set(); // the torch stretches' lanterns with pools of their own: "<k>p", "<k>a", "<k>b"
+      const outside = (x) => fire === null || Math.abs(x - fire) >= FIRE_LIGHT_W / 2 + LANTERN_REACH;
+      // over the torches (as in scenery), but none behind the campfire's flames
+      for (let k = 0, x = 256; x + 232 <= W - 60; k++, x += 384) {
+        const at = x + 212;
+        if ((fire !== null && Math.abs(at - fire) < FIRE_W / 2 + LANTERN.w / 2) || !clear(box(at, -WALL_H + 4))) continue;
+        out.rampart.push(at);
+        if (outside(at)) lit.add(`${k}p`);
+      }
+      const barrel = { x: 160, y: -26, barrel: true }; // sitting on its lid
+      if (clear(box(barrel.x, barrel.y))) out.lanterns.push(barrel);
+      if (fire !== null) {
+        // the gaps in torch stretches the night's darkness lays a torch's picture over (see gloom), nearest the campfire first
+        const gaps = [];
+        for (let k = 0; 548 + 384 * k <= W; k++) for (const [g, dx] of Object.entries(FOOT_GAPS)) gaps.push({ k, g, x: 272 + 384 * k + dx });
+        const fit = (p) => p.x - LANTERN.w / 2 >= STALL_END + 8 && p.x + LANTERN.w / 2 <= W - 8 && outside(p.x) && clear(box(p.x, DECOR_Y));
+        for (const side of [-1, 1]) {
+          const p = gaps.filter((q) => Math.sign(q.x - fire) === side && fit(q)).sort((a, b) => Math.abs(a.x - fire) - Math.abs(b.x - fire))[0];
+          if (!p) continue;
+          out.lanterns.push({ x: p.x, y: DECOR_Y });
+          lit.add(`${p.k}${p.g}`);
+        }
+      }
+      out.light = (art, left) => {
+        if (art === "candle") return out.lanterns.includes(barrel) ? seasonArt(season, "light/candle") : null;
+        if (art !== "torch") return null;
+        const k = (left - 272) / 384;
+        const set = ["p", "a", "b"].filter((g) => lit.has(`${k}${g}`)).join("");
+        return set ? seasonArt(season, `light/torch-${set}`) : null;
+      };
+    } else if (season === "winter") {
+      const half = TREE.w / 2;
+      const fits = (x) =>
+        x - half >= STALL_END + 8 && x + half <= W - 8 && (fire === null || Math.abs(x - fire) >= FIRE_W / 2 + 8 + half) && clear({ x: x - half, y: DECOR_Y - TREE.h, w: TREE.w, h: TREE.h });
+      // between each banner (256 + 384k) and its torch, and between the torch and the next banner
+      for (let k = Math.floor(W / 384); k >= 0 && out.tree === null; k--) out.tree = [566 + 384 * k, 376 + 384 * k].find(fits) ?? null;
+      out.light = (art) => seasonArt(season, `light/${art}`);
+    }
+    return out;
+  }
+
+  // A jack-o'-lantern in a box LANTERN big, `n` its number (for the ids): a
+  // warm glow behind it flickering like a torch's and brightening at night,
+  // the lantern, and its carving burning brighter now and then. Every motion
+  // is a native loop, so none of it re-renders the view.
+  lantern(n) {
+    const art = (part) => image(src(seasonArt("halloween", part))).w(LANTERN.w).h(LANTERN.h);
+    return [
+      div()
+        .id(`idle-rpg-season-glow-${n}`)
+        .absolute()
+        .left(0)
+        .top(-8)
+        .w(LANTERN.w)
+        .h(LANTERN.w)
+        .opacity(0.25 + 0.75 * this.night)
+        .transition("opacity", { duration: TICK_MS, easing: "linear" })
+        .child(div().size_full().rounded(LANTERN.w / 2).bg("#ff9d3c48").loop("opacity", { from: 0.5, to: 1, period: 610 + 90 * (n % 3) })),
+      div().absolute().left(0).top(0).child(art("lantern")),
+      div()
+        .absolute()
+        .left(0)
+        .top(0)
+        .loop("opacity", { from: 0.15, to: 1, period: 430 + 70 * (n % 4) })
+        .child(art("flicker")),
+    ];
+  }
+
+  // The decorations standing on the floor (see decor): the jack-o'-lanterns
+  // there, or the tree with its star and baubles twinkling.
+  decorations(d) {
+    const lanterns = d.lanterns.map((p, i) =>
+      div()
+        .id(p.barrel ? "idle-rpg-season-barrel" : `idle-rpg-season-lantern-${p.x}`)
+        .absolute()
+        .left(p.x - LANTERN.w / 2)
+        .top(p.y - LANTERN.h)
+        .w(LANTERN.w)
+        .h(LANTERN.h)
+        .children(this.lantern(d.rampart.length + i)),
+    );
+    if (d.tree === null) return lanterns;
+    const art = (part) => image(src(seasonArt(d.season, part))).w(TREE.w).h(TREE.h);
+    return [
+      ...lanterns,
+      div()
+        .id("idle-rpg-season-tree")
+        .absolute()
+        .left(d.tree - TREE.w / 2)
+        .top(DECOR_Y - TREE.h)
+        .w(TREE.w)
+        .h(TREE.h)
+        .child(art("tree"))
+        .child(div().absolute().left(0).top(0).loop("opacity", { from: 0.2, to: 1, period: 1300 }).child(art("twinkle"))),
+    ];
+  }
+
   // Night on the rampart: darkness over the wall, the floor and everyone on it
   // (but under the cards), fading in with the night. Each torch keeps a pool of
   // light clear around its flame and the candle a small one on the table; past
@@ -2667,11 +2847,14 @@ export default class RaidParty extends View {
   // (Its pool is dark again by the picture's edges, and those stay short of
   // the light of any torch past the last one there is, at every width.)
   // Out in a biome under the sky (`plain`), with no candle or torches, it is
-  // the plain picture alone, repeated across the width.
-  gloom(W, fire = null, plain = false) {
+  // the plain picture alone, repeated across the width. In season (`decor`,
+  // see decor) each picture the season has its own of (the same, with its
+  // decorations' pools of light) stands in for the plain one.
+  gloom(W, fire = null, plain = false, decor = null) {
     const RISE = 80;
     const H = RISE + WALL_H + FLOOR_H;
     const cut = fire === null ? null : [fire - FIRE_LIGHT_W / 2, fire + FIRE_LIGHT_W / 2];
+    const dark = (art, left) => decor?.light(art, left) ?? `light/${art}.png`;
     // the picture light/<art>.png laid at `left`, `w` wide, showing only from `from` to `to`
     const piece = (left, w, art, from = left, to = left + w) =>
       from === left && to === left + w
@@ -2679,7 +2862,7 @@ export default class RaidParty extends View {
             .absolute()
             .left(left)
             .top(0)
-            .child(image(src(`light/${art}.png`)).w(w).h(H))
+            .child(image(src(dark(art, left))).w(w).h(H))
         : div()
             .absolute()
             .left(from)
@@ -2692,7 +2875,7 @@ export default class RaidParty extends View {
                 .absolute()
                 .left(left - from)
                 .top(0)
-                .child(image(src(`light/${art}.png`)).w(w).h(H)),
+                .child(image(src(dark(art, left))).w(w).h(H)),
             );
     const pieces = [];
     const lay = (left, w, art) => {
@@ -3076,7 +3259,10 @@ export default class RaidParty extends View {
     if (!hud.map) this.mapOpen = false;
     // a raid is in its stage's biome, the town on the rampart
     const biome = this.backdrop();
-    const scenery = this.scenery(W, biome); // also works out how dark it is
+    // in town, the season's decorations (SEASONS: by the view's clock, so they go up and come
+    // down on its tick as a month turns), while the setting is on
+    const decor = this.decor(W, fire, !biome && this.settings.seasonal ? seasonOf(this.now) : null, hud);
+    const scenery = this.scenery(W, biome, decor); // also works out how dark it is
     const ground = biome ? biomeArt(biome, "ground") : "scene/floor.png";
     const boards = Array.from({ length: Math.ceil(W / 128) }, (_, i) => div().absolute().left(i * 128).top(0).child(image(src(ground)).w(128).h(FLOOR_H)));
     const carried = this.drag && list.find((a) => a.address === this.drag.address);
@@ -3101,6 +3287,8 @@ export default class RaidParty extends View {
               .child(div().absolute().left(12).top(-34).child(image(src("stations/table/idle.png")).w(112).h(56)))
               .child(div().absolute().left(136).top(-30).child(image(src("scene/barrel.png")).w(48).h(52))),
           )
+          // in season, what stands on the floor (see decor): after the barrel, before the stations and everyone
+          .when(Boolean(decor), (el) => el.children(this.decorations(decor)))
           .when(!this.battle, (el) => el.children(this.stations()))
           .children(foeAttack.under)
           .children(actors.flatMap((p) => p.draw()))
@@ -3114,7 +3302,7 @@ export default class RaidParty extends View {
             ),
           )
           // the night (under a roof the light is always the same)
-          .when(outdoors(biome), (el) => el.child(this.gloom(W, fire, Boolean(biome))))
+          .when(outdoors(biome), (el) => el.child(this.gloom(W, fire, Boolean(biome), decor)))
           // the HUD: drawn over the night's dark, so it reads at any hour, and under the cards
           .child(this.hud(hud.counts, hud.strip, hud.map))
           .child(this.sign(list, hud))

@@ -4,7 +4,8 @@
 # the shop sells, and every weapon and hat it sells drawn to lay over them),
 # each weapon's attack and effects on the boss, the castle
 # scenery (wall, floor, mountains, clouds, sun, moon, stars, props), each
-# biome's backdrop (the raids' scenes: forest, hills, caves, hell), the icons,
+# biome's backdrop (the raids' scenes: forest, hills, caves, hell), the town's
+# seasonal decorations (jack-o'-lanterns; string lights and a tree), the icons,
 # a small pixel font for numbers, and the lettering (the HUD's words, the
 # boss's plate and the name tags) and the frame corners.
 #
@@ -35,6 +36,11 @@
 #   stations/   <station>/{idle,hot}, and the arrow over the one under the pointer
 #   campfire/   base, flame-1 to flame-4
 #   light/      the night's darkness: candle, torch, fill, fire-0 to fire-23
+#   seasons/    the town's decorations in season (SEASON_ART in rules.js):
+#               halloween/ lantern, flicker; winter/ lights-a, lights-b, tree,
+#               twinkle; and each one's light/, the night's darkness with their
+#               pools of light (halloween: candle, torch-a, -b, -p, -pa,
+#               -pb; winter: candle, torch, fill, fire-0 to fire-23)
 #   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark,
 #               dizzy-1, dizzy-2 (knocked out), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
@@ -674,6 +680,7 @@ def dark(name, w, *lights):
             step = min(step, 6 * y // RISE)
             if step: g[y][x] = "#0a1030%02x" % round(128 * step / 6)
     save(name, g)
+    return g
 
 TORCH_LIGHT = (48.5, 4.5, 9, 40, 1.15)
 dark("light/torch.png", 96, TORCH_LIGHT)                 # one torch's stretch of wall, the flame near the top
@@ -2479,3 +2486,139 @@ icon("icons/map.png", [
     "pdpSSppp",
     "...SS...",
 ], {"p": "#e8d7a8", "S": "#c4ab78", "d": "#7a5230", "r": "#d0403a"})
+
+# ---- Seasons (seasons/<season>/): the town's decorations for part of the year
+# (SEASONS and SEASON_ART in mods/idle-rpg/rules.js), each outlined like the
+# sprites, in the scenery's palette. Each season's light/ is the night's
+# darkness (see Night, above) with the decorations' own pools of light added,
+# drawn exactly like the plain pictures it stands in for, so the row of them
+# still meets seamlessly.
+def ring(rows, pal):
+    # `rows` (a grid of palette keys) in a one-pixel outline, a pixel of margin all round
+    g = chars(["." * (len(rows[0]) + 2)] + ["." + r + "." for r in rows] + ["." * (len(rows[0]) + 2)], pal)
+    h, w = len(g), len(g[0])
+    o = [r[:] for r in g]
+    for y in range(h):
+        for x in range(w):
+            if g[y][x] is None and any(0 <= y+j < h and 0 <= x+i < w and g[y+j][x+i] for i, j in ((1,0),(-1,0),(0,1),(0,-1))):
+                o[y][x] = OUTLINE
+    return o
+
+def lit_only(g, keep):
+    # the pixels of g that `keep(x, y, colour)` turns into a colour, nothing else (a layer to lay over g)
+    return [[keep(x, y, c) if c else None for x, c in enumerate(row)] for y, row in enumerate(g)]
+
+# Halloween: a jack-o'-lantern (12x10 and its outline): ribbed skin, a stem, and a
+# face carved through to the candle inside (triangle eyes, a nose, a toothy
+# grin), each cut dark at its rim and glowing within. "flicker" is the
+# carving burning brighter, the rims caught by the light too, laid over it
+# and fading in and out. It sits on the battlements over each torch, on the
+# barrel by the stations, and at the foot of the wall near the campfire.
+LANTERN_PAL = {"O": "#ec8a2c", "Q": "#c4661c", "G": "#3f8f55", "g": "#2c6b3e", "K": "#3a1f12", "Y": "#ffd75e"}
+LANTERN = ring([
+    ".....Gg.....",
+    "..OOOGgOOO..",
+    ".OQOOOOOOQO.",
+    "OQOKOOOOKOQO",
+    "OQKYKOOKYKQO",
+    "OQOOOKKOOOQO",
+    "OQKOOOOOOKQO",
+    "OQKYKYYKYKQO",
+    ".OQKYYYYKQO.",
+    "..OOOOOOOO..",
+], LANTERN_PAL)
+save("seasons/halloween/lantern.png", LANTERN)
+HOT = {LANTERN_PAL["Y"]: "#fff3b0", LANTERN_PAL["K"]: "#ff9d3c"}
+save("seasons/halloween/flicker.png", lit_only(LANTERN, lambda x, y, c: HOT.get(c)))
+
+# Winter: a string of bulbs along the rampart, hung in swags from the merlons
+# (the wall's 16 art px apart, pinned at their middles), one bulb every 4 art
+# px; a stretch as wide as the wall's picture (32x8), laid from the scene's
+# left edge like it. "lights-a" has every other bulb lit, "lights-b" the others,
+# so laying b over a and fading it in and out makes them twinkle in turn.
+BULBS = ("#e84a4a", "#4cd47b", "#ffd75e", "#5fb3ff")          # red, green, gold, blue: lit
+DIM = ("#8f2626", "#2c6b3e", "#c8891e", "#3a6fc4")            # and unlit
+STRING_W, STRING_H, SWAG = 32, 8, 16
+def wire_y(gx):
+    return 1 + round(3 * math.sin(math.pi * ((gx - 5) % SWAG) / SWAG))
+def is_bulb(gx):
+    return gx % 4 == 3
+def string_lights(phase):
+    g = blank(STRING_W, STRING_H)
+    for x in range(STRING_W):
+        y = wire_y(x)
+        for yy in range(min(y, wire_y(x - 1)), max(y, wire_y(x - 1)) + 1): g[yy][x] = "#1f3b2a"
+        if is_bulb(x):
+            k = (x - 3) // 4
+            g[y + 1][x] = "#4a515c"                                # its cap
+            colour = (BULBS if k % 2 == phase else DIM)[k % 4]
+            g[y + 2][x] = g[y + 3][x] = colour
+            if k % 2 == phase: g[y + 2][x] = "#fff3b0" if k % 4 == 2 else colour  # a lit gold bulb's hot top
+    return g
+save("seasons/winter/lights-a.png", string_lights(0))
+save("seasons/winter/lights-b.png", string_lights(1))
+
+# Winter: a decorated fir (21x30 and its outline) on a short trunk: four tiers
+# lit from the top left, baubles, a gold star; "twinkle" is the star and the
+# baubles' glints, laid over it and fading in and out.
+TREE_PAL = {"L": "#5fae6a", "M": "#3f8f55", "D": "#2c6b3e", "S": "#1f4a2c", "t": "#7a5230", "T": "#5a3d22",
+            "*": "#ffd75e", "r": "#e84a4a", "b": "#5fb3ff", "w": "#f4f7fb", "o": "#ec8a2c"}
+def tree():
+    w, h, mid = 21, 30, 10
+    tiers = [(2, 8, 0.5, 4.5), (6, 13, 2.0, 6.5), (10, 19, 3.0, 8.5), (15, 25, 4.0, 10.5)]   # top, bottom, half width at each
+    g = [["."] * w for _ in range(h)]
+    for top, bottom, a, b in tiers:
+        for y in range(top, bottom + 1):
+            hw = a + (b - a) * (y - top) / (bottom - top)
+            for x in range(w):
+                d = x - mid
+                if abs(d) > hw: continue
+                g[y][x] = "S" if y == bottom else "L" if d < -hw * 0.45 else "D" if d > hw * 0.55 else "M"
+    for y in range(26, 30):
+        for x in (9, 10, 11): g[y][x] = "T" if x == 11 else "t"
+    for x, y in ((10, 0), (9, 1), (10, 1), (11, 1), (10, 2)): g[y][x] = "*"
+    for x, y, c in ((9, 5, "r"), (12, 9, "b"), (7, 11, "*"), (10, 14, "r"), (5, 16, "b"), (14, 17, "o"),
+                    (8, 20, "*"), (12, 21, "r"), (3, 23, "o"), (16, 23, "b"), (10, 24, "w")):
+        g[y][x] = c
+    return ["".join(r) for r in g]
+TREE = ring(tree(), TREE_PAL)
+save("seasons/winter/tree.png", TREE)
+GLINT = {TREE_PAL["*"]: "#fff3b0", TREE_PAL["r"]: "#ff9a9a", TREE_PAL["b"]: "#bfe3ff", TREE_PAL["o"]: "#ffd08a", TREE_PAL["w"]: "#ffffff"}
+save("seasons/winter/twinkle.png", lit_only(TREE, lambda x, y, c: GLINT.get(c)))
+
+# The seasons' darkness. Where each picture starts along the scene, in art px:
+# the candle's at the left edge, the torches' and the plain ones' at 68 + 96k,
+# and the campfire's stretch for "fire-<i>" at 28 + 4i (its fire at 68 + 4i,
+# 40 into it: see Night, above); everything below repeats every 96 art px
+# along the rampart (the string's swags every 16, its stretch every 32), so
+# that is enough to place a light the same in every picture it reaches.
+# Halloween: a pool round each jack-o'-lantern that stands in the dark (its
+# picture and its glow, 14x14 art px, all lit), in the picture it stands in:
+# the barrel's (40 art px in, its middle 2.5 under the wall's top) in the
+# candle's; in a torch's, the one on the battlements over the torch ("p", 49
+# in, 6 above the wall's top) and those at the foot of the wall in the gaps
+# either side of the torch ("a", 26 in, and "b", 73.5 in, 11 under the top),
+# one picture for each set of them that can be up ("torch-p", "torch-pa",
+# ...: main.js picks it by which are drawn; "a" and "b" are never both up,
+# being the nearest gaps either side of the campfire, 448px or more apart).
+# Every pool is inside its picture, so its edge columns are the plain one's
+# and the row stays seamless (asserted).
+LANTERN_POOL = (9, 16, 1.0)                              # near, far, stretch
+def same_edges(a, b):
+    return all(ra[0] == rb[0] and ra[-1] == rb[-1] for ra, rb in zip(a, b))
+STOCK_CANDLE = (28.5, 9, 3, 24, 1.0)
+g = dark("seasons/halloween/light/candle.png", 68, STOCK_CANDLE, (40, 2.5) + LANTERN_POOL)
+assert same_edges(g, dark("light/candle.png", 68, STOCK_CANDLE))
+TORCH_POOLS = {"p": (49, -6), "a": (26, 11), "b": (73.5, 11)}
+for flags in ("a", "b", "p", "pa", "pb"):
+    g = dark(f"seasons/halloween/light/torch-{flags}.png", 96, TORCH_LIGHT, *[TORCH_POOLS[f] + LANTERN_POOL for f in flags])
+    assert same_edges(g, dark("light/torch.png", 96, TORCH_LIGHT))
+# Winter: a small pool round every bulb of the string, wherever the picture is.
+def bulbs(start, w):
+    return [(gx - start + 0.5, wire_y(gx) + 2.5, 0.8, 3.2, 1.0) for gx in range(start - 4, start + w + 4) if is_bulb(gx)]
+for i in range(24):
+    torches = [(TORCH_LIGHT[0] + 40 - 4 * i + 96 * k,) + TORCH_LIGHT[1:] for k in (-1, 0, 1)]
+    dark(f"seasons/winter/light/fire-{i}.png", 80, FIRE_LIGHT, *torches, *bulbs(28 + 4 * i, 80))
+dark("seasons/winter/light/candle.png", 68, (28.5, 9, 3, 24, 1.0), *bulbs(0, 68))
+dark("seasons/winter/light/torch.png", 96, TORCH_LIGHT, *bulbs(68, 96))
+dark("seasons/winter/light/fill.png", 96, *bulbs(68, 96))
