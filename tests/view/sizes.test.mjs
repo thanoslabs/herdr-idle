@@ -303,9 +303,11 @@ describe("nothing hard-coded to a width", () => {
       assert.ok(Math.abs(f.t1.x + f.t2.x - w) <= 2 || f.t1.x < w / 2, `the warrior's side at ${w}`);
     }
   });
-  test("everyone is drawn inside the scene at every width", { todo: "an agent whose spot falls behind the campfire is drawn just past its nearer side, which on a scene 640-679px wide is past the right edge (x 644 at 640: 40px of sprite off-screen)" }, async () => {
+  test("everyone is drawn inside the scene at every width", async () => {
     for (const w of [320, 640, 660, 1280, 5120]) {
-      const v = await mountView({ agents: Array.from({ length: 12 }, (_, i) => agent(`a${i}`, "idle")), width: w, saved: { ...raid({ battle: false }).saved, sprites: { you: "archer" } } });
+      // (a spot behind the campfire, as a drag at a wider width leaves one: at 640-679px the
+      // campfire's nearer side is past the right edge, so they stand at its far side)
+      const v = await mountView({ agents: Array.from({ length: 12 }, (_, i) => agent(`a${i}`, "idle")), width: w, saved: { ...raid({ battle: false }).saved, sprites: { you: "archer" }, spots: { a3: { x: 601, y: 40 } } } });
       for (const a of v.world.agents) {
         const s = v.view.at[a.address];
         assert.ok(s.x >= 36 && s.x <= w - 36, `${a.address} at ${s.x} of ${w}`);

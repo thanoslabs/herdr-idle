@@ -42,9 +42,9 @@
 // `last` the latest attack that landed (for its impact), and `seq` the last
 // attack's id.
 //
-// An attack is { id, kind, target, x, y, start, lands }: "single" or "area";
+// An attack is { id, kind, target, x, y, ox, oy, start, lands }: "single" or "area";
 // the key it was aimed at; the spot it was aimed at (the target's feet when it
-// started); the tick it started (its wind-up, or the marker on the floor) and
+// started, as drawn and in the old formation: see caught); the tick it started (its wind-up, or the marker on the floor) and
 // the tick it lands.
 
 import { TICK_STEP } from "./rules.js";
@@ -149,7 +149,9 @@ export function down(party) {
 // Brings the party in line with who is fighting now, on tick `tick`.
 // `fighters` is every character attacking the monster or knocked out while
 // doing it (a knocked-out agent is still working, so it stays): a list of
-// { key, maxHp, x, y }. Newcomers join at full HP; anyone not in the list
+// { key, maxHp, x, y, ox?, oy? }: where each is drawn, and, only while main.js
+// draws a crowd elsewhere, where it would stand in the formation a small
+// party stands in (else the same as x, y; see caught). Newcomers join at full HP; anyone not in the list
 // leaves, remembered in `away` for the attempt: coming back within it they
 // have the HP they left with (a change of max HP as below) or, knocked out,
 // the rest they had left (frozen while away, so leaving never cuts a rest);
@@ -175,6 +177,7 @@ export function syncParty(party, fighters, tick, random) {
       const hp = !was ? maxHp : down !== null ? 0 : Math.min(maxHp, Math.max(Number.MIN_VALUE, was.hp + Math.max(0, maxHp - was.maxHp)));
       if (was) delete party.away[f.key];
       party.members[f.key] = { hp, maxHp, x: f.x, y: f.y, down, hitAt: null, healedAt: null };
+      if (f.ox !== undefined) Object.assign(party.members[f.key], { ox: f.ox, oy: f.oy });
       joined.push(f.key);
       continue;
     }
@@ -184,6 +187,11 @@ export function syncParty(party, fighters, tick, random) {
     }
     m.x = f.x;
     m.y = f.y;
+    if (f.ox !== undefined) Object.assign(m, { ox: f.ox, oy: f.oy });
+    else {
+      delete m.ox;
+      delete m.oy;
+    }
   }
   const left = Object.keys(party.members).filter((key) => !seen.has(key));
   for (const key of left) {
@@ -231,17 +239,47 @@ export function rise(party, tick) {
   return back;
 }
 
+// How far a position p is from an area attack aimed at x, y, in its ring's
+// own measure (1 its edge: AREA_RADIUS either side, AREA_DEPTH of it up and
+// down the floor), squared; Infinity for a position that is not a number.
+function ringDistance(px, py, x, y) {
+  const dx = (px - x) / AREA_RADIUS;
+  const dy = (py - y) / (AREA_RADIUS * AREA_DEPTH);
+  return finite(dx) && finite(dy) ? dx * dx + dy * dy : Infinity;
+}
+
 // Who is inside the ring an area attack aimed at x, y covers (AREA_RADIUS
 // either side, AREA_DEPTH of it up and down the floor), on their feet, in the
 // order they joined. A spot or a position that is not a number is never
-// inside it.
-export function inArea(party, x, y) {
+// inside it. `old`: by everyone's position in the formation a small party
+// stands in (`ox`, `oy`, see syncParty) rather than where they are drawn.
+export function inArea(party, x, y, old = false) {
   return up(party).filter((key) => {
     const m = party.members[key];
-    const dx = (m.x - x) / AREA_RADIUS;
-    const dy = (m.y - y) / (AREA_RADIUS * AREA_DEPTH);
-    return finite(dx) && finite(dy) && dx * dx + dy * dy <= 1;
+    return ringDistance(old ? (m.ox ?? m.x) : m.x, old ? (m.oy ?? m.y) : m.y, x, y) <= 1;
   });
+}
+
+// Who an area attack `a` (see monsterTick) catches as it lands, in the order
+// they joined. How many is decided as for a small party, whatever the
+// party's size: those standing inside the ring round the target's spot in the
+// old formation (`a.ox`, `a.oy` and each member's `ox`, `oy`), so how a crowd
+// is drawn never changes the fight (tools/sim.mjs keeps the old formation).
+// Who: that many of those standing nearest to where the attack is drawn
+// (`a.x`, `a.y`, the target's drawn spot), by the ring's own measure, the
+// first to join on a tie. Where the drawn and old positions are the same (a
+// small party) that is exactly who stands inside the ring.
+export function caught(party, a) {
+  const n = inArea(party, a.ox ?? a.x, a.oy ?? a.y, true).length;
+  if (n === 0) return [];
+  const standingNow = up(party);
+  const order = new Map(standingNow.map((key, i) => [key, i]));
+  const near = standingNow
+    .map((key) => ({ key, d: ringDistance(party.members[key].x, party.members[key].y, a.x, a.y) }))
+    .sort((p, q) => p.d - q.d || order.get(p.key) - order.get(q.key))
+    .slice(0, n);
+  const hit = new Set(near.map((p) => p.key));
+  return standingNow.filter((key) => hit.has(key));
 }
 
 // One tick of the monster's side of the fight, on tick `tick` (call it after
@@ -266,7 +304,7 @@ export function monsterTick(party, tick, damage, random) {
     foe.pending = null;
     foe.last = a;
     out.landed = a;
-    const struck = a.kind === "area" ? inArea(party, a.x, a.y) : standing(party, a.target) ? [a.target] : [];
+    const struck = a.kind === "area" ? caught(party, a) : standing(party, a.target) ? [a.target] : [];
     const dealt = hitDamage(damage, up(party).length);
     for (const key of struck) {
       const m = party.members[key];
@@ -292,6 +330,7 @@ export function monsterTick(party, tick, damage, random) {
       target,
       x: m.x,
       y: m.y,
+      ...(m.ox !== undefined ? { ox: m.ox, oy: m.oy } : {}),
       start: tick,
       lands: tick + (area ? AREA_WARNING_TICKS : SINGLE_WINDUP_TICKS),
     };
