@@ -3,11 +3,12 @@
 // day and night at many widths, each boss in each state (blinking, roaring,
 // attacking either way, slain), every class in every colourway, weapon and
 // hat in every pose, every weapon's attack and effects, numbers of every size
-// in every colour, and every panel. Then: nearly every file in art/ is drawn
-// by one of those states; the few that are not are listed below, with why.
+// in every colour, every panel, and the town in each season. Then: nearly
+// every file in art/ is drawn by one of those states; the few that are not
+// are listed below, with why.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { BIOMES, BIOME_ART, CLASSES, ELLIPSIS, LETTERS, UNKNOWN, biomeArt, catalogue, letterArt } from "../../mods/idle-rpg/rules.js";
+import { BIOMES, BIOME_ART, CLASSES, ELLIPSIS, LETTERS, SEASON_ART, UNKNOWN, biomeArt, catalogue, letterArt, seasonArt } from "../../mods/idle-rpg/rules.js";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 import { artFiles } from "../harness/world.mjs";
 
@@ -47,6 +48,21 @@ describe("every picture asked for is in art/", () => {
     }
     // the campfire's light at each of its 24 places along a torch
     for (let i = 0; i < 24; i++) assert.ok(drawn.has(`light/fire-${i}.png`), `light/fire-${i}`);
+  });
+
+  test("the town's seasonal decorations, by day and night, at every width (the campfire at each of its places)", async () => {
+    const widths = Array.from({ length: 163 }, (_, i) => 320 + i * 16);
+    for (const [season, month] of [["halloween", 10], ["winter", 12]]) {
+      for (const phase of [0.25, 0.75]) {
+        const { saved } = raid({ battle: false });
+        const v = await mountView({ saved, agents: [agent("t1", "idle")], phase, at: new Date(2026, month - 1, 15, 12).getTime() });
+        for (const w of widths) {
+          v.resize(w);
+          keep(v);
+        }
+      }
+      for (const part of SEASON_ART[season]) assert.ok(drawn.has(seasonArt(season, part)), `${season} ${part}`);
+    }
   });
 
   test("name tags with every character of the lettering, a long name and one it lacks", async () => {

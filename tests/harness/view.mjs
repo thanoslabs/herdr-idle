@@ -11,7 +11,7 @@
 // See tests/README.md for the whole surface.
 
 import "./register.mjs";
-import { CYCLE_MS, Timers, seeded, timeAt } from "./clock.mjs";
+import { BASE_TIME, CYCLE_MS, Timers, seeded, timeAt } from "./clock.mjs";
 import { El, all, boxOf, byId, idsLike, images, pathTo, readRun, runs, texts, walk } from "./elements.mjs";
 import { pathToFileURL } from "node:url";
 import { ART_PREFIX, MOD, resetWorld, world } from "./world.mjs";
@@ -42,7 +42,7 @@ export function misshapen(tree, letterboxed = LETTERBOXED) {
   return out;
 }
 
-export { CYCLE_MS, timeAt };
+export { BASE_TIME, CYCLE_MS, timeAt };
 export { agent, agents, raid, savedState } from "./fixtures.mjs";
 import { raid } from "./fixtures.mjs";
 
@@ -91,6 +91,8 @@ class Cx {
  * @param {number} [o.inset] the layout prop: the sign's left edge
  * @param {number} [o.seed=1] Math.random's seed
  * @param {number} [o.phase=0.25] the time of day the clock starts at (0.25 noon, 0.75 midnight)
+ * @param {number} [o.at] a time (ms) whose day-and-night cycle the clock starts in (see timeAt): the
+ *   date, which the town's seasonal decorations follow; by default mid-January 2027, out of season
  */
 export async function mountView(o = {}) {
   RaidParty ??= (await import(MAIN)).default;
@@ -101,17 +103,17 @@ export async function mountView(o = {}) {
 
 // mountView({ ...raid(options), ...view options }): a raid party, mounted (see raid() in fixtures.mjs).
 export async function mountRaid(options = {}, view = {}) {
-  const { saved, agents } = raid({ now: timeAt(view.phase ?? 0.25), ...options });
+  const { saved, agents } = raid({ now: timeAt(view.phase ?? 0.25, view.at), ...options });
   return mountView({ saved, agents, ...view });
 }
 
 export class Handle {
-  constructor({ saved, key = STATE, agents = [], spaces = [], width = 1280, height = 360, inset, seed = 1, phase = 0.25, checkShapes = true, origin = { x: 0, y: 0 } } = {}) {
+  constructor({ saved, key = STATE, agents = [], spaces = [], width = 1280, height = 360, inset, seed = 1, phase = 0.25, at, checkShapes = true, origin = { x: 0, y: 0 } } = {}) {
     this.size = { width, height };
     // where the view sits in the window: pointer events carry window positions
     // and bounds, so a test's view-relative points are moved by it
     this.origin = origin;
-    this.timers = new Timers(timeAt(phase));
+    this.timers = new Timers(timeAt(phase, at));
     this.random = seeded(seed);
     this.renders = 0; // render() calls
     // each render: { at, clock, causes: the timers run since the last one, as { every, ms, name } }

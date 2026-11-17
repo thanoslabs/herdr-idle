@@ -192,7 +192,7 @@ describe("settings", () => {
     v.click("idle-rpg-gear");
     v.click("idle-rpg-setting-advance");
     assert.equal(v.saves.length, n + 1);
-    assert.deepEqual(v.stored.settings, { damageNumbers: true, advance: false });
+    assert.deepEqual(v.stored.settings, { damageNumbers: true, advance: false, seasonal: true });
   });
 });
 

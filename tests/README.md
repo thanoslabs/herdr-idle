@@ -15,8 +15,8 @@ Quote the glob: Node expands it (`node --test tests/` does not work on Node 22, 
 
 | | |
 |---|---|
-| `rules*.test.mjs`, `party.test.mjs`, `effects.test.mjs` | the plain modules (`rules.js`; its shop, art paths and `loadState`; `party.js`; `effects.js`) |
-| `view/*.test.mjs` | the real `main.js` through the harness: loading, fights, failures (only by the clock; everyone down at once), the boss's attacks, healers (working and standing by), weapon effects, panels, the HUD and `hudLayout`, the name tags and the boss's plate, the biomes and the stage picker, screen sizes, saves, render discipline, every picture, the simulation's parity |
+| `rules*.test.mjs`, `party.test.mjs`, `effects.test.mjs` | the plain modules (`rules.js`, the seasons' calendar included; its shop, art paths and `loadState`; `party.js`; `effects.js`) |
+| `view/*.test.mjs` | the real `main.js` through the harness: loading, fights, failures (only by the clock; everyone down at once), the boss's attacks, healers (working and standing by), weapon effects, panels, the HUD and `hudLayout`, the name tags and the boss's plate, the biomes and the stage picker, the town's seasonal decorations (`seasons.test.mjs`), screen sizes, saves, render discipline, every picture, the simulation's parity |
 | `crowd.test.mjs` | crowds: small parties pinned against the old spots and formation, the boss's area attack catching as many as main (and the simulation), 100–2,000 agents laid out in linear time (render ms printed), no two on one spot below the stated counts, stations, campfire and boss kept clear, dragged spots kept, the tag rule |
 | `sim.test.mjs` | `tools/sim.mjs --smoke` and its player |
 | `harness.test.mjs` | the harness itself |
@@ -30,7 +30,7 @@ Known bugs are tests of the correct behaviour marked `{ todo: "why" }`: they run
 
 - **Elements** (`harness/elements.mjs`): `div()`, `image()`, `h_flex()`, `v_flex()` record every call into a tree: id, style values, children (text as `Text`), the image path, tooltips, handlers, hover and active styles, loops and transitions. Only methods `gpui-kit.d.ts` has are accepted (`METHODS`; add one main.js starts using after checking the `.d.ts`), and a child given to two parents throws, as in gpui-kit. A render that asks for a picture not in `art/` throws, and so does one that gives a picture a box of another shape (more than a pixel off): Herdr draws a picture at its own proportions, as large as fits and centred, never stretched, so such a box is partly empty. A picture that sits letterboxed is listed in `LETTERBOXED` (`harness/view.mjs`) with why: that list is the only place to opt out (`checkShapes: false` is for the harness's own tests). `drawnIn` (`harness/png.mjs`) says what part of a box a picture covers. An image with no numeric `w`/`h` throws.
 - **Herdr** (`harness/stubs/herdr.mjs`, `harness/world.mjs`): `agents()`, `spaces()`, `props()`, `shared()`/`setShared()` (every call recorded, values deep-copied), `run()` (recorded). Anything else throws "not stubbed".
-- **Time** (`harness/clock.mjs`): each handle has its own fake clock and seeded random source, and puts them in as `Date.now()` and `Math.random()` whenever it renders, advances or takes input, so two views in one test each keep their own (between those calls the globals are whichever handle acted last; `restoreGlobals()` puts the real ones back). `cx.timer.every/after` run only when the test advances the clock, in order (a timer cancelled inside its own callback stops); whatever they `notify()` renders once per instant, like a frame. As in gpui-kit, `cx.notify()` during a render throws; a `setShared` during a render makes the view render again, as the app re-renders every mod; shared values round-trip through JSON, as the app stores them.
+- **Time** (`harness/clock.mjs`): each handle has its own fake clock and seeded random source (the clock starting in mid-January 2027, out of every season, so no test meets the town's seasonal decorations unless it starts the clock in one with `mountView`'s `at`), and puts them in as `Date.now()` and `Math.random()` whenever it renders, advances or takes input, so two views in one test each keep their own (between those calls the globals are whichever handle acted last; `restoreGlobals()` puts the real ones back). `cx.timer.every/after` run only when the test advances the clock, in order (a timer cancelled inside its own callback stops); whatever they `notify()` renders once per instant, like a frame. As in gpui-kit, `cx.notify()` during a render throws; a `setShared` during a render makes the view render again, as the app re-renders every mod; shared values round-trip through JSON, as the app stores them.
 
 Writing a view test:
 
@@ -52,7 +52,7 @@ v.saves; v.stored; v.commands; v.renders; v.renderLog; v.pendingTimers()
 v.view                                   // the RaidParty instance itself
 ```
 
-`raid()` (in `harness/fixtures.mjs`) builds a version 7 save and its agents from a few options (classes, statuses, level, training, weapons, looks, stage, settings); `savedState(version)` is a save as each version of the mod wrote it; `mountView({ saved, agents, width, height, inset, seed, phase })` mounts anything.
+`raid()` (in `harness/fixtures.mjs`) builds a version 7 save and its agents from a few options (classes, statuses, level, training, weapons, looks, stage, settings); `savedState(version)` is a save as each version of the mod wrote it; `mountView({ saved, agents, width, height, inset, seed, phase, at })` mounts anything (`at`: a time in ms whose day the clock starts on, `phase` the time of day; `mountRaid(options, { at })` likewise).
 
 A change to what the view shows or does needs a test here: a few lines with these helpers.
 
