@@ -20,10 +20,10 @@ function watch(v, pred, max = 120000) {
 describe("marks", () => {
   test("a blow on the boss's weakness has the orange arrow up; one it resists the grey arrow down", async () => {
     // fire wizards on the ogre (weak) and frost archers; then fire on the dragon (resists)
-    const ogre = await mountRaid({ classes: ["wizard"], you: "archer", stage: 2, level: 3, health: 20 });
+    const ogre = await mountRaid({ classes: ["wizard"], you: "archer", stage: 17, level: 20, health: 40 });
     const { pics } = watch(ogre, (h, pics) => pics.has("effects/marks/weak.png"));
     assert.ok(pics.has("effects/marks/weak.png"));
-    const dragon = await mountRaid({ classes: ["wizard"], you: "archer", stage: 3, level: 3, health: 20 });
+    const dragon = await mountRaid({ classes: ["wizard"], you: "archer", stage: 30, level: 20, health: 40 });
     assert.ok(watch(dragon, (h, pics) => pics.has("effects/marks/resist.png")).pics.has("effects/marks/resist.png"));
   });
   test("a plain weapon's blow has no mark", async () => {

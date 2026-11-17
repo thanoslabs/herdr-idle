@@ -8,7 +8,9 @@
 // are listed below, with why.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { BIOMES, BIOME_ART, CLASSES, ELLIPSIS, LETTERS, SEASON_ART, UNKNOWN, biomeArt, catalogue, letterArt, seasonArt } from "../../mods/idle-rpg/rules.js";
+import { BIOMES, BIOME_ART, CLASSES, ELLIPSIS, KINDS, LETTERS, SEASON_ART, UNKNOWN, biomeArt, catalogue, kindOf, letterArt, seasonArt } from "../../mods/idle-rpg/rules.js";
+// the first stage each kind is fought at
+const FIRST = KINDS.map((k) => Array.from({ length: 40 }, (_, i) => i + 1).find((s) => kindOf(s) === k));
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 import { artFiles } from "../harness/world.mjs";
 
@@ -121,11 +123,12 @@ describe("every picture asked for is in art/", () => {
   });
 
   test("each boss blinking, roaring, attacking either way, and slain", async () => {
-    for (const stage of [1, 2, 3]) {
+    for (const stage of FIRST) {
       const v = await mountRaid({ classes: ["warrior", "warrior", "archer", "archer"], you: "wizard", stage, health: 40 });
       const kind = v.view.monster.kind;
-      // all its pictures but the whole one ("idle"), which only the ogre's fight shows (the codex shows all three)
-      const want = artFiles().filter((p) => p.startsWith(`monsters/${kind}/`) && !(kind !== "ogre" && p.endsWith("/idle.png")));
+      // all its pictures but the whole one ("idle") of the slimes and the dragon, whose fights show
+      // their foot or body instead (the codex and the monster's card show every kind's)
+      const want = artFiles().filter((p) => p.startsWith(`monsters/${kind}/`) && !(["slime", "magma-slime", "dragon"].includes(kind) && p.endsWith("/idle.png")));
       try {
         v.until(() => (keep(v), want.every((p) => drawn.has(p))), 300000, 1000);
       } catch {
@@ -145,7 +148,7 @@ describe("every picture asked for is in art/", () => {
       { warrior: "default", archer: "default", wizard: "default", healer: "default" },
     ];
     for (const weapons of loadouts)
-      for (const stage of [1, 2, 3]) {
+      for (const stage of [10, 17, 30]) { // the slime, the ogre and the dragon
         // wizards and archers on both sides of the boss (the chain's arc leaps either way)
         const v = await mountRaid({ classes: ["wizard", "wizard", "archer", "archer", "warrior", "healer"], you: "healer", weapons, stage, level: 4, health: 30 });
         v.advance(40000);
@@ -182,7 +185,7 @@ describe("every picture asked for is in art/", () => {
 
   test("every panel, card and HUD state", async () => {
     const { saved } = raid({ gold: 1234567, slain: 9, level: 9, stage: 3, best: 5, farming: true });
-    saved.kills = { slime: 3, ogre: 3, dragon: 3 };
+    saved.kills = Object.fromEntries(KINDS.map((k) => [k, 3]));
     const v = await mountView({ saved, agents: [...["blocked", "working", "done", "idle"].map((s, i) => agent(`t${i + 1}`, s)), ...Array.from({ length: 120 }, (_, i) => agent(`w${i}`, "working"))] });
     // the shop's town decor, each set's icon on its tile
     v.click("idle-rpg-gold");
@@ -203,6 +206,12 @@ describe("every picture asked for is in art/", () => {
     v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
     assert.ok(v.has("idle-rpg-stage-paused"));
     keep(v);
+    // the monster's card, and on it every element's icon (stages 3, 6, 20 and 26: weak to fire, frost, storm, poison)
+    for (const stage of [3, 6, 20, 26]) {
+      const m = await mountRaid({ stage, status: "idle" });
+      m.click("idle-rpg-monster-hit");
+      keep(m);
+    }
     const empty = await mountView({ saved: raid({ battle: false }).saved, agents: [] });
     keep(empty);
   });
@@ -216,8 +225,9 @@ describe("every picture asked for is in art/", () => {
 const NAME_SIGNS = "and at backslash bar comma dot dquote ellipsis equals hash less lsquare more percent query rsquare semi star tilde under unknown";
 const UNDRAWN_LETTERING = {
   white: "",
-  gold: `b c close colon dash f j k open plus point q quote slash u w x z ${NAME_SIGNS}`,
-  grey: `bang c f g h j k l m plus point q quote r slash v w x z ${NAME_SIGNS}`,
+  gold: `close colon dash j k open plus point q quote slash u x ${NAME_SIGNS}`,
+  // (the monster's card: "FOREST · STAGE 7", "WEAK", "RESISTS" in grey)
+  grey: `bang j m plus point q quote slash x z ${NAME_SIGNS.replace("dot ", "")}`,
   red: `close colon d dash f h j l n open plus point q r slash v w x y z ${NAME_SIGNS}`,
   green: `b bang c close colon d dash e g h i j k l n o open p plus point q quote s slash t u v w x y z ${NAME_SIGNS}`,
 };

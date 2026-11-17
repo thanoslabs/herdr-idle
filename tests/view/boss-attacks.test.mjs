@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { KO_TICKS } from "../../mods/idle-rpg/party.js";
-import { attackPart } from "../../mods/idle-rpg/rules.js";
+import { KINDS, attackPart, kindOf } from "../../mods/idle-rpg/rules.js";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 
 describe("HP bars", () => {
@@ -32,7 +32,8 @@ describe("HP bars", () => {
 
 describe("the boss's attacks", () => {
   test("each kind strikes a pose, flies its shot and lands its hit; area attacks mark the floor first", async () => {
-    for (const [stage, kind] of [[1, "slime"], [2, "ogre"], [3, "dragon"]]) {
+    for (const kind of KINDS) {
+      const stage = Array.from({ length: 40 }, (_, i) => i + 1).find((s) => kindOf(s) === kind);
       const v = await mountRaid({ classes: ["warrior", "warrior", "archer", "archer"], stage, health: 30 });
       const seen = new Set();
       // the area's pose and what lands, the single blow's hit, and its pose to one side or the other

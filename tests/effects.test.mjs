@@ -119,13 +119,38 @@ describe("equal damage per second", () => {
 });
 
 describe("weakness and resistance", () => {
-  test("each kind is weak to one element and resists one", () => {
-    const table = Object.fromEntries(R.KINDS.map((k) => [k, Object.fromEntries(R.ELEMENTS.map((el) => [el, E.matchup(k, el)]))]));
+  test("each kind is weak to one element and resists one (BIOMES in rules.js)", () => {
+    const table = Object.fromEntries(R.KINDS.map((k) => [k, [R.ELEMENTS.find((el) => E.matchup(k, el) === "weak"), R.ELEMENTS.find((el) => E.matchup(k, el) === "resist")]]));
     assert.deepEqual(table, {
-      slime: { fire: null, frost: "weak", storm: null, poison: "resist" },
-      ogre: { fire: "weak", frost: null, storm: "resist", poison: null },
-      dragon: { fire: "resist", frost: "weak", storm: null, poison: null },
+      goblin: ["fire", "poison"],
+      lizard: ["frost", "storm"],
+      slime: ["frost", "poison"],
+      orc: ["poison", "frost"],
+      ogre: ["fire", "storm"],
+      "chief-ogre": ["storm", "frost"],
+      wyvern: ["storm", "poison"],
+      draconian: ["poison", "fire"],
+      dragon: ["frost", "fire"],
+      imp: ["frost", "fire"],
+      "magma-slime": ["frost", "fire"],
+      "goblin-mage": ["poison", "storm"],
+      demon: ["storm", "fire"],
     });
+  });
+  test("the table's rules: one weakness and one other resistance a kind, every element some kinds' weakness and others' resistance", () => {
+    for (const k of R.KINDS) {
+      const m = R.ELEMENTS.map((el) => E.matchup(k, el));
+      assert.equal(m.filter((x) => x === "weak").length, 1, k);
+      assert.equal(m.filter((x) => x === "resist").length, 1, k);
+      assert.deepEqual(E.WEAKNESS[k], { weak: R.kindInfo(k).weak, resist: R.kindInfo(k).resist }, k);
+    }
+    for (const el of R.ELEMENTS) {
+      assert.ok(R.KINDS.filter((k) => E.matchup(k, el) === "weak").length >= 2, `${el}: weak`);
+      assert.ok(R.KINDS.filter((k) => E.matchup(k, el) === "resist").length >= 2, `${el}: resisted`);
+    }
+    // the three kinds there were before keep theirs, so their fights are as they were
+    assert.deepEqual([E.WEAKNESS.slime, E.WEAKNESS.ogre, E.WEAKNESS.dragon], [{ weak: "frost", resist: "poison" }, { weak: "fire", resist: "storm" }, { weak: "frost", resist: "fire" }]);
+    assert.deepEqual(Object.keys(E.WEAKNESS), R.KINDS);
   });
   test("a weakness takes x1.5, a resistance x0.75, the rest x1", () => {
     assert.equal(E.strike(blow({ cls: "wizard" }), "ogre", null, {}, never).damage, 150);
@@ -294,9 +319,12 @@ describe("the shop's lines", () => {
       }
   });
   test("what they say", () => {
-    assert.deepEqual(E.shopLines("archer", "flame"), ["Fire Bow: Burn: +20% in 3s", "Normal speed · Weak: ogre · Resist: dragon"]);
+    // which kinds are weak to an element or resist it is on each monster's card: thirteen names do not fit
+    assert.deepEqual(E.shopLines("archer", "flame"), ["Fire Bow: Burn: +20% in 3s", "Normal speed · Fire"]);
     assert.deepEqual(E.shopLines("warrior", "hammer"), ["Hammer: 2× damage, half speed", "No element"]);
-    assert.deepEqual(E.shopLines("wizard", "frost"), ["Ice Wand: 0.75× damage, 4/3 speed", "Chill: +10% crit for all · Weak: slime, dragon"]);
+    assert.deepEqual(E.shopLines("wizard", "frost"), ["Ice Wand: 0.75× damage, 4/3 speed", "Chill: +10% crit for all · Frost"]);
+    assert.deepEqual(E.shopLines("wizard", "venom"), ["Toxic Rod: 0.75× damage, 4/3 speed", "Venom: +20% in 6s, 5 stacks · Poison"]);
+    assert.deepEqual(E.shopLines("wizard", "storm"), ["Bolt Staff: Chain: 20% to strike twice", "Normal speed · Storm"]);
     assert.deepEqual(E.shopLines("healer", "hex"), ["Hex Vial: Aura: foe takes +15%", "Normal speed · Half damage itself"]);
     assert.deepEqual(E.shopLines("warrior", "axe")[0], "War Axe: 1.5× damage, 2/3 speed");
   });

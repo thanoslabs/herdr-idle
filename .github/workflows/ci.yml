@@ -92,7 +92,7 @@ jobs:
           node --input-type=module <<'EOF'
           import { existsSync, readdirSync, readFileSync } from "node:fs";
           import { EFFECT_ICONS, EFFECT_MARKS, EFFECT_OVERLAYS, effectIconArt, markArt, overlayArt } from "./mods/idle-rpg/effects.js";
-          import { ATTACK_PARTS, BIOMES, BIOME_ART, CLASSES, SEASONS, SEASON_ART, ELLIPSIS, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, LABELS, LETTERS, LETTER_COLOURS, MONSTER_ART, MONSTER_ATTACKS, UNKNOWN, WEAPON_FRAMES, attackArt, attackPart, biomeArt, catalogue, clockText, glyphArt, hatArt, letterArt, letterFit, letterable, lookArt, monsterArt, seasonArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
+          import { ATTACK_PARTS, BIOMES, BIOME_ART, CLASSES, SEASONS, SEASON_ART, ELLIPSIS, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, LABELS, LETTERS, LETTER_COLOURS, MONSTER_ART, MONSTER_ATTACKS, MONSTER_KINDS, UNKNOWN, WEAPON_FRAMES, attackArt, attackPart, biomeArt, catalogue, clockText, glyphArt, hatArt, letterArt, letterFit, letterable, lookArt, monsterArt, seasonArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
           const dir = "mods/idle-rpg";
           const unknown = KINDS.filter((k) => !MONSTER_ART[k]);
           if (unknown.length) {
@@ -157,10 +157,14 @@ jobs:
           const labels = Object.values(LABELS).flatMap((l) => (typeof l === "function" ? samples.flatMap((n) => [l(n, n), l(LABELS.timesUp, n)]) : [l]));
           for (let n = 0; n < 1e80; n = n * 1.37 + 1) labels.push(shortNumber(n));
           for (let ms = 0; ms <= 3600000; ms += 997) labels.push(clockText(ms));
-          // the boss's names on its plate (MONSTERS in main.js) too
-          const bosses = [...readFileSync(`${dir}/main.js`, "utf8").matchAll(/^\s+[a-z]+: \{ name: "([^"]+)"/gm)].map((m) => m[1]);
-          if (bosses.length < KINDS.length) {
-            console.error(`Expected a name for each of ${KINDS.join(", ")} in MONSTERS (main.js), found ${bosses.join(", ")}`);
+          // the monsters' names on their plates and cards (BIOMES in rules.js) too,
+          // and every kind drawn by main.js (MONSTERS there: its size and bulk)
+          const bosses = MONSTER_KINDS.map((k) => k.name);
+          const drawn = [...readFileSync(`${dir}/main.js`, "utf8").matchAll(/^\s+"?([a-z-]+)"?: \{ w: \d+, h: \d+, core:/gm)].map((m) => m[1]);
+          const nameless = MONSTER_KINDS.filter((k) => typeof k.name !== "string" || !k.name.trim()).map((k) => k.id);
+          const lookless = KINDS.filter((k) => !drawn.includes(k));
+          if (nameless.length || lookless.length) {
+            console.error(`Every kind needs a name (BIOMES in rules.js) and a look (MONSTERS in main.js): no name for ${nameless.join(", ") || "none"}, no look for ${lookless.join(", ") || "none"}`);
             process.exit(1);
           }
           labels.push(...bosses, ...bosses.map((b) => LABELS.slain(b)));

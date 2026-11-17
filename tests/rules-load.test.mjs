@@ -28,7 +28,7 @@ describe("every version", () => {
   });
   test("v1: progress kept, no ranks, default looks, stage 1, default settings; its saved monster is dropped", () => {
     const s = load(1);
-    assert.deepEqual([s.slain, s.gold, s.kills], [42, 120, { slime: 10, ogre: 7, dragon: 3 }]);
+    assert.deepEqual([s.slain, s.gold, s.kills], [42, 120, { goblin: 0, lizard: 0, slime: 10, orc: 0, ogre: 7, "chief-ogre": 0, wyvern: 0, draconian: 0, dragon: 3, imp: 0, "magma-slime": 0, "goblin-mage": 0, demon: 0 }]);
     assert.equal(s.xp.warrior, 2500);
     assert.equal(R.pointsSpent(s.skills.wizard), 0);
     assert.equal(s.looks.wizard.armour.equipped, "default");
@@ -89,8 +89,35 @@ describe("every version", () => {
     const s = load(8);
     assert.deepEqual(s.decor, { owned: ["default", "halloween"], equipped: "halloween" });
     assert.equal(s.settings.seasonFirst, true);
-    assert.equal(s.version, 8);
+    assert.equal(s.version, R.STATE_VERSION, "and saves as this version");
     assert.equal(R.loadState({ version: 8, settings: { seasonFirst: false } }).settings.seasonFirst, false);
+  });
+  test("v9: kills of the biomes' thirteen kinds kept", () => {
+    const s = load(9);
+    assert.deepEqual(s.kills, { ...R.newProgress().kills, goblin: 5, slime: 10, ogre: 7, "chief-ogre": 2, dragon: 3, demon: 1 });
+    assert.equal(s.version, 9);
+    assert.equal(s.slain, 42, "the total is the total, as saved");
+  });
+  test("v1 to v8 kept their slime, ogre and dragon counts; any other kind is 0 whatever they say (it came in v9)", () => {
+    for (const v of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      const s = load(v, { kills: { slime: 10, ogre: 7, dragon: 3, goblin: 99, demon: 4, hydra: 1 } });
+      assert.deepEqual(s.kills, { ...R.newProgress().kills, slime: 10, ogre: 7, dragon: 3 }, `v${v}`);
+      assert.deepEqual(Object.keys(s.kills), R.KINDS, `v${v}: every kind, in order`);
+    }
+    assert.deepEqual(load(0).kills, R.newProgress().kills, "before versions: none");
+  });
+  test("a v8 save loads with its progress as it was, the new kinds' counts at 0", () => {
+    const v8 = savedState(8, { now: NOW });
+    const s = R.loadState(v8);
+    for (const k of ["stage", "best", "farming", "slain", "gold", "xp", "decor", "hats"]) assert.deepEqual(s[k], R.loadState({ ...v8, version: 9 })[k], k);
+    assert.deepEqual([s.stage, s.best, s.farming, s.slain, s.gold], [4, 6, true, 42, 120]);
+    assert.deepEqual(s.xp, { you: 1200, wizard: 900, healer: 300, warrior: 2500, archer: 40 });
+    assert.deepEqual(s.training.warrior, { attack: 3, health: 2 });
+    assert.deepEqual(s.looks.warrior.weapon, { owned: ["default", "axe"], equipped: "axe" });
+    assert.deepEqual(s.looks.wizard.armour, { owned: ["default", "crimson"], equipped: "crimson" });
+    assert.deepEqual([s.hats, s.decor], [["party"], { owned: ["default", "halloween"], equipped: "halloween" }]);
+    assert.deepEqual(s.settings, { damageNumbers: false, advance: false, seasonal: true, seasonFirst: true });
+    assert.deepEqual(s.kills, { ...R.newProgress().kills, slime: 10, ogre: 7, dragon: 3 });
   });
   test("v1 to v7 own no town decor whatever they say (it came in v8), and nothing saved is none", () => {
     for (const v of [0, 1, 2, 3, 4, 5, 6, 7]) assert.deepEqual(load(v, { decor: { owned: ["default", "winter"], equipped: "winter" } }).decor, { owned: ["default"], equipped: "default" }, `v${v}`);
@@ -98,13 +125,14 @@ describe("every version", () => {
     assert.deepEqual(R.loadState(undefined).decor, R.newProgress().decor);
   });
   test("a later version loads what it knows and keeps its number (read-only in main.js)", () => {
-    const s = load(9);
-    assert.equal(s.version, 9);
+    const s = load(10);
+    assert.equal(s.version, 10);
+    assert.equal(s.kills.demon, 1);
     assert.deepEqual(s.training.warrior, { attack: 3, health: 2 });
     assert.equal(s.relics, undefined, "what it does not know is not carried");
   });
   test("loading is idempotent: a loaded state loads to itself", () => {
-    for (const v of [0, 1, 3, 5, 7, 8]) {
+    for (const v of [0, 1, 3, 5, 7, 8, 9]) {
       const once = load(v);
       assert.deepEqual(R.loadState(JSON.parse(JSON.stringify(once))), once, `v${v}`);
     }
@@ -138,7 +166,7 @@ describe("garbage", () => {
       spots: { a: { x: 1, y: 2 }, b: { x: NaN, y: 1 }, c: null, d: { x: 3 } },
       sprites: { a: "wizard", b: "bard", c: 4, you: "healer" },
       seen: { a: 5, b: "x", c: Infinity },
-      kills: { slime: 2, ogre: -1, dragon: 2.7, hydra: 9 },
+      kills: { slime: 2, ogre: -1, dragon: 2.7, hydra: 9, goblin: 4 },
       xp: { you: 10.5, wizard: -3, warrior: "9", bard: 50 },
       skills: { wizard: { power: 9, haste: 1.5, crit: -1 } },
       looks: { archer: { armour: { owned: ["dusk", "dusk", "bogus", "crimson", "default"], equipped: "bogus" }, hat: { equipped: "santa" } } },
@@ -152,7 +180,10 @@ describe("garbage", () => {
     assert.deepEqual(s.spots, { a: { x: 1, y: 2 } });
     assert.deepEqual(s.sprites, { a: "wizard", you: "healer" });
     assert.deepEqual(s.seen, { a: 5 });
-    assert.deepEqual(s.kills, { slime: 2, ogre: 0, dragon: 2 });
+    assert.deepEqual(s.kills, { ...R.newProgress().kills, slime: 2, ogre: 0, dragon: 2 }, "a version 7 save: no goblin");
+    const k9 = R.loadState({ version: 9, kills: { goblin: 4, imp: -2, demon: "3", lizard: 1.9, "magma-slime": Infinity, wyvern: NaN, hydra: 9, toString: 5 } }).kills;
+    assert.deepEqual(k9, { ...R.newProgress().kills, goblin: 4, lizard: 1 });
+    assert.deepEqual(Object.keys(k9), R.KINDS, "only the kinds, in order");
     assert.deepEqual(s.xp, { you: 10.5, wizard: 0, healer: 0, warrior: 0, archer: 0 });
     assert.deepEqual(s.skills.wizard, { power: 0, haste: 0, crit: 0 });
     assert.deepEqual(s.looks.archer.armour, { owned: ["default", "dusk"], equipped: "default" });
@@ -173,7 +204,7 @@ describe("prototype keys", () => {
     JSON.parse(
       '{"version":8,"__proto__":{"gold":999,"polluted":true},"spots":{"__proto__":{"x":1,"y":2},"constructor":{"x":3,"y":4}},' +
         '"sprites":{"__proto__":"wizard","toString":"archer"},"xp":{"__proto__":5,"constructor":7},' +
-        '"skills":{"__proto__":{"power":5}},"training":{"__proto__":{"attack":9},"constructor":{"attack":9}},' +
+        '"kills":{"__proto__":{"goblin":5},"constructor":3,"goblin":2},"skills":{"__proto__":{"power":5}},"training":{"__proto__":{"attack":9},"constructor":{"attack":9}},' +
         '"looks":{"__proto__":{"armour":{"owned":["crimson"],"equipped":"crimson"}},"constructor":{}},"settings":{"__proto__":{"advance":false}},' +
         '"hats":["__proto__","constructor"],"decor":{"__proto__":{"owned":["winter"],"equipped":"winter"},"owned":["__proto__","constructor","toString"],"equipped":"__proto__"}}',
     );
@@ -182,6 +213,9 @@ describe("prototype keys", () => {
     assert.equal({}.polluted, undefined);
     assert.equal(Object.prototype.polluted, undefined);
     assert.equal(s.gold, 0);
+    assert.deepEqual(s.kills, R.newProgress().kills, "a version 8 save: no goblin kills, and no prototype's");
+    assert.deepEqual(R.loadState({ ...hostile(), version: 9 }).kills, { ...R.newProgress().kills, goblin: 2 });
+    assert.equal(Object.getPrototypeOf(R.loadState({ ...hostile(), version: 9 }).kills), Object.prototype);
     assert.equal(Object.getPrototypeOf(s.spots), Object.prototype);
     assert.equal(Object.hasOwn(s.spots, "__proto__"), false);
     assert.equal(Object.hasOwn(s.sprites, "__proto__"), false);
@@ -201,10 +235,10 @@ describe("prototype keys", () => {
 describe("absurd numbers", () => {
   test("counts and amounts are capped at the largest safe integer, training at MAX_TRAINING, stages at MAX_STAGE", () => {
     const s = R.loadState({
-      version: 7, gold: 1e300, slain: 1e308, kills: { slime: 1e200 }, xp: { you: 1e300, wizard: Number.MAX_VALUE },
+      version: 9, gold: 1e300, slain: 1e308, kills: { slime: 1e200, demon: 1e300 }, xp: { you: 1e300, wizard: Number.MAX_VALUE },
       stage: 1e9, best: 1e9, training: { warrior: { attack: 1e9, health: 5e3 } }, you: { x: 1e308, y: -1e308 },
     });
-    assert.deepEqual([s.gold, s.slain, s.kills.slime, s.xp.you, s.xp.wizard], Array(5).fill(Number.MAX_SAFE_INTEGER));
+    assert.deepEqual([s.gold, s.slain, s.kills.slime, s.kills.demon, s.xp.you, s.xp.wizard], Array(6).fill(Number.MAX_SAFE_INTEGER));
     assert.deepEqual([s.stage, s.best], [R.MAX_STAGE, R.MAX_STAGE]);
     assert.deepEqual(s.training.warrior, { attack: R.MAX_TRAINING, health: R.MAX_TRAINING });
     assert.deepEqual(s.you, { x: 1e308, y: -1e308 }, "kept: the view clamps where you stand");

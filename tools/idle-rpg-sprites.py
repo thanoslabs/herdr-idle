@@ -29,9 +29,13 @@
 #   attacks/    by what flies or lands, then the weapon's variant of it:
 #               slash/<variant>/, arrow/<variant>/, spell/<element>/ {l,r};
 #               burst/<element>, potion/<potion>, splash/<potion>, spark/<element>
-#   monsters/   <kind>/ idle (the whole picture), blink, the pieces that move
-#               (top, base, body, tail), roar/ for the ogre and dragon, and
-#               attack/, its two attacks on the party (see the last section)
+#   monsters/   <kind>/ (all thirteen: goblin, lizard, slime, orc, ogre,
+#               chief-ogre, wyvern, draconian, dragon, imp, magma-slime,
+#               goblin-mage, demon) idle (the whole picture), blink, the pieces
+#               that move (top, and the slimes' base, the dragon's body and
+#               tail), roar/ for the ogre, chief-ogre and dragon, and attack/,
+#               its two attacks on the party (see "Monsters fight back" and
+#               "Each biome's own monsters", the last sections)
 #   foe/        marker (where an area attack lands) and hit (on whoever it reaches)
 #   stations/   <station>/{idle,hot}, and the arrow over the one under the pointer
 #   campfire/   base, flame-1 to flame-4
@@ -48,7 +52,7 @@
 #               coin, star, armour, hat, decor, gear, map (the stage picker), the
 #               card's wrench, and the stage section's arrows: prev, next
 #   effects/    weapon effects (effects.js): icons/ (burn, chill, venom, hex, haste,
-#               might), marks/ (weak, resist), and on the boss burn/flame-1, -2,
+#               might, and chain, the storm's), marks/ (weak, resist), and on the boss burn/flame-1, -2,
 #               chill/crystal, glint, chain/arc/{l,r}, venom/drip-1, -2
 #   font/       <colour>/<character>, the pixel font: white, gold, ember, venom
 #   lettering/  <colour>/<character>, the second face, for words (the HUD, the
@@ -1622,6 +1626,7 @@ for hat, by_class in HATS.items():
 #                       one it reaches); breath, fireball/{l,r} and blaze-1, -2
 #                       (it breathes a ball of fire that bursts into a blaze
 #                       across the spot; the two flicker)
+#               the other ten kinds' are listed in "Each biome's own monsters"
 #   foe/        marker, the danger ring on the floor where an area attack will
 #               land (AREA_RADIUS wide, half as deep), and hit, the flash on
 #               anyone an area attack reaches
@@ -2653,3 +2658,816 @@ for i in range(24):
 dark("seasons/winter/light/candle.png", 68, (28.5, 9, 3, 24, 1.0), *bulbs(0, 68))
 dark("seasons/winter/light/torch.png", 96, TORCH_LIGHT, *bulbs(68, 96))
 dark("seasons/winter/light/fill.png", 96, *bulbs(68, 96))
+
+# ==== Each biome's own monsters =============================================
+# Added after everything else, so nothing above changes. The thirteen kinds of
+# monster, by biome (BIOMES and the kinds hanging off it in
+# mods/idle-rpg/rules.js; the last of each biome is its boss): forest goblin,
+# lizard, slime; hills orc, ogre, chief-ogre; caves wyvern, draconian, dragon;
+# hell imp, magma-slime, goblin-mage, demon. The slime, ogre and dragon are
+# drawn above; here the other ten, each in monsters/<kind>/ like them: "idle"
+# (the whole picture, also the codex's), "blink" (its eyelids, laid over the
+# breathing part), "top" (the part that breathes: head, shoulders, wings; the
+# magma slime instead "base" and "top" as the slime has), the chief ogre's
+# roar/roar, and attack/, its two attacks on the party:
+#   goblin:      throw/{l,r}, dagger/{l,r}, nick; toss, bomb, boom
+#   lizard:      lunge/{l,r}, bite; lash, sweep
+#   orc:         chop/{l,r}, cleave; stomp, quake (the ogre's, in grey stone)
+#   chief-ogre:  swing/{l,r}, arc/{l,r}, thud; slam, quake (the ogre's, bigger and recoloured)
+#   wyvern:      sting/{l,r}, barb/{l,r}, jab; beat, gale
+#   draconian:   thrust/{l,r}, pierce; flame, ember/{l,r}, scorch
+#   imp:         hurl/{l,r}, firebolt/{l,r}, singe; summon, pyre
+#   magma-slime: the slime's, in lava: spit/{l,r}, glob, splat; squash, puddle
+#   goblin-mage: cast/{l,r}, bolt/{l,r}, zap; chant, rune
+#   demon:       smite/{l,r}, rend; inferno, hellball/{l,r}, hellfire-1, -2
+# A part named as another kind's (glob, swing, quake, ...) is the same size as
+# that kind's, since the mod sizes an attack's pictures by the part's name.
+# The kinds that face left (lizard, wyvern, draconian) are drawn striking left:
+# their "l" as drawn, "r" the mirror (lpair).
+
+def lpair(name, g):
+    # drawn facing left: "l" as drawn, "r" its mirror
+    save(f"{name}/l.png", g)
+    save(f"{name}/r.png", mirror(g))
+
+def recolour(g, swap):
+    return [[swap.get(c, c) if c else None for c in row] for row in g]
+
+def kept(g, keep):
+    # part of a grabbed picture (outline and all), by art coordinates, as Pix.save's keep
+    return [[c if keep(x - 1, y - 1) else None for x, c in enumerate(row)] for y, row in enumerate(g)]
+
+def pieces(kind, draw, cut):
+    # a kind's whole picture, its eyelids and the part above row `cut` that breathes
+    draw(f"monsters/{kind}/idle.png")
+    draw(f"monsters/{kind}/blink.png", lids=True)
+    draw(f"monsters/{kind}/top.png", keep=lambda x, y: y < cut)
+
+def mirror_x(pts, axis):
+    return [(axis - x, y) for x, y in pts]
+
+STEEL_L, STEEL, STEEL_D = "#dfe6ee", "#9aa7b8", "#5b6675"
+EMBER = {"r": "#e2552f", "o": "#ff9d3c", "y": "#ffe27a", "W": "#fff3b0"}
+
+# ---- Goblin (forest): 20x22, small, big ears, a crude knife; olive-yellow
+# skin and a rust-red tunic so it reads on the forest's green.
+GOB = {"S": "#d9c25a", "Sd": "#9c7a34", "Sl": "#f0df8c", "T": "#a8432e", "Td": "#6e2a1c", "B": "#4a3020", "in": "#d98a6a"}
+def goblin_head(p, hx, hy, lids=False, face="grin", hood=None):
+    S, Sd, Sl = GOB["S"], GOB["Sd"], GOB["Sl"]
+    if lids:
+        p.rect(hx - 3, hy - 1, 2, 2, S); p.rect(hx + 2, hy - 1, 2, 2, S)
+        p.rect(hx - 3, hy - 1, 2, 1, Sd); p.rect(hx + 2, hy - 1, 2, 1, Sd)
+        return
+    ear = [(hx - 4, hy - 2), (hx - 9, hy - 5), (hx - 8, hy - 2), (hx - 4, hy + 2)]
+    inner = [(hx - 5, hy - 1), (hx - 8, hy - 3), (hx - 5, hy + 1)]
+    for pts, c in ((ear, Sd), (inner, GOB["in"])):
+        p.poly(pts, c); p.poly(mirror_x(pts, 2 * hx), c)
+    p.ell(hx, hy, 5.5, 5, Sd); p.ell(hx - 0.5, hy - 0.5, 4.8, 4.4, S)
+    p.px(hx - 2, hy - 4, Sl); p.px(hx - 3, hy - 3, Sl)
+    if hood:
+        p.poly([(hx - 6, hy - 1), (hx - 4, hy - 6), (hx + 1, hy - 9), (hx + 6, hy - 6), (hx + 6, hy - 1), (hx + 4, hy - 3), (hx - 4, hy - 3)], hood[0])
+        p.poly([(hx - 3, hy - 4), (hx + 1, hy - 8), (hx + 4, hy - 5)], hood[1])
+    p.rect(hx - 4, hy - 2, 9, 1, Sd)                                   # brow
+    p.rect(hx - 3, hy - 1, 2, 2, "#ffe27a"); p.rect(hx + 2, hy - 1, 2, 2, "#ffe27a")
+    p.px(hx - 2, hy, "#c94040"); p.px(hx + 2, hy, "#c94040")            # red pupils
+    p.poly([(hx, hy), (hx - 1, hy + 3), (hx + 1, hy + 2)], Sd)          # long nose
+    if face == "shout":
+        p.rect(hx - 2, hy + 3, 5, 2, "#3a1f1f"); p.px(hx - 2, hy + 3, BONE); p.px(hx + 2, hy + 3, BONE)
+    else:
+        p.rect(hx - 3, hy + 3, 7, 1, "#3a1f1f"); p.px(hx - 2, hy + 4, BONE); p.px(hx + 3, hy + 4, BONE)
+
+def goblin_body(p, arms):
+    S, Sd = GOB["S"], GOB["Sd"]
+    p.rect(7, 18, 2, 3, Sd); p.rect(11, 18, 2, 3, Sd)                  # legs, feet
+    p.rect(6, 21, 3, 1, GOB["B"]); p.rect(11, 21, 3, 1, GOB["B"])
+    p.poly([(6, 12), (14, 12), (15, 18), (13, 17), (11, 18), (9, 17), (7, 18), (5, 18)], GOB["T"])
+    p.rect(6, 12, 9, 1, GOB["Td"]); p.rect(6, 16, 9, 1, GOB["B"]); p.px(10, 16, "#f2c14e")
+    if arms == "idle":
+        p.rect(3, 13, 2, 4, S); p.rect(3, 17, 2, 1, Sd)                # knife arm
+        p.px(2, 16, GOB["B"]); p.px(1, 15, STEEL); p.px(0, 14, STEEL_L); p.px(1, 14, STEEL_L)
+        p.rect(15, 13, 2, 4, S); p.rect(15, 17, 2, 1, Sd)
+    elif arms == "throw":                                               # knife arm flung up and back
+        p.rect(3, 13, 2, 4, S); p.rect(3, 17, 2, 1, Sd)
+        p.rect(15, 9, 2, 5, S); p.rect(15, 8, 2, 1, Sd)
+        p.px(16, 7, GOB["B"]); p.px(17, 6, STEEL); p.px(18, 5, STEEL_L); p.px(18, 4, STEEL_L)
+    elif arms == "toss":                                                # both arms up, a bomb over its head
+        p.rect(3, 6, 2, 7, S); p.rect(15, 6, 2, 7, S)
+        p.ell(10, 2, 3, 2.5, "#3a3f4a"); p.px(9, 1, "#7d8590"); p.px(12, 0, "#c9a66b"); p.px(13, 0, "#ffe27a")
+        p.rect(4, 3, 2, 2, S); p.rect(14, 3, 2, 2, S)
+
+def goblin(name, lids=False, keep=None, pose=None):          # 20x22
+    p = Pix(20, 22)
+    if lids:
+        goblin_head(p, 10, 7, lids=True)
+        return p.save(name, outline=False)
+    if pose == "toss":
+        goblin_head(p, 10, 8, face="shout"); goblin_body(p, "toss")
+    elif pose == "throw":
+        goblin_body(p, "throw"); goblin_head(p, 9, 7, face="shout")
+    else:
+        goblin_head(p, 10, 7); goblin_body(p, "idle")
+    p.save(name, keep=keep)
+
+pieces("goblin", goblin, 12)
+pair("monsters/goblin/attack/throw", grab(goblin, pose="throw"))
+save("monsters/goblin/attack/toss.png", grab(goblin, pose="toss"))
+DAGGER = {"d": "#7a5230", "g": "#f2c14e", "A": STEEL_L, "a": STEEL}
+icon("monsters/goblin/attack/dagger/r.png", ["....a..", "ddgAAAA", "....a.."], DAGGER)
+icon("monsters/goblin/attack/dagger/l.png", [r[::-1] for r in ["....a..", "ddgAAAA", "....a.."]], DAGGER)
+icon("monsters/goblin/attack/nick.png", [                      # a quick cut on whoever it reaches
+    ".......W.",
+    "......Wr.",
+    ".....Wr..",
+    "...WWr...",
+    "..Wr.....",
+    ".Wr......",
+    "Wr.....r.",
+], {"r": "#e2483f", "W": "#ffffff"})
+icon("monsters/goblin/attack/bomb.png", [                      # lit and lobbed
+    "....y",
+    "...d.",
+    ".kkk.",
+    "kkLkk",
+    "kkkkk",
+    ".kkk.",
+], {"k": "#3a3f4a", "L": "#7d8590", "d": "#c9a66b", "y": "#ffe27a"})
+def boom(name):                                                     # the bomb going off over the marked spot
+    p = Pix(33, 11)
+    for cx, cy, rx, ry, c in ((6, 7, 6, 3.5, "#7d8590"), (27, 7, 6, 3.5, "#7d8590"), (16, 5, 11, 5, "#e2552f"),
+                              (10, 6, 6, 4, "#ff9d3c"), (22, 6, 6, 4, "#ff9d3c"), (16, 5, 7, 4, "#ffe27a"), (16, 5, 3, 2, "#fff3b0")):
+        p.ell(cx, cy, rx, ry, c)
+    for x, y in ((2, 1), (30, 2), (8, 0), (25, 0), (0, 4), (32, 5)): p.px(x, y, "#ffe27a")
+    p.rect(3, 9, 27, 2, "#5b6675")
+    p.save(name)
+boom("monsters/goblin/attack/boom.png")
+
+# ---- Lizard (forest): 30x16, long and low on four legs, facing left; teal
+# scales and an orange crest, so it stands off the green.
+LIZ = {"S": "#3f9aa0", "Sd": "#2a6c78", "Sl": "#7cc8c4", "U": "#e8d9a0", "C": "#e8843a"}
+def lizard(name, lids=False, keep=None, pose=None):        # 30x16, facing left
+    p = Pix(30, 16)
+    S, Sd, Sl, U, C = (LIZ[k] for k in "S Sd Sl U C".split())
+    hx = -2 if pose == "lunge" else 0                       # the head thrust forward
+    if lids:
+        p.rect(5 + hx, 5, 2, 1, S)
+        return p.save(name, outline=False)
+    if pose == "lash":                                      # tail whipped up over its back
+        p.poly([(20, 9), (24, 4), (27, 0), (29, 1), (26, 6), (22, 11)], Sd)
+        p.poly([(27, 0), (29, 0), (29, 2)], C)
+    else:
+        p.poly([(20, 8), (25, 9), (29, 12), (29, 13), (24, 12), (20, 12)], Sd)  # tail
+    p.rect(8, 11, 2, 4, Sd); p.rect(19, 11, 2, 4, Sd)                    # far legs
+    p.rect(11, 12, 2, 3, S); p.rect(22, 12, 2, 3, S)                     # near legs
+    p.rect(10, 15, 3, 1, Sd); p.rect(21, 15, 3, 1, Sd); p.rect(7, 15, 3, 1, Sd); p.rect(18, 15, 3, 1, Sd)
+    p.ell(15, 9, 8, 3.5, Sd); p.ell(15, 8.5, 7.5, 3, S); p.rect(9, 11, 12, 1, U)   # body, belly
+    for x in range(9, 22, 3): p.poly([(x, 6), (x + 1, 4), (x + 2, 6)], C)  # crest
+    for x in range(10, 21, 3): p.px(x + 1, 8, Sl)
+    p.poly([(9, 7), (6, 6), (6, 11), (10, 11)], S)                        # neck
+    p.ell(5 + hx, 7, 3, 2.5, Sd); p.ell(5 + hx, 6.5, 2.6, 2, S)          # head
+    if pose == "lunge":
+        p.poly([(3 + hx, 6), (-1 + hx, 6), (0 + hx, 7), (3 + hx, 7)], S)  # upper jaw
+        p.poly([(3 + hx, 8), (0 + hx, 10), (1 + hx, 11), (5 + hx, 9)], Sd)  # jaw dropped
+        p.rect(1 + hx, 7, 3, 2, "#3a1f1f"); p.px(1 + hx, 8, "#c94040"); p.px(1 + hx, 7, WHITE); p.px(3 + hx, 9, WHITE)
+    else:
+        p.rect(0, 7, 4, 2, S); p.rect(0, 8, 4, 1, Sd); p.px(1, 7, K)      # snout
+    p.rect(5 + hx, 5, 2, 2, "#ffe27a"); p.px(5 + hx, 5, K)               # eye
+    p.save(name, keep=keep)
+
+pieces("lizard", lizard, 9)
+lpair("monsters/lizard/attack/lunge", grab(lizard, pose="lunge"))
+save("monsters/lizard/attack/lash.png", grab(lizard, pose="lash"))
+icon("monsters/lizard/attack/bite.png", [                      # two rows of teeth marks
+    "W.W.W.W.W",
+    ".r.r.r.r.",
+    ".........",
+    ".r.r.r.r.",
+    "W.W.W.W.W",
+], {"r": "#e2483f", "W": "#ffffff"})
+icon("monsters/lizard/attack/sweep.png", [                     # the tail's sweep across the marked spot
+    "........cccccccccccccccc.........",
+    "....cccCCCCCCCCCCCCCCCCCCccc.....",
+    "..ccCCCWWWWWWWWWWWWWWWWWCCCCcc...",
+    ".cCCWW.........................cC",
+    "cCW....d...d.....d....d...d.....c",
+    "c....dDd..dDd...dDd..dDd.dDd.....",
+    ".....ddd...d.....d....d...d......",
+], {"c": "#2a6c78", "C": "#3f9aa0", "W": "#bfe6e2", "d": "#c9a66b", "D": "#f4ecd8"})
+
+# ---- Orc (hills): 34x40, a lean fighter with tusks, a topknot, iron pauldrons
+# and an axe; grey-green skin, apart from the ogre's bright green bulk.
+ORC = {"S": "#8aa38c", "Sd": "#5d7a64", "Sl": "#b2c8b0", "L": "#6b3f2a", "Ld": "#4a2a1c", "H": "#2a2220"}
+def orc_axe(p, head_at, haft):
+    (x0, y0), (x1, y1) = haft
+    p.poly([(x0, y0), (x0 + 1, y0), (x1 + 1, y1), (x1, y1)], "#5a3d22")
+    hx, hy = head_at
+    p.poly([(hx, hy - 4), (hx + 4, hy - 5), (hx + 5, hy), (hx + 4, hy + 5), (hx, hy + 4)], STEEL_D)
+    p.poly([(hx + 1, hy - 3), (hx + 4, hy - 4), (hx + 4, hy + 4), (hx + 1, hy + 3)], STEEL)
+    p.rect(hx + 4, hy - 3, 1, 7, STEEL_L)
+
+def orc(name, lids=False, keep=None, pose=None):            # 34x40
+    p = Pix(34, 40)
+    S, Sd, Sl, L, Ld = (ORC[k] for k in "S Sd Sl L Ld".split())
+    hx, hy = 17, 9
+    if lids:
+        p.rect(hx - 4, hy - 1, 3, 2, S); p.rect(hx + 2, hy - 1, 3, 2, S)
+        return p.save(name, outline=False)
+    if pose == "stomp":                                     # one foot raised to stamp
+        p.rect(11, 29, 5, 5, Sd); p.rect(10, 33, 7, 2, ORC["H"])
+        p.rect(19, 31, 4, 7, Sd); p.rect(18, 37, 6, 3, ORC["H"])
+    else:
+        p.rect(12, 31, 4, 6, Sd); p.rect(19, 31, 4, 6, Sd)  # legs, boots
+        p.rect(11, 37, 6, 3, ORC["H"]); p.rect(18, 37, 6, 3, ORC["H"])
+    p.poly([(9, 15), (25, 15), (23, 28), (11, 28)], S)      # torso
+    p.poly([(12, 17), (22, 17), (21, 26), (13, 26)], Sl)
+    p.poly([(9, 15), (25, 15), (22, 21), (17, 18), (12, 21)], L)  # leather harness
+    p.rect(10, 27, 15, 2, Ld); p.rect(16, 27, 3, 2, "#f2c14e")      # belt
+    p.poly([(10, 29), (24, 29), (25, 33), (21, 32), (17, 34), (13, 32), (9, 33)], L)  # kilt
+    if pose == "chop":                                      # the axe brought down to its right
+        p.ell(6, 21, 2.5, 5, Sd); p.ell(6, 20, 2, 4.5, S); p.ell(6, 26, 2, 2, S)
+        p.poly([(25, 17), (29, 16), (33, 23), (30, 25)], S)
+        orc_axe(p, (28, 30), ((31, 21), (27, 36)))
+        p.ell(31, 22, 2.5, 2, S)
+    elif pose == "stomp":                                   # the axe over its head in both fists
+        p.ell(7, 12, 2.5, 6, Sd); p.ell(7, 12, 2, 5.5, S); p.ell(27, 12, 2.5, 6, Sd); p.ell(27, 12, 2, 5.5, S)
+        p.poly([(4, 4), (30, 4), (30, 5), (4, 5)], "#5a3d22")
+        orc_axe(p, (28, 4), ((28, 4), (28, 4)))
+        p.ell(7, 5, 2, 2, S); p.ell(27, 5, 2, 2, S)
+    else:
+        p.ell(6, 21, 2.5, 5, Sd); p.ell(6, 20, 2, 4.5, S); p.ell(6, 26, 2, 2, S)     # left arm
+        p.ell(28, 21, 2.5, 5, Sd); p.ell(28, 20, 2, 4.5, S)                        # right arm
+        orc_axe(p, (28, 7), ((30, 6), (30, 34)))
+        p.ell(29, 25, 2.2, 2, S)                                                  # fist on the haft
+    for side in (-1, 1):                                    # iron pauldrons
+        p.ell(hx + side * 9, 16, 4, 3, STEEL_D); p.ell(hx + side * 9, 15.5, 3.4, 2.4, STEEL); p.px(hx + side * 9 - 1, 14, STEEL_L)
+    p.poly([(hx - 5, hy - 1), (hx - 9, hy - 4), (hx - 6, hy + 2)], Sd); p.poly([(hx + 5, hy - 1), (hx + 9, hy - 4), (hx + 6, hy + 2)], Sd)  # ears
+    p.ell(hx, hy, 6, 6, Sd); p.ell(hx - 0.5, hy - 0.5, 5.3, 5.3, S)
+    p.rect(hx - 1, hy - 8, 3, 3, ORC["H"]); p.rect(hx - 2, hy - 6, 5, 2, ORC["H"]); p.px(hx, hy - 9, ORC["H"])  # topknot
+    p.rect(hx - 5, hy - 2, 11, 1, Sd)                       # brow
+    p.rect(hx - 4, hy - 1, 3, 2, "#ff5d3c"); p.rect(hx + 2, hy - 1, 3, 2, "#ff5d3c"); p.px(hx - 3, hy, K); p.px(hx + 3, hy, K)
+    p.rect(hx - 1, hy + 1, 3, 2, Sd)
+    if pose:
+        p.rect(hx - 3, hy + 3, 7, 3, "#3a1f1f")
+    else:
+        p.rect(hx - 3, hy + 4, 7, 1, "#3a1f1f")
+    p.rect(hx - 3, hy + 2, 1, 3, BONE); p.rect(hx + 3, hy + 2, 1, 3, BONE)    # tusks
+    p.save(name, keep=keep)
+
+pieces("orc", orc, 22)
+pair("monsters/orc/attack/chop", grab(orc, pose="chop"))
+save("monsters/orc/attack/stomp.png", grab(orc, pose="stomp"))
+icon("monsters/orc/attack/cleave.png", [                       # the axe's bite on whoever it reaches
+    "..........W",
+    "........WWr",
+    "......WWWr.",
+    "....WWWr...",
+    "..WWWr.....",
+    ".WWr.......",
+    "Wr.....r...",
+    "r....r.....",
+    "...r.......",
+], {"r": "#e2483f", "W": "#ffffff"})
+QUAKE_ROWS = [
+    "..........s.......S.......s..........",
+    "...dd........S..........s......dd....",
+    "..dDDd..s...........S.......s.dDDd...",
+    ".dDDDDd.....gggggggkggggggg..dDDDDd..",
+    "..dDDd...gggggkgggkggkggggggg.dDDd...",
+    "......gggggggggkgggkgkgggkgggggg.....",
+    "..dd.ggkkggggggkkgkkkggkkgggkkggg.dd.",
+    ".dDDdggggkkkgggggkkWkkgggggkkkggggdDDd",
+    "..dd.gggggggkkkkkkkkkkkkkkkgggggg.dd.",
+    "......ggggkkgggggkgkgkgggkkgggggg....",
+    "........ggggggkggkggkggkggggggg......",
+    "..........gggggggggkggggggggg........",
+]
+icon("monsters/orc/attack/quake.png", QUAKE_ROWS, {"d": "#9aa3ad", "D": "#dfe6ee", "g": "#7d8590", "k": "#3a3f4a", "W": "#2a2220", "s": "#5b6675", "S": "#c3cad2"})
+
+# ---- Chief ogre (hills boss): the ogre's own shapes, 1.1 times as big on a
+# 56x56 canvas, in a darker sea-green skin, with a heavy riveted iron crown
+# and a necklace of teeth; it swings and slams its club as the ogre does.
+class Big(Pix):
+    # a Pix that draws every shape `k` times as big, moved by (ox, oy) art px
+    def __init__(self, w, h, k, ox, oy):
+        super().__init__(w, h); self.k, self.ox, self.oy = k, ox, oy
+    def at(self, x, y): return x * self.k + self.ox, y * self.k + self.oy
+    def px(self, x, y, c): self.rect(x, y, 1, 1, c)
+    def rect(self, x, y, w, h, c):
+        x0, y0 = self.at(x, y); x1, y1 = self.at(x + w, y + h)
+        for j in range(round(y0), round(y1)):
+            for i in range(round(x0), round(x1)): Pix.px(self, i, j, c)
+    def ell(self, cx, cy, rx, ry, c):
+        X, Y = self.at(cx, cy); rx, ry = rx * self.k, ry * self.k
+        for y in range(int(Y - ry) - 1, int(Y + ry) + 2):
+            for x in range(int(X - rx) - 1, int(X + rx) + 2):
+                if ((x - X) / rx) ** 2 + ((y - Y) / ry) ** 2 <= 1.0: Pix.px(self, x, y, c)
+    def poly(self, pts, c):
+        q = [self.at(x, y) for x, y in pts]
+        ys = [y for _, y in q]
+        for y in range(int(min(ys)), int(max(ys)) + 1):
+            xs = []
+            for (x1, y1), (x2, y2) in zip(q, q[1:] + q[:1]):
+                if y1 == y2: continue
+                if min(y1, y2) <= y + 0.5 < max(y1, y2): xs.append(x1 + (y + 0.5 - y1) * (x2 - x1) / (y2 - y1))
+            xs.sort()
+            for a, b in zip(xs[::2], xs[1::2]):
+                for x in range(int(round(a)), int(round(b)) + 1): Pix.px(self, x, y, c)
+
+CHIEF = {"G": "#4f8a6e", "Gd": "#356650", "Gl": "#78b394", "Wd": "#6e4525", "Wl": "#8f5e34", "Br": "#7a1f2b"}
+IRON = {"I": "#6b7380", "Id": "#3f4550", "Il": "#a3acb8", "R": "#dfe6ee"}
+def chief_head(p):
+    # the crown, sitting on top of the head, in the ogre's coordinates: a thick
+    # band of dark iron with a row of rivets, and five squat iron points
+    for x in (15, 19.5, 24, 28.5, 33):
+        p.poly([(x - 2, 4), (x - 1, 0), (x + 1, 0), (x + 2, 4)], IRON["Id"])
+        p.poly([(x - 1.2, 4), (x - 0.5, 1), (x + 0.5, 1), (x + 1.2, 4)], IRON["I"])
+        p.px(x - 0.5, 1, IRON["Il"])
+    p.rect(13, 4, 22, 4, IRON["Id"]); p.rect(13, 4, 22, 1, IRON["Il"]); p.rect(13, 5, 22, 2, IRON["I"])
+    for x in (15, 19, 23, 27, 31): p.px(x, 5.5, IRON["R"])
+
+def chief_necklace(p):
+    p.poly([(14, 23), (34, 23), (32, 26), (24, 28), (16, 26)], "#5a3d22")
+    for x, y in ((16, 25), (19, 26), (22, 27), (25, 27), (28, 26), (31, 25)): p.rect(x, y, 1, 2, BONE)
+
+def chief(name, roar=False, lids=False, keep=None, pose=None):   # 56x56: the ogre's 48x48 at 1.1, 4 art px lower
+    p = Big(56, 56, 1.1, 1.6, 3.2)
+    G, Gd, Gl, Wd, Wl, Br = (CHIEF[k] for k in ("G", "Gd", "Gl", "Wd", "Wl", "Br"))
+    if lids:
+        p.rect(16, 11, 4, 2, G); p.rect(27, 11, 4, 2, G); p.rect(16, 13, 4, 1, Gd); p.rect(27, 13, 4, 1, Gd)
+        return p.save(name, outline=False)
+    if pose is None:
+        p.poly([(38, 24), (43, 24), (47, 5), (39, 2)], Wd)    # club, raised
+        p.poly([(40, 22), (42, 22), (45, 6), (41, 4)], Wl)
+        for x, y in ((39, 8), (46, 12), (40, 14), (45, 4)): p.rect(x, y, 2, 2, BONE)
+    p.rect(14, 38, 8, 8, Gd); p.rect(26, 38, 8, 8, Gd)        # legs
+    p.rect(12, 44, 11, 3, "#3b2614"); p.rect(25, 44, 11, 3, "#3b2614")
+    p.ell(24, 30, 15, 12, Gd); p.ell(23, 29, 14, 11, G); p.ell(24, 32, 9, 7, Gl)
+    p.poly([(11, 36), (37, 36), (34, 43), (24, 40), (14, 43)], Br); p.rect(10, 35, 28, 2, "#3b2614"); p.rect(22, 34, 4, 4, "#f2c14e")
+    if pose == "swing":
+        p.ell(7, 29, 5, 8, Gd); p.ell(7, 28, 4, 7, G); p.ell(7, 38, 4, 4, G)
+        p.ell(39, 27, 6, 5, Gd); p.ell(39, 26, 5, 4, G)
+        p.poly([(35, 25), (38, 23), (45, 33), (42, 35)], "#3b2614"); p.poly([(36, 25), (38, 24), (44, 33), (42, 34)], Wd)
+        p.poly([(40, 33), (45, 30), (47, 33), (47, 46), (42, 47), (39, 40)], "#3b2614")
+        p.poly([(41, 34), (45, 31), (46, 34), (46, 45), (42, 46), (40, 40)], Wd); p.poly([(42, 34), (45, 32), (46, 35), (45, 44), (43, 45), (41, 39)], Wl)
+        for x, y in ((43, 36), (45, 41), (42, 42)): p.rect(x, y, 2, 2, BONE)
+        p.ell(38, 27, 3, 3, Gd); p.ell(38, 26, 3, 2, G)
+    elif pose == "slam":
+        p.ell(9, 17, 4, 10, Gd); p.ell(9, 17, 3, 9, G); p.ell(39, 17, 4, 10, Gd); p.ell(39, 17, 3, 9, G)
+    else:
+        p.ell(7, 29, 5, 8, Gd); p.ell(7, 28, 4, 7, G); p.ell(7, 38, 4, 4, G)
+        p.ell(41, 29, 5, 7, Gd); p.ell(40, 28, 4, 6, G); p.ell(41, 23, 4, 4, G)
+    chief_necklace(p)
+    p.poly([(10, 8), (14, 12), (13, 18)], Gd); p.poly([(38, 8), (34, 12), (35, 18)], Gd)
+    p.ell(24, 14, 11, 10, Gd); p.ell(23, 13, 10, 9, G)
+    p.rect(15, 9, 17, 2, Gd)
+    p.px(15, 14, Gd); p.px(16, 15, Gd); p.px(32, 15, Gd)               # old scars
+    p.rect(16, 11, 4, 3, "#ffe27a"); p.rect(27, 11, 4, 3, "#ffe27a"); p.px(18, 12, K); p.px(28, 12, K)
+    p.rect(22, 13, 4, 4, Gd); p.px(22, 16, K); p.px(25, 16, K)
+    if roar or pose:
+        p.rect(15, 18, 17, 8 if roar else 6, "#3a1f1f"); p.rect(18, 23 if roar else 22, 11, 3 if roar else 2, "#c94040")
+        p.rect(16, 18, 2, 4, BONE); p.rect(29, 18, 2, 4, BONE); p.rect(20, 18, 2, 2, BONE); p.rect(25, 18, 2, 2, BONE)
+    else:
+        p.rect(16, 19, 15, 3, "#3a1f1f"); p.rect(17, 17, 2, 4, BONE); p.rect(28, 17, 2, 4, BONE)
+    chief_head(p)                                              # the crown on top of the head
+    if pose == "slam":
+        p.poly([(2, 1), (44, 0), (47, 3), (47, 7), (4, 6)], "#3b2614"); p.poly([(3, 2), (44, 1), (46, 4), (46, 6), (4, 5)], Wd)
+        p.poly([(4, 2), (44, 2), (46, 4), (45, 5), (5, 4)], Wl)
+        for x, y in ((40, 3), (44, 4), (36, 2)): p.rect(x, y, 2, 2, BONE)
+        p.ell(9, 6, 3, 3, Gd); p.ell(9, 5, 3, 2, G); p.ell(39, 6, 3, 3, Gd); p.ell(39, 5, 3, 2, G)
+    p.save(name, keep=keep)
+
+pieces("chief-ogre", chief, 31)
+chief("monsters/chief-ogre/roar/roar.png", roar=True)
+pair("monsters/chief-ogre/attack/swing", grab(chief, pose="swing"))
+save("monsters/chief-ogre/attack/slam.png", grab(chief, pose="slam"))
+CHIEF_DUST = {"w": "#9fd0b4", "W": "#f4ecd8"}
+ARC_ROWS = ["ww.....", ".www...", "..wWww.", "...wWWw", "...wWWw", "...wWWw", "..wWww.", ".www...", "ww....."]
+icon("monsters/chief-ogre/attack/arc/r.png", ARC_ROWS, CHIEF_DUST)
+icon("monsters/chief-ogre/attack/arc/l.png", [r[::-1] for r in ARC_ROWS], CHIEF_DUST)
+icon("monsters/chief-ogre/attack/thud.png", ["w...W...w", ".w..w..w.", "...wWw...", "WwwWWWwwW", "...wWw...", ".w..w..w.", "w...W...w"], CHIEF_DUST)
+icon("monsters/chief-ogre/attack/quake.png", QUAKE_ROWS, {"d": "#c9a66b", "D": "#f4ecd8", "g": "#6e4525", "k": "#2a1a10", "W": "#ff9d3c", "s": "#7d8590", "S": "#9aa3ad"})
+
+# ---- Wyvern (caves): 60x44, facing left: two legs, its wings its arms, a
+# long neck and a barbed tail; teal, with violet wings, apart from the
+# dragon's red and its four legs.
+WYV = {"S": "#2f8f86", "Sd": "#1f6660", "Sl": "#5cc0b0", "U": "#d8ecc8", "M": "#6b4aa8", "Md": "#4a3080", "B": "#c94040"}
+def wyvern(name, lids=False, keep=None, pose=None):          # 60x44, facing left
+    p = Pix(60, 44)
+    S, Sd, Sl, U, M, Md = (WYV[k] for k in "S Sd Sl U M Md".split())
+    hx, hy = {None: (0, 0), "sting": (2, 2), "beat": (0, 2)}[pose]
+    if lids:
+        p.rect(9 + hx, 8 + hy, 3, 1, S)
+        return p.save(name, outline=False)
+    # the tail: out behind, or for the sting arched over its back with the barb pointing ahead
+    if pose == "sting":                                     # the tail arched right over it, the barb ahead of its head
+        path = [(40, 28), (47, 24), (51, 16), (49, 8), (43, 3), (35, 1), (27, 2), (21, 4)]
+        for i, (x, y) in enumerate(path):
+            r = 3 - 2 * i / (len(path) - 1)
+            p.ell(x, y, r, r, Sd)
+            if i: p.ell((x + path[i - 1][0]) / 2, (y + path[i - 1][1]) / 2, r, r, Sd)
+        p.poly([(21, 2), (14, 4), (21, 6)], "#e8dcc0"); p.px(14, 4, "#8f2626"); p.px(15, 4, "#8f2626")
+    else:
+        p.poly([(38, 28), (50, 30), (56, 26), (58, 20), (59, 22), (58, 30), (52, 35), (38, 34)], Sd)
+        p.poly([(58, 20), (55, 15), (59, 17)], WYV["B"]); p.poly([(58, 20), (59, 13), (59, 20)], WYV["B"])
+    # the far wing (and arm), then the legs
+    wing = {None: [(28, 20), (40, 1), (54, 5), (49, 11), (52, 17), (45, 18), (47, 25), (36, 26)],
+            "sting": [(28, 20), (36, 13), (48, 16), (44, 20), (46, 26), (36, 26)],
+            "beat": [(28, 20), (6, 24), (10, 30), (16, 28), (18, 34), (24, 30), (30, 36), (38, 26)]}[pose]
+    far = [(x + 3, y - 2) for x, y in wing]
+    p.poly(far, Md)
+    p.rect(26, 33, 4, 6, Sd); p.rect(24, 39, 6, 3, Sd); p.rect(23, 41, 8, 1, BONE)       # far leg
+    p.ell(30, 28, 11, 7, Sd); p.ell(29, 27, 10, 6, S); p.ell(27, 31, 7, 3, U)            # body, belly
+    p.poly([(31, 30), (37, 30), (38, 36), (35, 37)], S)                                  # near thigh
+    p.rect(34, 36, 3, 4, Sd); p.rect(32, 40, 7, 2, Sd); p.px(32, 41, BONE); p.px(35, 41, BONE); p.px(38, 41, BONE)
+    # the near wing: its bones and a violet membrane
+    p.poly(wing, M)
+    bones = {None: [(28, 20), (40, 1)], "sting": [(28, 20), (36, 13)], "beat": [(28, 20), (6, 24)]}[pose]
+    (ax, ay), (bx, by) = bones
+    for t in range(0, 21):
+        x, y = ax + (bx - ax) * t / 20, ay + (by - ay) * t / 20
+        p.rect(round(x), round(y), 2, 1, Sd)
+    tips = {None: [(54, 5), (52, 17), (47, 25)], "sting": [(48, 16), (46, 26)], "beat": [(10, 30), (18, 34), (30, 36)]}[pose]
+    for tx, ty in tips:
+        for t in range(1, 10):
+            p.px(round(bx + (tx - bx) * t / 10), round(by + (ty - by) * t / 10), Md)
+    p.rect(bx - 1, by - 1, 2, 2, BONE)                                                   # its claw
+    # the neck and head, facing left
+    p.poly([(24, 24), (30, 22), (18, 10 + hy), (13, 11 + hy)], S)
+    p.poly([(23, 26), (26, 26), (16, 13 + hy), (14, 13 + hy)], U)
+    for i in range(4): p.px(22 - i * 2 + (hx if i > 2 else 0), 20 - i * 3 + (hy if i > 1 else 0), Sl)
+    X, Y = 10 + hx, 9 + hy
+    p.poly([(X + 4, Y - 2), (X + 12, Y - 5), (X + 8, Y), (X + 12, Y + 1), (X + 6, Y + 2)], Md)   # frill
+    p.ell(X + 2, Y, 5, 3.5, Sd); p.ell(X + 2, Y - 0.5, 4.5, 3, S)
+    if pose:
+        p.poly([(X - 2, Y - 1), (X - 9, Y - 1), (X - 8, Y), (X - 2, Y + 1)], S)           # jaws open
+        p.poly([(X - 2, Y + 2), (X - 8, Y + 4), (X - 7, Y + 5), (X - 1, Y + 3)], Sd)
+        p.rect(X - 7, Y + 1, 5, 2, "#3a1f1f"); p.px(X - 6, Y, WHITE); p.px(X - 4, Y + 3, WHITE)
+    else:
+        p.rect(X - 7, Y - 1, 7, 3, S); p.rect(X - 7, Y + 1, 7, 1, Sd); p.px(X - 6, Y - 1, K)
+    p.rect(X - 1, Y - 2, 3, 1, "#ffe27a"); p.px(X, Y - 2, K)
+    p.save(name, keep=keep)
+
+pieces("wyvern", wyvern, 26)
+lpair("monsters/wyvern/attack/sting", grab(wyvern, pose="sting"))
+save("monsters/wyvern/attack/beat.png", grab(wyvern, pose="beat"))
+BARB_ROWS = ["..rr...", "rrrRSSs", "..rr..."]
+icon("monsters/wyvern/attack/barb/r.png", [r[::-1] for r in BARB_ROWS], {"r": "#c94040", "R": "#8f2626", "S": "#2f8f86", "s": "#1f6660"})
+icon("monsters/wyvern/attack/barb/l.png", BARB_ROWS, {"r": "#c94040", "R": "#8f2626", "S": "#2f8f86", "s": "#1f6660"})
+icon("monsters/wyvern/attack/jab.png", [                       # the barb's puncture, and its venom
+    "g...W...g",
+    "..g.W.g..",
+    "...WrW...",
+    "WWWrrrWWW",
+    "...WrW...",
+    "..g.W.g..",
+    "g...W...g",
+], {"r": "#e2483f", "W": "#ffffff", "g": "#a8eb6a"})
+def gale(name):                                                     # the wingbeat's wind across the marked spot
+    p = Pix(35, 10)
+    for cx, r, c in ((7, 4, "#bfe6e2"), (17, 5, "#e6f4f2"), (28, 4, "#bfe6e2")):
+        for a in range(0, 300, 12):
+            t = math.radians(a)
+            p.px(round(cx + r * 1.3 * math.cos(t) * (1 - a / 600)), round(5 + r * 0.8 * math.sin(t) * (1 - a / 600)), c)
+    for x in range(0, 35, 4): p.px(x, 9, "#7d8590"); p.px(x + 1, 8, "#9aa3ad")
+    p.save(name)
+gale("monsters/wyvern/attack/gale.png")
+
+# ---- Draconian (caves): 34x46, an upright dragon-kin warrior facing left:
+# bronze scales, a snout and small horns, a spear and a round shield, a tail
+# and small back wings.
+DRA = {"S": "#c08a2e", "Sd": "#8a5a1e", "Sl": "#e6b85a", "U": "#f0dca0", "W": "#7a1f2b", "Sh": "#3f6fa8", "Shd": "#2a4a78"}
+def draconian(name, lids=False, keep=None, pose=None):        # 34x46, facing left
+    p = Pix(34, 46)
+    S, Sd, Sl, U = (DRA[k] for k in "S Sd Sl U".split())
+    hx, hy = {None: (0, 0), "thrust": (-1, 1), "flame": (1, -1)}[pose]
+    X, Y = 12 + hx, 8 + hy
+    if lids:
+        p.rect(X + 1, Y - 2, 2, 1, S)
+        return p.save(name, outline=False)
+    p.poly([(20, 10), (28, 3), (31, 12), (26, 11), (27, 18), (21, 16)], DRA["W"])     # back wings
+    p.poly([(19, 34), (26, 38), (31, 42), (33, 45), (28, 44), (22, 40), (17, 37)], Sd)  # tail
+    p.poly([(31, 42), (33, 40), (33, 45)], Sl)
+    if pose != "thrust":                                    # the spear upright, behind the arm
+        p.rect(27, 4, 1, 41, "#5a3d22"); p.poly([(27, 4), (25.5, 1), (27.5, -1), (29.5, 1), (28, 4)], STEEL); p.px(27, 1, STEEL_L)
+    p.poly([(13, 30), (17, 30), (16, 38), (17, 44), (11, 44), (12, 38)], Sd)          # legs, clawed feet
+    p.poly([(18, 30), (22, 30), (22, 38), (23, 44), (18, 44), (18, 38)], S)
+    p.rect(10, 44, 7, 1, BONE); p.rect(17, 44, 7, 1, BONE)
+    p.ell(17, 23, 6.5, 8.5, Sd); p.ell(16.5, 22.5, 5.8, 7.8, S)                         # torso
+    for y in range(17, 31, 3): p.rect(14, y, 5, 2, U)                                  # belly plates
+    if pose == "thrust":                                    # the spear driven out to the left, both hands on it
+        p.ell(22, 24, 2, 3, S); p.ell(10, 24, 2, 2, S)
+        p.rect(0, 23, 30, 1, "#5a3d22"); p.poly([(0, 21), (-3, 23.5), (0, 26), (2, 23.5)], STEEL); p.px(-1, 23, STEEL_L)
+        p.ell(21, 23, 2, 2, Sl); p.ell(9, 23, 2, 1.5, Sl)
+        p.ell(20, 30, 5, 5.5, DRA["Shd"]); p.ell(20, 30, 4, 4.5, DRA["Sh"]); p.px(20, 30, BONE)   # shield swung back
+    else:
+        p.ell(26, 22, 2, 4, Sd); p.ell(26, 21, 1.6, 3.5, S); p.ell(27, 25, 1.8, 1.8, Sl)   # spear arm
+        p.ell(9, 22, 6, 7, DRA["Shd"]); p.ell(9, 22, 5, 6, DRA["Sh"])                    # round shield
+        p.ell(9, 22, 1.5, 1.5, STEEL_L); p.rect(4, 22, 10, 1, DRA["Shd"]); p.rect(9, 17, 1, 10, DRA["Shd"])
+    p.poly([(14, 12), (19, 12), (20, 17), (13, 17)], S)                                # neck
+    p.ell(X + 2, Y, 5, 4, Sd); p.ell(X + 2, Y - 0.5, 4.4, 3.4, S)                      # head
+    p.poly([(X + 4, Y - 3), (X + 9, Y - 7), (X + 6, Y - 2)], BONE); p.poly([(X + 2, Y - 3), (X + 5, Y - 8), (X + 4, Y - 3)], BONE)  # horns
+    if pose == "flame":                                     # head thrown up, jaws wide with fire
+        p.poly([(X - 1, Y - 2), (X - 7, Y - 5), (X - 6, Y - 3), (X - 1, Y)], S)
+        p.poly([(X - 1, Y + 1), (X - 7, Y + 2), (X - 6, Y + 3), (X, Y + 3)], Sd)
+        p.poly([(X - 6, Y - 3), (X - 1, Y), (X - 6, Y + 2)], "#ff9d3c"); p.px(X - 5, Y - 1, "#ffe27a"); p.px(X - 4, Y, "#fff3b0")
+    else:
+        p.rect(X - 5, Y - 1, 6, 3, S); p.rect(X - 5, Y + 1, 6, 1, Sd); p.px(X - 4, Y - 1, K)  # snout
+        if pose: p.rect(X - 4, Y + 1, 4, 1, "#3a1f1f")
+    p.rect(X + 1, Y - 2, 2, 2, "#ff5d3c"); p.px(X + 1, Y - 1, K)
+    p.save(name, keep=keep)
+
+pieces("draconian", draconian, 26)
+lpair("monsters/draconian/attack/thrust", grab(draconian, pose="thrust"))
+save("monsters/draconian/attack/flame.png", grab(draconian, pose="flame"))
+icon("monsters/draconian/attack/pierce.png", [                 # the spear point's strike
+    "....W....",
+    "...WrW...",
+    "W..rrr..W",
+    ".WrrWrrW.",
+    "W..rrr..W",
+    "...WrW...",
+    "....W....",
+], {"r": "#e2483f", "W": "#ffffff"})
+EMBER_ROWS = ["..ooy.", "rooyWy", ".rooy."]
+icon("monsters/draconian/attack/ember/r.png", EMBER_ROWS, EMBER)
+icon("monsters/draconian/attack/ember/l.png", [r[::-1] for r in EMBER_ROWS], EMBER)
+def scorch(name):                                                   # the embers burning a ring of ground
+    p = Pix(33, 8)
+    p.ell(16, 5, 16, 3, "#2a2220"); p.ell(16, 5, 13, 2, "#4a2a1c")
+    for i, x in enumerate(range(2, 32, 3)):
+        h = 2 + (i * 7) % 4
+        p.rect(x, 4 - h, 2, h + 1, "#e2552f"); p.rect(x, 5 - h, 1, h, "#ff9d3c"); p.px(x, 4, "#ffe27a")
+    p.save(name)
+scorch("monsters/draconian/attack/scorch.png")
+
+# ---- Imp (hell): 22x24, a small hovering devil: vivid red, dark bat wings,
+# horns, a pointed tail and a little trident.
+IMP = {"S": "#e8403a", "Sd": "#a8262a", "Sl": "#ff8a6a", "M": "#3a1f3f", "Md": "#24122a", "H": "#f2d27a"}
+def imp(name, lids=False, keep=None, pose=None):              # 22x24
+    p = Pix(22, 24)
+    S, Sd, Sl, M, Md = (IMP[k] for k in "S Sd Sl M Md".split())
+    hx, hy = 10, 7
+    if lids:
+        p.rect(hx - 3, hy - 1, 2, 1, S); p.rect(hx + 2, hy - 1, 2, 1, S)
+        return p.save(name, outline=False)
+    for pts, c in (([(8, 12), (1, 4), (0, 12), (2, 11), (2, 15), (4, 13), (6, 16)], Md), ([(8, 13), (2, 6), (2, 10), (4, 11), (5, 14)], M)):
+        p.poly(pts, c); p.poly(mirror_x(pts, 20), c)                     # bat wings
+    p.poly([(12, 19), (16, 21), (19, 20), (20, 18), (21, 21), (17, 23), (12, 21)], Sd)  # tail
+    p.poly([(20, 16), (21, 19), (19, 19)], Sd)
+    p.rect(8, 18, 2, 3, Sd); p.rect(11, 18, 2, 3, Sd); p.rect(7, 21, 2, 1, Md); p.rect(12, 21, 2, 1, Md)  # legs tucked
+    p.ell(10, 15.5, 4, 4, Sd); p.ell(9.6, 15, 3.4, 3.4, S); p.px(9, 14, Sl)          # body
+    if pose == "hurl":                                      # a fireball raised to throw, to the right
+        p.rect(4, 13, 2, 4, S); p.rect(14, 8, 2, 6, S)
+        p.ell(16, 5, 2.5, 2.5, "#ff9d3c"); p.ell(16, 5, 1.5, 1.5, "#ffe27a"); p.px(16, 5, "#fff3b0")
+    elif pose == "summon":                                  # both arms up, the trident aloft
+        p.rect(3, 7, 2, 7, S); p.rect(15, 7, 2, 7, S)
+        p.rect(16, 0, 1, 8, "#8f5e34"); p.rect(14, 0, 5, 1, IMP["H"]); p.px(14, -1, IMP["H"]); p.px(18, -1, IMP["H"]); p.px(16, -1, IMP["H"])
+        for x, y in ((2, 4), (19, 9), (1, 9)): p.px(x, y, "#ffe27a")
+    else:
+        p.rect(4, 13, 2, 4, S); p.rect(15, 13, 2, 4, S)
+        p.rect(17, 6, 1, 15, "#8f5e34"); p.rect(16, 5, 3, 1, IMP["H"]); p.px(16, 4, IMP["H"]); p.px(18, 4, IMP["H"]); p.px(17, 3, IMP["H"])
+        p.rect(16, 15, 2, 2, S)
+    p.poly([(hx - 4, hy - 2), (hx - 6, hy - 7), (hx - 2, hy - 4)], IMP["H"]); p.poly([(hx + 4, hy - 2), (hx + 6, hy - 7), (hx + 2, hy - 4)], IMP["H"])
+    p.poly([(hx - 4, hy), (hx - 7, hy - 2), (hx - 4, hy + 2)], Sd); p.poly([(hx + 4, hy), (hx + 7, hy - 2), (hx + 4, hy + 2)], Sd)
+    p.ell(hx, hy, 4.5, 4, Sd); p.ell(hx - 0.4, hy - 0.4, 3.9, 3.4, S); p.px(hx - 2, hy - 3, Sl)
+    p.rect(hx - 3, hy - 1, 2, 2, "#ffe27a"); p.rect(hx + 2, hy - 1, 2, 2, "#ffe27a"); p.px(hx - 2, hy, K); p.px(hx + 2, hy, K)
+    p.rect(hx - 2, hy + 2, 5, 1, "#3a1f1f"); p.px(hx - 2, hy + 2, WHITE); p.px(hx + 2, hy + 2, WHITE)  # grin
+    p.save(name, keep=keep)
+
+pieces("imp", imp, 18)
+pair("monsters/imp/attack/hurl", grab(imp, pose="hurl"))
+save("monsters/imp/attack/summon.png", grab(imp, pose="summon"))
+FIREBOLT_ROWS = [".r.oo..", "r.ooyyo", ".rrooWy", "r.ooyyo", ".r.oo.."]
+icon("monsters/imp/attack/firebolt/r.png", FIREBOLT_ROWS, EMBER)
+icon("monsters/imp/attack/firebolt/l.png", [r[::-1] for r in FIREBOLT_ROWS], EMBER)
+icon("monsters/imp/attack/singe.png", [                        # a puff of flame on whoever it reaches
+    "...r.r...",
+    "..roro.r.",
+    ".roooor..",
+    "royyyoor.",
+    "royWWyor.",
+    ".ryyyyr..",
+    "..rrrr...",
+], EMBER)
+def pyre(name):                                                     # pillars of flame over the marked spot
+    p = Pix(33, 12)
+    for i, x in enumerate((3, 9, 16, 23, 29)):
+        h = (7, 10, 12, 9, 7)[i]
+        p.poly([(x - 3, 11), (x, 11 - h), (x + 3, 11)], "#e2552f")
+        p.poly([(x - 2, 11), (x, 13 - h), (x + 2, 11)], "#ff9d3c")
+        p.poly([(x - 1, 11), (x, 15 - h), (x + 1, 11)], "#ffe27a")
+    p.rect(0, 10, 33, 2, "#c2401f")
+    p.save(name)
+pyre("monsters/imp/attack/pyre.png")
+
+# ---- Magma slime (hell): the slime's own pictures (slime(), slime_pose(),
+# its glob, splat and puddle) in lava: a dark crust with glowing cracks, a
+# molten core and burning eyes.
+LAVA = {"#4fb3e0": "#5a2a22", "#3586b8": "#3a1a18", "#9bdcf5": "#ff9d3c", "#c9efff": "#ffe27a", WHITE: "#fff3b0"}
+def magma(g, core=True, eyes=16):
+    g = recolour(g, LAVA)
+    h = len(g)
+    for y, row in enumerate(g):                                     # its eyes burn
+        for x, c in enumerate(row):
+            if c == K and y - 1 <= eyes: row[x] = "#ffb347"
+    if core:
+        for (x, y, c) in ((13, 20, "#ff9d3c"), (14, 20, "#ffe27a"), (15, 20, "#fff3b0"), (16, 20, "#fff3b0"), (17, 20, "#ffe27a"), (18, 20, "#ff9d3c"), (14, 21, "#ff9d3c"), (15, 21, "#ffe27a"), (16, 21, "#ffe27a"), (17, 21, "#ff9d3c"),
+                          (5, 10, "#e2552f"), (6, 11, "#e2552f"), (6, 12, "#ff9d3c"), (25, 9, "#e2552f"), (26, 10, "#ff9d3c"), (27, 11, "#e2552f"),
+                          (11, 19, "#e2552f"), (12, 20, "#ff9d3c"), (22, 19, "#e2552f"), (21, 20, "#ff9d3c"), (8, 21, "#e2552f"), (24, 21, "#e2552f")):
+            if g[y + 1][x + 1] in ("#5a2a22", "#3a1a18"): g[y + 1][x + 1] = c
+    return g
+
+g = magma(grab(slime))
+save("monsters/magma-slime/idle.png", g)
+save("monsters/magma-slime/blink.png", recolour(grab(slime, lids=True), {"#4fb3e0": "#5a2a22"}))
+save("monsters/magma-slime/base.png", kept(g, lambda x, y: y >= 19))
+save("monsters/magma-slime/top.png", kept(g, lambda x, y: y < 19))
+pair("monsters/magma-slime/attack/spit", magma(grab(slime_pose, "spit"), core=False, eyes=13))
+save("monsters/magma-slime/attack/squash.png", magma(grab(slime_pose, "squash"), core=False, eyes=0))
+LAVA_GOO = {"B": "#e2552f", "D": "#8f2626", "L": "#ff9d3c", "G": "#ffe27a"}
+icon("monsters/magma-slime/attack/glob.png", [".BBB.", "BBLGB", "BBBLB", "DBBBB", ".DDD."], LAVA_GOO)
+icon("monsters/magma-slime/attack/splat.png", [
+    "B.........B",
+    "..B.BBB.B..",
+    ".BBBBLBBBB.",
+    "..BBLGLBB..",
+    ".B.BBBBB.B.",
+    "...B...B...",
+], LAVA_GOO)
+icon("monsters/magma-slime/attack/puddle.png", [
+    "...B.....B......B......B.....B...",
+    ".B....B.....BB.....BB.....B....B.",
+    "........BBBBBBBBBBBBBBBBB........",
+    "..B..BBBBBLLBBBBBBBBBLLBBBBB..B..",
+    "...BBBBBLLGGLBBBBBBBLGGLLBBBBB...",
+    ".BBBBBBBBLLBBBBBBBBBBBLLBBBBBBBB.",
+    "BBBDBBBBBBBBBBBBBBBBBBBBBBBBBDBBB",
+    ".BBDDBBBBBBBBBBBBBBBBBBBBBBBDDBB.",
+    "...DDDDBBBBBBBBBBBBBBBBBBBDDDD...",
+    ".......DDDDDDDDDDDDDDDDDDD.......",
+], LAVA_GOO)
+
+# ---- Goblin mage (hell): the goblin's head under a deep blue hood, in a
+# long robe with gold trim, leaning on a crooked staff with a glowing orb.
+MAGE = {"R": "#3a3f9e", "Rd": "#262a6e", "Rl": "#5a62c8", "T": "#f2c14e", "O": "#7cf0c0", "Ol": "#e6fff4", "St": "#6e4525"}
+def goblin_mage(name, lids=False, keep=None, pose=None):    # 24x26
+    p = Pix(24, 26)
+    R, Rd, Rl, T = (MAGE[k] for k in "R Rd Rl T".split())
+    hx, hy = 10, 9
+    if lids:
+        goblin_head(p, hx, hy, lids=True)
+        return p.save(name, outline=False)
+    orb = {None: (20, 3), "cast": (20, 1), "chant": (11, 0)}[pose]
+    if pose == "chant":                                      # the staff held up over its head
+        p.rect(11, 1, 1, 12, MAGE["St"])
+    else:
+        p.poly([(19, 5), (20, 5), (19, 25), (18, 25)], MAGE["St"]); p.px(21, 4, MAGE["St"]); p.px(18, 4, MAGE["St"])
+    p.ell(orb[0], orb[1], 2, 2, MAGE["O"]); p.px(orb[0] - 1, orb[1] - 1, MAGE["Ol"])
+    p.poly([(5, 14), (15, 14), (18, 25), (2, 25)], Rd); p.poly([(6, 14), (14, 14), (16, 24), (4, 24)], R)   # robe
+    p.rect(2, 24, 17, 1, T); p.rect(9, 15, 2, 9, T)
+    for x, y in ((6, 20), (13, 21), (8, 17)): p.px(x, y, Rl)
+    S = GOB["S"]
+    if pose == "cast":                                       # a hand thrust out, sparks off it
+        p.rect(15, 13, 4, 2, R); p.rect(19, 12, 2, 2, S)
+        for x, y in ((22, 11), (23, 13), (22, 15)): p.px(x, y, MAGE["O"])
+        p.rect(3, 14, 2, 4, R); p.rect(3, 18, 2, 1, S)
+    elif pose == "chant":
+        p.rect(4, 8, 2, 6, R); p.rect(15, 8, 2, 6, R); p.rect(4, 7, 2, 1, S); p.rect(14, 3, 2, 2, S); p.rect(10, 4, 3, 2, S)
+        for x, y in ((6, 1), (16, 0), (3, 4), (19, 5)): p.px(x, y, MAGE["O"])
+    else:
+        p.rect(15, 14, 3, 2, R); p.rect(18, 14, 2, 2, S)
+        p.rect(3, 14, 2, 4, R); p.rect(3, 18, 2, 1, S)
+    goblin_head(p, hx, hy, face="shout" if pose else "grin", hood=(Rd, R))
+    p.save(name, keep=keep)
+
+pieces("goblin-mage", goblin_mage, 15)
+pair("monsters/goblin-mage/attack/cast", grab(goblin_mage, pose="cast"))
+save("monsters/goblin-mage/attack/chant.png", grab(goblin_mage, pose="chant"))
+BOLT = {"g": "#2fae8a", "O": "#7cf0c0", "W": "#e6fff4"}
+BOLT_ROWS = ["g.g.OO.", ".gOOWWO", "g.g.OO."]
+icon("monsters/goblin-mage/attack/bolt/r.png", BOLT_ROWS, BOLT)
+icon("monsters/goblin-mage/attack/bolt/l.png", [r[::-1] for r in BOLT_ROWS], BOLT)
+icon("monsters/goblin-mage/attack/zap.png", [                  # the bolt's crackle on whoever it reaches
+    "O...W...O",
+    ".O.WOW.O.",
+    "..OWWWO..",
+    "WWWWWWWWW",
+    "..OWWWO..",
+    ".O.WOW.O.",
+    "O...W...O",
+], BOLT)
+def rune(name):                                                     # a glowing circle of runes on the marked spot
+    p = Pix(35, 11)
+    p.ell(17, 5, 17, 5, "#2fae8a"); p.ell(17, 5, 15.5, 4, None if False else "#262a6e")
+    p.ell(17, 5, 14, 3.3, "#7cf0c0"); p.ell(17, 5, 12.5, 2.4, "#3a3f9e")
+    for x in range(6, 30, 4): p.rect(x, 5, 2, 1, "#e6fff4"); p.px(x + 1, 4, "#7cf0c0")
+    p.save(name)
+rune("monsters/goblin-mage/attack/rune.png")
+
+# ---- Demon (hell boss): 68x60, a big horned demon facing out: dark crimson,
+# black bat wings spread behind it, glowing eyes and mouth, goat legs with
+# hooves and a spaded tail.
+DEM = {"S": "#a8242c", "Sd": "#6e141c", "Sl": "#d8443e", "M": "#2a1418", "Ml": "#4e1e2c", "H": "#e8dcc0", "Hd": "#b8a888", "E": "#ffd166"}
+def demon(name, lids=False, keep=None, pose=None):            # 68x60
+    p = Pix(68, 60)
+    S, Sd, Sl, M, Ml = (DEM[k] for k in "S Sd Sl M Ml".split())
+    hx, hy = 34, 15
+    if lids:
+        p.rect(hx - 6, hy - 1, 4, 2, S); p.rect(hx + 3, hy - 1, 4, 2, S)
+        return p.save(name, outline=False)
+    lift = 4 if pose == "inferno" else 0
+    wing = [(28, 24), (12, 4 - lift), (0, 10 - lift), (4, 18), (0, 26), (8, 25), (6, 34), (14, 30), (16, 38), (24, 32)]
+    for pts, c in ((wing, M), ([(28, 24), (12, 4 - lift), (8, 14), (12, 22), (12, 30), (18, 30), (24, 32)], Ml)):
+        p.poly(pts, c); p.poly(mirror_x(pts, 2 * hx), c)
+    for side in (-1, 1):                                     # wing bones
+        for tx, ty in ((0, 10 - lift), (0, 26), (6, 34), (16, 38)):
+            for t in range(1, 12):
+                x = 12 + (tx - 12) * t / 12; y = (4 - lift) + (ty - 4 + lift) * t / 12
+                p.px(round(hx + side * (x - hx)), round(y), M)
+    p.poly([(40, 46), (52, 52), (60, 50), (63, 46), (64, 48), (60, 54), (50, 56), (38, 50)], Sd)  # tail
+    p.poly([(63, 46), (60, 41), (66, 42), (67, 47), (64, 50)], M)
+    for side in (-1, 1):                                     # goat legs and hooves
+        x = hx + side * 6
+        p.poly([(x - 4, 40), (x + 4, 40), (x + 4 * side if side > 0 else x + 3, 47), (x + 2, 53), (x - 2, 53), (x - 3, 47)], Sd)
+        p.rect(x - 3, 53, 7, 3, Sd); p.rect(x - 4, 56, 9, 3, "#1b1216"); p.px(x, 57, "#3a2a2e")
+    p.poly([(hx - 12, 38), (hx + 12, 38), (hx + 9, 46), (hx, 44), (hx - 9, 46)], "#2a1418")  # loincloth
+    p.rect(hx - 12, 37, 25, 2, "#5a3d22"); p.ell(hx, 38, 2, 1.5, "#f2c14e")
+    p.ell(hx, 29, 13, 10, Sd); p.ell(hx - 0.5, 28.5, 12, 9, S)                           # torso
+    p.ell(hx - 5, 26, 4, 3, Sl); p.ell(hx + 5, 26, 4, 3, Sl); p.rect(hx, 30, 1, 6, Sd)
+    for y in (31, 34): p.rect(hx - 4, y, 3, 1, Sd); p.rect(hx + 2, y, 3, 1, Sd)
+    # the arms: hanging, one raised to smite, or both raised with fire between them
+    claws = lambda x, y, d: [p.poly([(x + i * 2 * d, y), (x + i * 2 * d + d, y + 3), (x + i * 2 * d + 1, y)], DEM["H"]) for i in range(3)]
+    if pose == "smite":
+        p.ell(hx - 15, 31, 4, 8, Sd); p.ell(hx - 15, 30, 3.4, 7.4, S); p.ell(hx - 15, 39, 3, 3, S); claws(hx - 18, 41, 1)
+        p.poly([(hx + 11, 22), (hx + 15, 20), (hx + 24, 10), (hx + 21, 7)], Sd); p.ell(hx + 23, 7, 4, 4, S)
+        for i in range(3): p.poly([(hx + 21 + i * 2, 4), (hx + 23 + i * 2, -1), (hx + 24 + i * 2, 4)], DEM["H"])
+    elif pose == "inferno":
+        for side in (-1, 1):
+            p.poly([(hx + side * 11, 22), (hx + side * 15, 20), (hx + side * 13, 6), (hx + side * 9, 8)], Sd); p.ell(hx + side * 11, 5, 3.5, 3.5, S)
+        p.ell(hx, 3, 6, 3, "#e2552f"); p.ell(hx, 3, 4, 2, "#ff9d3c"); p.ell(hx, 3, 2, 1, "#ffe27a")
+    else:
+        for side in (-1, 1):
+            p.ell(hx + side * 15, 31, 4, 8, Sd); p.ell(hx + side * 15, 30, 3.4, 7.4, S); p.ell(hx + side * 15, 39, 3, 3, S)
+            claws(hx + side * 15 - 2 * side - (2 if side > 0 else 0) + (0 if side < 0 else 0), 41, 1)
+    # the head: curling horns, pointed ears, glowing eyes, fangs
+    for side in (-1, 1):
+        horn = [(hx + side * 4, hy - 5), (hx + side * 10, hy - 9), (hx + side * 14, hy - 15), (hx + side * 12, hy - 8), (hx + side * 7, hy - 3)]
+        p.poly(horn, DEM["Hd"]); p.poly([(hx + side * 5, hy - 5), (hx + side * 10, hy - 8), (hx + side * 13, hy - 14), (hx + side * 11, hy - 8)], DEM["H"])
+        p.poly([(hx + side * 7, hy - 1), (hx + side * 12, hy - 3), (hx + side * 7, hy + 3)], Sd)
+    p.ell(hx, hy, 8, 7, Sd); p.ell(hx - 0.4, hy - 0.4, 7.2, 6.3, S)
+    p.poly([(hx - 7, hy - 3), (hx, hy - 1), (hx + 7, hy - 3), (hx + 7, hy - 2), (hx, hy), (hx - 7, hy - 2)], Sd)  # brow
+    p.rect(hx - 6, hy - 1, 4, 2, DEM["E"]); p.rect(hx + 3, hy - 1, 4, 2, DEM["E"]); p.px(hx - 4, hy, "#fff3b0"); p.px(hx + 5, hy, "#fff3b0")
+    p.rect(hx - 1, hy + 1, 3, 2, Sd)
+    if pose:
+        p.rect(hx - 4, hy + 3, 9, 3, "#3a1f1f"); p.rect(hx - 2, hy + 4, 5, 2, "#ff9d3c")
+        p.rect(hx - 4, hy + 3, 1, 2, WHITE); p.rect(hx + 4, hy + 3, 1, 2, WHITE)
+    else:
+        p.rect(hx - 4, hy + 4, 9, 1, "#3a1f1f"); p.rect(hx - 3, hy + 3, 1, 2, WHITE); p.rect(hx + 3, hy + 3, 1, 2, WHITE)
+    p.save(name, keep=keep)
+
+pieces("demon", demon, 40)
+pair("monsters/demon/attack/smite", grab(demon, pose="smite"))
+save("monsters/demon/attack/inferno.png", grab(demon, pose="inferno"))
+icon("monsters/demon/attack/rend.png", [                       # four great claw marks
+    "r....r....r....",
+    "Wr...Wr...Wr...",
+    ".Wr...Wr...Wr..",
+    "..Wr...Wr...Wr.",
+    "..WW...WW...WW.",
+    "...Wr...Wr...Wr",
+    "....Wr...Wr...W",
+    ".....r....r....",
+], {"r": "#c9184a", "W": "#ffffff"})
+HELL = {"r": "#8f1a4a", "o": "#e2366a", "y": "#ff9d3c", "W": "#ffe27a", "c": "#2a1418", "e": "#6e141c"}
+HELLBALL_ROWS = ["..r.oo...", ".r.ooyyo.", "roooyWWyo", ".rrooyWyo", "..r.oyyo.", "......o.."]
+icon("monsters/demon/attack/hellball/r.png", HELLBALL_ROWS, HELL)
+icon("monsters/demon/attack/hellball/l.png", [r[::-1] for r in HELLBALL_ROWS], HELL)
+for i, tips in ((1, [
+    "....r.........r..........r........",
+    "...ro....r...roo....r...ro....r...",
+    "..yo...ro...oyo...ro...yo...roo...",
+    ".oyyr.royo.royyo.oyyr.ryyo.oyyr.r.",
+]), (2, [
+    ".........r.........r.......r......",
+    "..r....roo...r....ro....r..ro.....",
+    ".ro...royo..ro...ryo...ro..oy..r..",
+    ".oyr.royyo.royr.royyo.royr.yyo.ro.",
+])):
+    icon(f"monsters/demon/attack/hellfire-{i}.png", tips + [
+        "royyWyyoroyyyWyyoroyyWWyyorooyWyyo",
+        "eoyWWWyyoyyWWWyyyoyWWWWyyoyyWWWyoe",
+        "ceooyyyooyyyyyyyoooyyyyoooyyyyooec",
+        ".cceeoooeeoooooeeeeoooeeeeoooeecc.",
+        "...cccceeeeeeeeeeeeeeeeeeeecccc...",
+    ], HELL)
+
+# ---- effects/icons/chain: the storm element's icon (its status, Chain), a
+# lightning bolt in the chain arc's colours, like the other effect icons.
+icon("effects/icons/chain.png", [
+    "....yy.",
+    "...yW..",
+    "..yW...",
+    ".yWWWy.",
+    "...Wy..",
+    "..Wy...",
+    ".y.....",
+], {"y": "#ffe27a", "W": "#ffffff"})

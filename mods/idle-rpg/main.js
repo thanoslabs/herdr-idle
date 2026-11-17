@@ -13,8 +13,8 @@
 // pointer; let go to drop it where it is (it falls to the floor). Spots and
 // classes are remembered.
 // Battle mode (the Start Raid / Return to town button by the sign): the boss
-// of a stage stands in the middle (stages cycle slime, ogre, dragon, their HP
-// growing with the stage) and the party forms up around it, warriors up close
+// of a stage stands in the middle (a monster of its biome, kindOf in rules.js,
+// its HP growing with the stage) and the party forms up around it, warriors up close
 // and everyone else at range. Every working agent attacks in its own way (a
 // swing, an arrow or bolt, a spell, a thrown potion, each looking like the
 // weapon its class holds) on its own rhythm, every 3 seconds or less. Each
@@ -25,7 +25,9 @@
 // Arrows in the stage section (top centre) pick any stage reached, and so does
 // the map left of the gear (the stage picker). A raid takes place in its
 // stage's biome (forest, hills, caves, hell, ten stages each, repeating:
-// BIOMES in rules.js), each with its own backdrop; the town is the rampart.
+// BIOMES in rules.js), each with its own backdrop and monsters; the town is
+// the rampart. A press on the monster or its plate opens its card (monsterCard:
+// what it is weak to and resists, how many of its kind have fallen).
 // Turning battle mode off sends everyone back to their spots.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
@@ -70,6 +72,7 @@ import {
   BIOME_STAGES,
   CLASSES,
   DEFAULT_LOOK,
+  ELEMENTS,
   LABELS,
   CLASS_SKILLS,
   MAX_RANK,
@@ -101,6 +104,7 @@ import {
   equip,
   equipped,
   failStage,
+  kindInfo,
   glyphArt,
   glyphWidth,
   hatArt,
@@ -137,7 +141,7 @@ import {
   weaponArt,
 } from "./rules.js";
 import { KO_TICKS, down, firstHeal, healGap, healParty, healTarget, healTicks, monsterTick, newParty, resetParty, restLeft, restSeconds, rise, standing, syncParty } from "./party.js";
-import { AURAS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
+import { AURAS, ELEMENT_STATUS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
 
 const ART = "mods/idle-rpg/art";
 // The path image() takes for a picture in art/, given its path in there with
@@ -241,20 +245,45 @@ const SHOP_ROW = { nav: 22, about: 26, tab: 80 }; // tab: the class picked, its 
 // 129 + 18n: 147 with Attack alone, 165 with a second kind, so under the sign
 // (top 54) it ends at 219 in the lowest scene (230px) with two.
 const PANEL = { line: "13px", pad: 6, gap: 3, title: 16, tab: 24, row: 15 };
+// The codex (see codexCard): a 1px border and `pad` round its title and,
+// `gap` under it, its list: a `head` line per biome and a `row` per kind,
+// `gap` apart, cut to `list` high (scrolling), so the codex is at most
+// PANEL_MAX_H. Its text on PANEL's 13px line.
+const CODEX = { pad: 8, gap: 3, title: 18, head: 13, row: 24 };
+CODEX.list = PANEL_MAX_H - 2 * (1 + CODEX.pad) - CODEX.title - CODEX.gap;
 const SHOP_ICONS = { armour: "icons/armour.png", weapon: "status/sword-l.png", hat: "icons/hat.png", decor: "icons/decor.png" };
 const DECOR_ICON = { w: 54, h: 36 }; // a set of town decor's preview in the shop (seasonArt's "icon", 18x12 art px at 3px each)
 // Battle mode. Sizes are on-screen px (art px x 4, plus the outline). A new
-// kind also needs to be in KINDS in rules.js, the order the stages cycle
-// through, and its pictures in MONSTER_ART there.
+// kind also needs to be in a biome's kinds in rules.js (BIOMES: its name,
+// stages and weaknesses), and its pictures in MONSTER_ART there.
+// How each moves (see foe): `still`, the picture under the moving piece;
+// `breathe`, the `top` piece's native loop (the slimes' dome sinks into their
+// foot, the rest breathe up); `roar`, roars now and then (the ogres); `howl`,
+// the dragon's roar and swaying tail.
+const BREATHE = { from: 0, to: -3, period: 2600 };
 const MONSTERS = {
-  slime: { name: "Slime", w: 136, h: 104, core: { x: 0, y: 44, r: 18, half: 60 } },
-  ogre: { name: "Ogre", w: 200, h: 200, core: { x: 0, y: 86, r: 24, half: 62 } },
-  dragon: { name: "Dragon", w: 328, h: 264, core: { x: 12, y: 74, r: 26, half: 84 } },
+  goblin: { w: 88, h: 96, core: { x: 0, y: 34, r: 14, half: 30 }, hit: { x: 14, y: 8, w: 60, h: 88 }, still: "idle", breathe: { from: 0, to: -2, period: 1800 } },
+  lizard: { w: 128, h: 72, core: { x: 0, y: 26, r: 12, half: 44 }, hit: { x: 20, y: 16, w: 88, h: 56 }, still: "idle", breathe: { from: 0, to: -2, period: 2200 } },
+  slime: { w: 136, h: 104, core: { x: 0, y: 44, r: 18, half: 60 }, hit: { x: 8, y: 12, w: 120, h: 92 }, still: "base", breathe: { from: 0, to: 8, period: 1700 } },
+  orc: { w: 144, h: 168, core: { x: 0, y: 70, r: 20, half: 46 }, hit: { x: 26, y: 0, w: 92, h: 168 }, still: "idle", breathe: BREATHE },
+  ogre: { w: 200, h: 200, core: { x: 0, y: 86, r: 24, half: 62 }, hit: { x: 38, y: 8, w: 124, h: 188 }, still: "idle", breathe: BREATHE, roar: true },
+  "chief-ogre": { w: 232, h: 232, core: { x: 0, y: 94, r: 26, half: 68 }, hit: { x: 48, y: 12, w: 136, h: 216 }, still: "idle", breathe: { from: 0, to: -3, period: 2800 }, roar: true },
+  wyvern: { w: 248, h: 184, core: { x: 0, y: 66, r: 24, half: 52 }, hit: { x: 72, y: 0, w: 104, h: 176 }, still: "idle", breathe: { from: 0, to: -3, period: 2400 } },
+  draconian: { w: 144, h: 192, core: { x: -6, y: 90, r: 18, half: 42 }, hit: { x: 24, y: 0, w: 84, h: 188 }, still: "idle", breathe: BREATHE },
+  dragon: { w: 328, h: 264, core: { x: 12, y: 74, r: 26, half: 84 }, hit: { x: 92, y: 8, w: 168, h: 252 }, still: "body", breathe: { from: 0, to: -3, period: 3200 }, howl: true },
+  imp: { w: 96, h: 104, core: { x: 0, y: 46, r: 14, half: 34 }, hit: { x: 14, y: 0, w: 68, h: 100 }, still: "idle", breathe: { from: 0, to: -3, period: 1400 } },
+  "magma-slime": { w: 136, h: 104, core: { x: 0, y: 44, r: 18, half: 60 }, hit: { x: 8, y: 12, w: 120, h: 92 }, still: "base", breathe: { from: 0, to: 8, period: 1700 } },
+  "goblin-mage": { w: 104, h: 112, core: { x: -6, y: 42, r: 14, half: 34 }, hit: { x: 12, y: 0, w: 68, h: 108 }, still: "idle", breathe: { from: 0, to: -2, period: 2000 } },
+  demon: { w: 280, h: 248, core: { x: 0, y: 126, r: 30, half: 64 }, hit: { x: 76, y: 0, w: 128, h: 244 }, still: "idle", breathe: { from: 0, to: -3, period: 3000 } },
 };
 // `core` is the middle of the monster's bulk, where blows land: px right of
 // its centre line and above its feet, how far a blow may stray from it, and
 // half the bulk's width, which is how close a warrior stands. The picture is
-// often much wider than that (the dragon's head, wings and tail).
+// often much wider than that (the dragon's head, wings and tail). `hit` is the
+// box a press opens its card in (px from the picture's top left): the drawn
+// part of its whole picture within the bulk's columns (a test measures it).
+// Its name (lettered on its plate and its card) is rules.js's.
+for (const [id, kind] of Object.entries(MONSTERS)) kind.name = kindInfo(id)?.name ?? "";
 const WATCH_MS = 1000; // how often to look for a monster due, or someone ready to attack
 const RESPAWN_MS = 3000; // how long a fallen boss lies there before the next (its fade takes 1.6s)
 // after the kill that first clears a stage and moves on to a new one, the wait
@@ -273,6 +302,16 @@ const SHOT_FROM = {
   ogre: { single: { x: 20, y: 160 } },
   dragon: { area: { x: 36, y: 104 } },
 };
+SHOT_FROM["magma-slime"] = SHOT_FROM.slime;
+Object.assign(SHOT_FROM, {
+  goblin: { single: { x: 14, y: 26 }, area: { x: 46, y: 14 } },
+  "chief-ogre": { single: { x: 30, y: 190 } },
+  wyvern: { single: { x: 72, y: 20 } },
+  draconian: { area: { x: 40, y: 34 } },
+  imp: { single: { x: 26, y: 26 } },
+  "goblin-mage": { single: { x: 14, y: 58 } },
+  demon: { area: { x: 140, y: 18 } },
+});
 const LUNGE = 10;
 const HP_W = 40; // a character's HP bar, over its head
 const HIT_FADE = 400; // a hit flash or an attack's impact fades out this long
@@ -282,6 +321,13 @@ const ATTACK_SIZE = {
   "attack/glob": [28, 28], "attack/splat": [52, 32], "attack/puddle": [140, 48],
   "attack/arc": [36, 44], "attack/thud": [44, 36], "attack/quake": [160, 56],
   "attack/fireball": [44, 32], "attack/claw": [52, 40], "attack/blaze-1": [144, 44], "attack/blaze-2": [144, 44],
+  "attack/dagger": [36, 20], "attack/nick": [44, 36], "attack/bomb": [28, 32], "attack/boom": [140, 52],
+  "attack/bite": [44, 28], "attack/sweep": [140, 36], "attack/cleave": [52, 44],
+  "attack/barb": [36, 20], "attack/jab": [44, 36], "attack/gale": [148, 48],
+  "attack/pierce": [44, 36], "attack/ember": [32, 20], "attack/scorch": [140, 40],
+  "attack/firebolt": [36, 28], "attack/singe": [44, 36], "attack/pyre": [140, 56],
+  "attack/bolt": [36, 20], "attack/zap": [44, 36], "attack/rune": [148, 52],
+  "attack/rend": [68, 40], "attack/hellball": [44, 32], "attack/hellfire-1": [144, 44], "attack/hellfire-2": [144, 44],
 };
 const sizeOf = (part) => ATTACK_SIZE[part.replace(/\/[lr]$/, "")] ?? [40, 40];
 const MONSTER_Y = 108; // where its feet are on the floor
@@ -322,7 +368,7 @@ const DOT_SPOT = { burn: -1, venom: 1 }; // its number shows left or right of th
 // (its core), the first `n` of them by kind: one picture small enough for the
 // slime, more of them over a bigger boss.
 const EFFECT_SPOTS = [[-1, -0.5], [0.85, -1], [0, 0.5], [-0.5, -1.4]];
-const EFFECT_COUNT = { slime: 2, ogre: 3, dragon: 4 };
+const EFFECT_COUNT = { goblin: 2, lizard: 2, slime: 2, orc: 3, ogre: 3, "chief-ogre": 4, wyvern: 3, draconian: 3, dragon: 4, imp: 2, "magma-slime": 2, "goblin-mage": 2, demon: 4 };
 const CHAIN_W = 56; // the chain's second arc, out past the first blow (14x7 art px)
 const CHAIN_H = 28;
 const MELEE = 90; // how close to the monster's bulk a warrior must be to reach it
@@ -403,6 +449,15 @@ const MAP_PAGE = BIOMES.length * BIOME_STAGES;
 const MAP_COLS = 5;
 const MAP_PAD = 4; // inside the frame, round what it holds
 const MAP_GAP = 4; // between the map and the gear in the strip
+// The monster's card (see monsterCard): inside its frame FOE_PAD round what it
+// holds, the kind's picture fitted to FOE_PIC beside two lines (its name, where
+// it is fought), then 4px under it the HP, 4px under that the weakness and the
+// resistance (18px rows, 20 apart), 2px under them the kills, in lines of the
+// lettering: FOE_CARD_H in all (below), 124px, so in the lowest scene it fits
+// under a stage section in the second row (to 96) with 4px to spare.
+const FOE_PAD = 4;
+const FOE_PIC = 30;
+const FOE_CLEAR = 4; // and it keeps this far from the HUD's frames and the plate (see cardSpot)
 // A multiplier as the training line shows it: "x1.12", "x24.5", "x1.2K".
 const times = (x) => `x${x < 10 ? x.toFixed(2) : x < 100 ? x.toFixed(1) : shortNumber(x)}`;
 const GOLD = "#ffd166";
@@ -461,6 +516,7 @@ function pixelText(text, colour, scale) {
 // never nothing. letterW gives the width it takes up. The row is a relative box,
 // or at `at` ({ left, top }) an absolute one, which saves a box round it.
 const LETTER_H = GLYPH_H * 2;
+const FOE_CARD_H = 2 * (FRAME + FOE_PAD) + FOE_PIC + 4 + LETTER_H + 4 + 2 * 20 + 2 + LETTER_H;
 const letterW = (text) => lettersWidth(letterFit(String(text))) * 2;
 function letterText(text, colour, at = null) {
   const parts = [];
@@ -942,7 +998,7 @@ export default class RaidParty extends View {
     this.howl = null; // the step of the dragon's roar in progress (see DRAGON_ROAR), else null
     this.howls = 0; // how many it has started, so each one's rings of sound are new elements
     cx.timer.every(BLINK_MS, flick("blink", 170, () => !this.roar && !this.howl));
-    cx.timer.every(ROAR_MS, flick("roar", 1100, () => this.monster.kind === "ogre"));
+    cx.timer.every(ROAR_MS, flick("roar", 1100, () => Boolean(MONSTERS[this.monster.kind]?.roar)));
     // The dragon's roar is one render per step, each timed by the one before;
     // nothing renders between roars or while the monster is something else.
     const howl = (i) => (cx) => {
@@ -951,7 +1007,7 @@ export default class RaidParty extends View {
       if (this.howl) cx.timer.after(DRAGON_ROAR[i][1], howl(i + 1));
     };
     cx.timer.every(DRAGON_ROAR_MS, (cx) => {
-      if (!this.fighting || !(this.monster?.hp > 0) || this.monster.kind !== "dragon" || this.howl) return;
+      if (!this.fighting || !(this.monster?.hp > 0) || !MONSTERS[this.monster.kind]?.howl || this.howl) return;
       this.howls += 1;
       howl(0)(cx);
     });
@@ -979,6 +1035,9 @@ export default class RaidParty extends View {
     this.shopPick = null; // the item whose lines show under the items (see shopCard)
     this.settingsOpen = false; // the settings menu under the gear is open
     this.mapOpen = false; // the stage picker under the map is open (see mapCard)
+    this.foeCard = false; // the monster's card is open (see monsterCard), for the kind in cardKind
+    this.cardKind = null;
+    this.foeHot = false; // the monster or its plate is under the pointer
     this.mapPage = 0; // the page it shows: a round of the biomes, from 0
     this.mapBiome = 0; // and the biome open on it, by its place in BIOMES
     this.mapAt = null; // the stage they were turned to (see mapFollow)
@@ -1673,8 +1732,8 @@ export default class RaidParty extends View {
     const top = MONSTER_Y - kind.h + 4;
     const dead = m.hp <= 0;
     const hurt = hits > 0 && !dead;
-    const roaring = m.kind === "ogre" && this.roar;
-    const howl = m.kind === "dragon" && !dead ? this.howl : null; // the dragon's roar: "rear" | "roar" | "settle"
+    const roaring = Boolean(kind.roar) && this.roar;
+    const howl = kind.howl && !dead ? this.howl : null; // the dragon's roar: "rear" | "roar" | "settle"
     // its own attack (party.js): a pose of its own in place of its pictures,
     // leaning toward the target, from the attack's start to a tick after it lands
     const empty = !Object.keys(this.party.members).length; // nobody fighting: no attack shows
@@ -1726,7 +1785,28 @@ export default class RaidParty extends View {
       .filter((b) => b && b.x < mid + half && mid - half < b.x + b.w)
       .reduce((y, b) => Math.max(y, b.y + b.h + 4), 4);
     const plateTop = Math.max(top - plateH - 4, clear - this.wallH);
-    const plate = this.plate(m, kind, mid, plateTop, icons);
+    // A press on the monster's body (foeHit) or its plate opens its card
+    // (monsterCard), and not a walk there; under the pointer, as a station
+    // does, the plate is outlined in white and a white arrow bobs over it
+    // (where there is room). What is under the pointer is forgotten as the
+    // monster falls or another comes (its body's target goes with no leave).
+    if (this.foeHot && (this.foeHot.id !== m.id || (dead && this.foeHot.what === "monster"))) this.foeHot = false;
+    const hot = Boolean(this.foeHot);
+    const plate = this.foeTarget(this.plate(m, kind, mid, plateTop, icons, hot), "plate");
+    // where the plate is, in the scene, for the card to keep clear of it
+    this.plateBox = { x: mid - half, y: plateTop + this.wallH, w: 2 * half, h: plateH };
+    const arrow =
+      hot && plateTop - 30 >= -this.wallH
+        ? [
+            div()
+              .id("idle-rpg-plate-arrow")
+              .absolute()
+              .left(mid - 14)
+              .top(plateTop - 30)
+              .loop("top", { from: plateTop - 30, to: plateTop - 22, period: 420 })
+              .child(image(src("stations/arrow.png")).w(28).h(20)),
+          ]
+        : [];
     return [
       div()
         .id(`idle-rpg-monster-${m.id}`)
@@ -1753,22 +1833,59 @@ export default class RaidParty extends View {
             .transition("top", { duration: 90, easing: "ease-out" })
             .left(lean)
             .transition("left", { duration: 150, easing: "ease-out" })
-            .when(m.kind === "dragon", (el) => el.child(layer("tail").loop("top", { from: 0, to: 5, period: 2600 })))
+            .when(Boolean(kind.howl), (el) => el.child(layer("tail").loop("top", { from: 0, to: 5, period: 2600 })))
             .when(Boolean(posed), (el) => el.child(layer(posed)))
-            .when(!posed, (el) => el.child(layer(roaring ? "roar/roar" : m.kind === "slime" ? "base" : m.kind === "dragon" ? (howl === "roar" ? "roar/roar" : howl ? "roar/rear" : "body") : "idle")))
+            .when(!posed, (el) => el.child(layer(roaring || howl === "roar" ? "roar/roar" : howl ? "roar/rear" : kind.still)))
             .when(!posed && howl === "roar", (el) => el.child(layer("roar/top").loop("left", { from: -2, to: 2, period: 140, easing: "linear" })))
             .when(!posed && Boolean(howl), (el) => el.children([0, 1, 2].map(ring)))
             .when(!posed && !roaring && !howl, (el) =>
               el.child(
                 layer("top")
-                  .loop("top", m.kind === "slime" ? { from: 0, to: 8, period: 1700 } : { from: 0, to: -3, period: m.kind === "dragon" ? 3200 : 2600 })
+                  .loop("top", kind.breathe)
                   .when(lids, (top) => top.child(layer("blink"))),
               ),
             )
             .when(!dead, (el) => el.children(this.marks(m.kind, kind))),
         ),
       plate,
+      ...arrow,
     ];
+  }
+
+  // What a press on the monster (`what`: "monster", its body, or "plate") does:
+  // opens or closes its card, and never reaches the floor; and the pointer
+  // over it, which lights the plate (see foe).
+  foeTarget(el, what) {
+    return el
+      .cursor_pointer()
+      .on_hover((hovered, cx) => {
+        if (hovered) this.foeHot = { what, id: this.monster.id };
+        else if (this.foeHot?.what === what) this.foeHot = false;
+        cx.notify();
+      })
+      // a character drawn over it (you, an agent) hears the press first and keeps it
+      .on_mouse_down("left", (e, cx) => {
+        const p = this.press;
+        this.foePressed = !(p && (p.kind === YOU || p.kind === "critter") && p.px === e.position.x && p.py === e.position.y);
+        if (this.foePressed) cx.stop_propagation();
+      })
+      .on_click((_e, cx) => {
+        if (!this.foePressed) return;
+        this.foePressed = false;
+        this.openFoeCard(!this.foeCard);
+        cx.notify();
+      });
+  }
+
+  // The monster's body as a press target (its kind's `hit` box), drawn under
+  // everyone on the floor, so a press on a character standing over it (you
+  // or an agent) is theirs; none while it is down.
+  foeHit(W, kind) {
+    const m = this.monster;
+    if (!kind || !(m.hp > 0)) return [];
+    const left = Math.round(W / 2 - kind.w / 2);
+    const top = MONSTER_Y - kind.h + 4;
+    return [this.foeTarget(div().id("idle-rpg-monster-hit").absolute().left(left + kind.hit.x).top(top + kind.hit.y).w(kind.hit.w).h(kind.hit.h), "monster")];
   }
 
   // The pictures of the statuses on the boss (effects/<status>/), laid over
@@ -1816,7 +1933,7 @@ export default class RaidParty extends View {
   // over the empty bar. `icons` (plateIcons in effects.js): a last row of
   // icons for the statuses on it (burn, chill, venom with its stacks) and the
   // party's hex. The stage and the time left are in the stage section.
-  plate(m, kind, x, top, icons = []) {
+  plate(m, kind, x, top, icons = [], hot = false) {
     const dead = m.hp <= 0;
     const w = plateW(kind);
     const h = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
@@ -1832,6 +1949,15 @@ export default class RaidParty extends View {
       .w(w)
       .h(h)
       .children(framePieces(w, h))
+      // under the pointer: a white outline over the frame's, its corners cut (as a hot tag's)
+      .when(hot, (el) =>
+        el.children([
+          div().absolute().left(2).top(0).w(w - 4).h(2).bg(TAG.hot.edge),
+          div().absolute().left(2).top(h - 2).w(w - 4).h(2).bg(TAG.hot.edge),
+          div().absolute().left(0).top(2).w(2).h(h - 4).bg(TAG.hot.edge),
+          div().absolute().left(w - 2).top(2).w(2).h(h - 4).bg(TAG.hot.edge),
+        ]),
+      )
       .child(letterText(dead ? LABELS.slain(kind.name) : kind.name, "gold", { left: FRAME + PLATE_PAD, top: PLATE_TEXT_Y }))
       .when(!dead, (el) => el.child(letterText(hp, "white", { left: w - FRAME - PLATE_PAD - letterW(hp), top: PLATE_TEXT_Y })))
       .child(
@@ -3198,6 +3324,10 @@ export default class RaidParty extends View {
     // In a fight everyone stands in formation; otherwise at their own spots.
     const foeKind = this.battle && W >= 640 ? MONSTERS[this.monster?.kind] : null;
     this.fighting = Boolean(foeKind);
+    // the monster's card goes with the fight (the raid ended, the scene too
+    // narrow) and with its kind (the next boss is another kind)
+    if (this.foeCard && (!foeKind || this.cardKind !== this.monster.kind)) this.foeCard = false;
+    if (!foeKind) this.foeHot = false;
     // (between raids, each where place() put them, inside the scene and, by the campfire, beside it: see the loop below)
     this.at = foeKind ? this.formation(list, W, foeKind) : Object.create(null);
     const pitch = foeKind ? this.formed : this.pitch;
@@ -3296,6 +3426,7 @@ export default class RaidParty extends View {
           .when(Boolean(decor), (el) => el.children(this.decorations(decor)))
           .when(!this.battle, (el) => el.children(this.stations()))
           .children(foeAttack.under)
+          .children(this.foeHit(W, foeKind))
           .children(actors.flatMap((p) => p.draw()))
           // a crowd's name tags, over everyone (see crowdMarks), nearer ones last
           .when(Boolean(this.tagged), (el) =>
@@ -3382,19 +3513,19 @@ export default class RaidParty extends View {
         const still = Math.abs(e.position.x - pr.px) + Math.abs(e.position.y - pr.py) <= 4;
         if (pr.kind === YOU) {
           if (still) {
-            this.codex = this.settingsOpen = this.mapOpen = false;
+            this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
             this.skillsOpen = this.shopOpen = null;
             this.card = this.card === YOU ? null : YOU;
             this.picking = false;
           }
         } else if (pr.kind === "critter") {
-          this.codex = this.settingsOpen = this.mapOpen = false;
+          this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
           this.skillsOpen = this.shopOpen = null;
           this.card = this.card === pr.address ? null : pr.address;
           this.picking = false;
         } else if (pr.kind === "frame" || still) {
           this.card = null;
-          this.codex = this.settingsOpen = this.mapOpen = false;
+          this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
           this.skillsOpen = this.shopOpen = null;
           if (pr.kind !== "frame") this.walkTo(this.point(e), W, cx);
         }
@@ -3411,7 +3542,8 @@ export default class RaidParty extends View {
       .when(CLASSES.includes(this.skillsOpen), (el) => el.child(this.skillsCard(hud.inset, hud.panelTop)))
       .when(CLASSES.includes(this.shopOpen), (el) => el.child(this.shopCard(hud.inset, hud.panelTop)))
       .when(this.settingsOpen, (el) => el.child(this.settingsCard(hud.strip.y)))
-      .when(this.mapOpen, (el) => el.child(this.mapCard(hud.strip)));
+      .when(this.mapOpen, (el) => el.child(this.mapCard(hud.strip)))
+      .when(this.foeCard, (el) => el.child(this.monsterCard(hud)));
   }
 
   // A press on a HUD frame's empty part (its chips and buttons stop their own):
@@ -3638,7 +3770,7 @@ export default class RaidParty extends View {
         this.battle = !this.battle;
         this.clearEffects(); // statuses stay with the fight they were put on
         // the panels open from different places in a raid and out of one
-        this.codex = this.settingsOpen = this.mapOpen = false;
+        this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
         this.skillsOpen = this.shopOpen = null;
         if (this.battle) this.fight(); // someone to fight straight away
         this.save();
@@ -3842,7 +3974,7 @@ export default class RaidParty extends View {
   openMap(open) {
     this.mapOpen = open;
     if (!open) return;
-    this.codex = this.settingsOpen = false;
+    this.codex = this.settingsOpen = this.foeCard = false;
     this.skillsOpen = this.shopOpen = this.card = null;
     this.picking = false;
     this.mapFollow();
@@ -3978,11 +4110,117 @@ export default class RaidParty extends View {
       .children([...framePieces(w, h), ...kids]);
   }
 
+  // Opens or closes the monster's card (a press on the monster or its plate),
+  // closing the other panels and any card. It stays open for that kind only
+  // (see render): the next boss of the same kind keeps it, another kind closes it.
+  openFoeCard(open) {
+    this.foeCard = open;
+    if (!open) return;
+    this.cardKind = this.monster.kind;
+    this.codex = this.settingsOpen = this.mapOpen = false;
+    this.skillsOpen = this.shopOpen = this.card = null;
+    this.picking = false;
+  }
+
+  // The monster's card, where the panels open under the sign (`hud`, see
+  // hudLayout) or, should that meet a HUD frame or the plate, the nearest
+  // place clear of them (cardSpot), in a HUD frame with its words in the lettering, like the
+  // stage picker: its picture (fitted to FOE_PIC) beside its name in gold and
+  // where it is fought ("FOREST · STAGE 7"); then its HP now and at full; the
+  // element it is weak to and the one it resists, each its icon (the status
+  // the element leaves) and name with the mark a damage number gets on it
+  // (▲, ▼); and how many of its kind have been slain. FOE_CARD_H high, as wide
+  // as the kind's longest line. Drawn only while the fight shows (640px wide or more).
+  monsterCard(hud) {
+    const m = this.monster;
+    const info = kindInfo(m.kind);
+    const x0 = FRAME + FOE_PAD;
+    const y0 = FRAME + FOE_PAD;
+    const kind = MONSTERS[m.kind];
+    const scale = FOE_PIC / Math.max(kind.w, kind.h);
+    const pw = Math.round(kind.w * scale);
+    const ph = Math.round(kind.h * scale);
+    const where = LABELS.where(LABELS[info.biome], stageOf(m.stage));
+    const hp = LABELS.hp(`${shortNumber(Math.ceil(Math.max(0, m.hp)))}/${shortNumber(Math.ceil(m.maxHp))}`);
+    const slain = LABELS.killed(shortNumber(this.progress.kills[m.kind] ?? 0));
+    const labelW = Math.max(letterW(LABELS.weak), letterW(LABELS.resist));
+    const rows = [
+      ["weak", info.weak],
+      ["resist", info.resist],
+    ].filter(([, el]) => ELEMENTS.includes(el));
+    const rowW = (el) => labelW + 6 + 18 + 4 + letterW(LABELS[el]) + 4 + 14;
+    const textX = x0 + FOE_PIC + 6;
+    const rowsY = y0 + FOE_PIC + 4 + LETTER_H + 4; // the weakness's row, under the HP
+    const w = 2 * x0 + Math.max(textX - x0 + Math.max(letterW(info.name), letterW(where)), letterW(hp), letterW(slain), ...rows.map(([, el]) => rowW(el)));
+    const h = FOE_CARD_H;
+    const at = (el, x, y) => el.absolute().left(x).top(y);
+    const kids = [
+      at(div(), x0 + Math.floor((FOE_PIC - pw) / 2), y0 + Math.floor((FOE_PIC - ph) / 2)).child(image(src(monsterArt(m.kind))).w(pw).h(ph)),
+      letterText(info.name, "gold", { left: textX, top: y0 }),
+      letterText(where, "grey", { left: textX, top: y0 + 16 }),
+      letterText(hp, "white", { left: x0, top: y0 + FOE_PIC + 4 }),
+    ];
+    rows.forEach(([key, el], i) => {
+      const y = rowsY + i * 20;
+      kids.push(
+        h_flex()
+          .id(`idle-rpg-foe-card-${key}`)
+          .absolute()
+          .left(x0)
+          .top(y)
+          .h(18)
+          .gap(4)
+          .items_center()
+          .child(div().flex_none().w(labelW + 2).child(letterText(LABELS[key], "grey")))
+          .child(image(src(effectIconArt(ELEMENT_STATUS[el]))).w(18).h(18))
+          .child(letterText(LABELS[el], "white"))
+          .child(image(src(markArt(key))).w(14).h(14)),
+      );
+    });
+    kids.push(letterText(slain, "white", { left: x0, top: rowsY + rows.length * 20 + 2 }));
+    const spot = this.cardSpot(w, h, hud);
+    return div()
+      .id("idle-rpg-foe-card")
+      .absolute()
+      .left(spot.x)
+      .top(spot.y)
+      .w(w)
+      .h(h)
+      .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
+      .children([...framePieces(w, h), ...kids]);
+  }
+
+  // Where the monster's card (`w` x `h`) goes in the scene: under the sign
+  // where the panels open, unless that meets the sign, the strip, the stage
+  // section or the boss's plate (FOE_CLEAR round each); then the place
+  // nearest it that is clear of all of them (beside or below one), the
+  // highest first; and if none is, the place covering least of them (the
+  // monster's body may be under it: it does not mind).
+  cardSpot(w, h, hud) {
+    const W = Math.max(320, this.size.width);
+    const H = Math.max(FLOOR_H, this.size.height);
+    const keep = [hud.sign, hud.strip, hud.stage, this.plateBox]
+      .filter(Boolean)
+      .map((b) => ({ x: b.x - FOE_CLEAR, y: b.y - FOE_CLEAR, w: b.w + 2 * FOE_CLEAR, h: b.h + 2 * FOE_CLEAR }));
+    const fit = (v, hi) => Math.round(clamp(v, 0, Math.max(0, hi)));
+    const xs = [...new Set([hud.inset, 0, W - w, ...keep.flatMap((b) => [b.x + b.w, b.x - w])].map((x) => fit(x, W - w)))];
+    const ys = [...new Set([hud.panelTop, ...keep.map((b) => b.y + b.h)].map((y) => fit(y, H - h)))];
+    const covered = (x, y) => keep.reduce((sum, b) => sum + Math.max(0, Math.min(x + w, b.x + b.w) - Math.max(x, b.x)) * Math.max(0, Math.min(y + h, b.y + b.h) - Math.max(y, b.y)), 0);
+    let best = null;
+    for (const y of ys)
+      for (const x of xs) {
+        const c = { x, y, covered: covered(x, y) };
+        const better = !best || c.covered < best.covered || (c.covered === best.covered && (y < best.y || (y === best.y && Math.abs(x - hud.inset) < Math.abs(best.x - hud.inset))));
+        if (better) best = c;
+      }
+    return best;
+  }
+
   // Opens or closes the settings menu, closing the other panels and any card.
   openSettings(open) {
     this.settingsOpen = open;
     if (!open) return;
-    this.codex = this.mapOpen = false;
+    this.codex = this.mapOpen = this.foeCard = false;
     this.skillsOpen = this.shopOpen = this.card = null;
     this.picking = false;
   }
@@ -4096,7 +4334,7 @@ export default class RaidParty extends View {
   openSkills(cls) {
     this.skillsOpen = cls;
     if (!cls) return;
-    this.codex = this.settingsOpen = this.mapOpen = false;
+    this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
     this.shopOpen = this.card = null;
     this.picking = false;
   }
@@ -4105,7 +4343,7 @@ export default class RaidParty extends View {
   openCodex(open) {
     this.codex = open;
     if (!open) return;
-    this.settingsOpen = this.mapOpen = false;
+    this.settingsOpen = this.mapOpen = this.foeCard = false;
     this.skillsOpen = this.shopOpen = this.card = null;
     this.picking = false;
   }
@@ -4202,40 +4440,62 @@ export default class RaidParty extends View {
     this.shopOpen = cls;
     this.shopPick = null; // the item whose lines show: the one on, until another is clicked
     if (!cls) return;
-    this.codex = this.settingsOpen = this.mapOpen = false;
+    this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
     this.skillsOpen = this.card = null;
     this.picking = false;
   }
 
-  // The codex, under the sign: every kind of monster and how many have fallen.
-  // A kind not yet slain is a dim shape with no name. Kills from before the
-  // counts by kind began are in the total only, so they get a line of their own.
+  // The codex, under the sign: every kind of monster and how many have fallen,
+  // biome by biome (BIOMES in rules.js), each under its biome's name. A kind
+  // not yet slain is a dim shape with no name. Kills from before the counts by
+  // kind began are in the total only, so they get a line of their own. Its
+  // rows are of fixed height (CODEX): with thirteen kinds the list is taller
+  // than any panel may be (PANEL_MAX_H), so under its title it scrolls.
   codexCard(left, top) {
     const { slain, kills } = this.progress;
     const known = Object.keys(MONSTERS).reduce((sum, k) => sum + (kills[k] ?? 0), 0);
-    const line = (picture, name, n) =>
+    const line = (id, picture, name, n) =>
       h_flex()
+        .id(id)
+        .flex_none()
+        .h(CODEX.row)
         .gap(8)
         .items_center()
         .child(div().w(32).h(24).flex_none().flex().items_center().justify_center().child(picture))
         .child(div().flex_1().truncate().text_color("#dbe7f3").child(name))
         .child(div().font_semibold().text_color(CREAM).child(shortNumber(n)));
+    const rows = BIOMES.flatMap((b) => [
+      div().id(`idle-rpg-codex-${b.id}`).flex_none().h(CODEX.head).text_size(10).font_semibold().text_color("#8ea3bb").child(b.name),
+      ...b.kinds.map(({ id }) => {
+        const kind = MONSTERS[id];
+        const n = kills[id] ?? 0;
+        const scale = 24 / Math.max(kind.w, kind.h);
+        const picture = image(src(monsterArt(id)))
+          .w(Math.round(kind.w * scale))
+          .h(Math.round(kind.h * scale));
+        return line(`idle-rpg-codex-kind-${id}`, div().opacity(n > 0 ? 1 : 0.25).child(picture), n > 0 ? kind.name : "???", n);
+      }),
+    ]);
+    if (slain > known) rows.push(line("idle-rpg-codex-before", div(), "Before the codex", slain - known));
     return v_flex()
       .id("idle-rpg-codex")
       .absolute()
       .left(left)
       .top(top)
       .w(176)
-      .p(8)
-      .gap(3)
+      .p(CODEX.pad)
+      .gap(CODEX.gap)
       .rounded(8)
       .bg("#101a2cf0")
       .border(1)
       .border_color("#ffffff24")
       .text_size(11)
+      .line_height(PANEL.line)
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .child(
         h_flex()
+          .flex_none()
+          .h(CODEX.title)
           .gap(6)
           .items_center()
           .child(image(src("icons/skull.png")).w(18).h(18))
@@ -4255,17 +4515,15 @@ export default class RaidParty extends View {
               .child("×"),
           ),
       )
-      .children(
-        Object.entries(MONSTERS).map(([k, kind]) => {
-          const n = kills[k] ?? 0;
-          const scale = 24 / Math.max(kind.w, kind.h);
-          const picture = image(src(monsterArt(k)))
-            .w(Math.round(kind.w * scale))
-            .h(Math.round(kind.h * scale));
-          return line(div().opacity(n > 0 ? 1 : 0.25).child(picture), n > 0 ? kind.name : "???", n);
-        }),
-      )
-      .when(slain > known, (el) => el.child(line(div(), "Before the codex", slain - known)));
+      .child(
+        v_flex()
+          .id("idle-rpg-codex-list")
+          .flex_none()
+          .gap(CODEX.gap)
+          .max_h(CODEX.list)
+          .overflow_y_scroll()
+          .children(rows),
+      );
   }
 
   // A small button in a panel: live, or dimmed and dead. `act` does what it
