@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import * as E from "../mods/idle-rpg/effects.js";
+import * as P from "../mods/idle-rpg/party.js";
 import * as R from "../mods/idle-rpg/rules.js";
 import { artFiles } from "./harness/world.mjs";
 import { pngSize } from "./harness/png.mjs";
@@ -202,6 +203,27 @@ describe("seasonArt", () => {
     // nothing else in seasons/: every file there is one of SEASON_ART's
     const listed = new Set(R.SEASONS.flatMap((s) => R.SEASON_ART[s.id].map((part) => R.seasonArt(s.id, part))));
     assert.deepEqual([...FILES].filter((f) => f.startsWith("seasons/") && !listed.has(f)), []);
+  });
+});
+
+describe("restArt", () => {
+  test("a ring for each whole second of a knockout's rest, KO_TICKS' worth, and no other", () => {
+    assert.equal(R.KO_SECONDS * (1000 / R.TICK_STEP), P.KO_TICKS, "the rest is KO_SECONDS long");
+    const rings = Array.from({ length: R.KO_SECONDS }, (_, i) => R.restArt(i + 1));
+    assert.equal(new Set(rings).size, R.KO_SECONDS);
+    for (const p of rings) assert.ok(isArt(p), p);
+    assert.deepEqual([...FILES].filter((f) => f.startsWith("status/rest/")).sort(), [...rings].sort(), "status/rest/ holds those and nothing else");
+    assert.equal(R.restArt(R.KO_SECONDS), `status/rest/${R.KO_SECONDS}.png`);
+    assert.equal(R.restArt(1), "status/rest/1.png");
+  });
+  test("whatever restSeconds gives has its ring: rounded up, kept to 1 to KO_SECONDS; anything else is null", () => {
+    const p = P.newParty();
+    p.members.k = { hp: 0, maxHp: 10, x: 0, y: 0, down: 500, hitAt: null, healedAt: null };
+    for (let t = 500 - P.KO_TICKS - 8; t <= 500; t++) assert.equal(R.restArt(P.restSeconds(p, "k", t)), `status/rest/${Math.min(R.KO_SECONDS, Math.max(1, Math.ceil((500 - t) / 4)))}.png`);
+    assert.equal(R.restArt(0.2), "status/rest/1.png");
+    assert.equal(R.restArt(1e9), `status/rest/${R.KO_SECONDS}.png`);
+    for (const h of HOSTILE) assert.ok(R.restArt(h) === null || (typeof h === "number" && isArt(R.restArt(h))), String(h));
+    assert.equal(R.restArt(Infinity), null);
   });
 });
 

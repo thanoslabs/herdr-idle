@@ -126,6 +126,7 @@ import {
   pointsSpent,
   raise,
   resetSkills,
+  restArt,
   SETTINGS,
   seasonArt,
   selectStage,
@@ -140,7 +141,7 @@ import {
   trainingPrice,
   weaponArt,
 } from "./rules.js";
-import { KO_TICKS, down, firstHeal, healGap, healParty, healTarget, healTicks, monsterTick, newParty, resetParty, restLeft, restSeconds, rise, standing, syncParty } from "./party.js";
+import { KO_TICKS, down, firstHeal, healGap, healParty, healTarget, healTicks, monsterTick, newParty, resetParty, restSeconds, rise, standing, syncParty } from "./party.js";
 import { AURAS, ELEMENT_STATUS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
 
 const ART = "mods/idle-rpg/art";
@@ -314,6 +315,12 @@ Object.assign(SHOT_FROM, {
 });
 const LUNGE = 10;
 const HP_W = 40; // a character's HP bar, over its head
+const HP_TRACK = "#141a26"; // the bar's empty part
+// A knocked-out character's countdown ring (status/rest/, 21 art px at 2 screen
+// px each, like the number inside), in place of the bar, just over the stars
+const RING = 42;
+const RING_TOP = -110;
+const RING_LOW = -78; // the lowest it goes to keep clear of the HUD (see ringTop): the old bar's place
 const HIT_FADE = 400; // a hit flash or an attack's impact fades out this long
 // The pictures a monster's attack shows on screen (px): what flies and what
 // lands, by its name in MONSTER_ATTACKS (rules.js).
@@ -877,10 +884,12 @@ function bubbleBox(status, x, y) {
   if (status === "done") return { x: x - 18, y: y - 108, w: 36, h: 40 };
   return { x: x + 4, y: y - 120, w: 64, h: 64 };
 }
-// The box what shows over a fighter at x, y takes (see vitals): its HP bar,
-// or, knocked out, its rest bar and the stars under it; VITALS the largest.
-const VITALS = { w: 76, h: 56 };
-const vitalsBox = (m, x, y) => (m?.down != null ? { x: x - 38, y: y - 84, w: 76, h: 56 } : { x: x - HP_W / 2 - 1, y: y - 78, w: HP_W + 2, h: 7 });
+// The box what shows over a fighter at x, y takes (see vitals): its HP bar
+// and a pixel round it, or, knocked out, the ring round its countdown and the
+// stars under it; VITALS the largest.
+// `top` is where the ring's top is (see ringTop); the stars end at y - 28.
+const VITALS = { w: 76, h: 82 };
+const vitalsBox = (m, x, y, top = RING_TOP) => (m?.down != null ? { x: x - 38, y: y + top, w: 76, h: -28 - top } : { x: x - HP_W / 2 - 1, y: y - 78, w: HP_W + 2, h: 7 });
 // The box two characters' feet must not share to stand clear of each other (NEAR).
 const nearBox = (s) => ({ x: s.x, y: s.y, w: NEAR.x, h: NEAR.y });
 // Whether any two of `spots` stand closer than NEAR both ways.
@@ -1723,6 +1732,79 @@ export default class RaidParty extends View {
     return [shot(part("shot"), 28, 36, from(24, 40), lob), pop("hit", part("hit"), 52, 32, hit, phase === 4)];
   }
 
+  // Where the boss's plate goes, in floor px ({ x, y, w, h }), with `icons`
+  // (plateIcons) under its bar, or null with no boss shown: over its head, a
+  // row taller while it shows status icons, kept inside the scene when the
+  // wall is low and clear of the HUD's frames above it (the stage section, and
+  // on a narrow scene the sign or the strip; not a stage note, which is
+  // short-lived and drawn over it, so the plate never jumps).
+  plateBox(W, icons) {
+    const kind = this.monster && MONSTERS[this.monster.kind];
+    if (!this.battle || !kind || W < 640) return null;
+    const h = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
+    const mid = Math.round(W / 2 - kind.w / 2) + Math.round(kind.w / 2);
+    const w = plateW(kind);
+    const hud = this.hudBox ?? {};
+    const clear = [hud.sign, hud.strip, hud.stage].filter((b) => b && b.x < mid + w / 2 && mid - w / 2 < b.x + b.w).reduce((y, b) => Math.max(y, b.y + b.h + 4), 4);
+    // over its head, and high enough that the ring of a warrior knocked out at
+    // its feet clears it at its lowest (a low monster's plate floats a little)
+    const over = Math.min(MONSTER_Y - kind.h + 4 - h - 4, RAID_FRONT + RING_LOW - 4 - h);
+    return { x: mid - w / 2, y: Math.max(over, clear - this.wallH), w, h };
+  }
+
+  // Where the top of a knocked-out fighter's ring goes, from feet at x, y (floor
+  // px): RING_TOP, over the stars, unless the ring would come within 4px of a
+  // HUD frame (the sign, the stage section, the strip with its chips) or the
+  // boss's plate (`this.ringClear`, worked out each render before anyone is laid
+  // out: see render) or would meet one of `others` (boxes: see placeRings);
+  // then the least lower that clears them all, over the stars, never lower
+  // than the old HP bar's place (RING_LOW). Where none does, the place
+  // overlapping least of the HUD and the plate, then of the rest, the lowest
+  // of those. Never sideways.
+  ringTop(x, y, others = []) {
+    const meet = (r, b, pad) => Math.max(0, Math.min(r.x + r.w, b.x + b.w + pad) - Math.max(r.x, b.x - pad)) * Math.max(0, Math.min(r.y + r.h, b.y + b.h + pad) - Math.max(r.y, b.y - pad));
+    let best = RING_TOP;
+    let least = Infinity;
+    for (let top = RING_TOP; top <= RING_LOW; top++) {
+      const r = { x: x - RING / 2, y: y + top, w: RING, h: RING };
+      let over = 0; // the HUD's and the plate's first: a ring under them is hidden
+      for (const b of this.ringClear ?? []) over += meet(r, b, 4) * 1e6;
+      for (const b of others) over += meet(r, b, 0);
+      if (!over) return top;
+      if (over <= least) [best, least] = [top, over];
+    }
+    return best;
+  }
+
+  // Where each knocked-out fighter's ring goes (`this.ringAt`: its top by key,
+  // see ringTop), each render, unless the party is laid out as a crowd (there
+  // crowdMarks keeps what is over their heads apart, and a ring keeps clear of
+  // the HUD and the plate only). Clear of the standing fighters' HP bars (and
+  // a pixel round them), your name tag, and the rings placed before it, by
+  // key, so none moves as another falls. Only what is near is looked at.
+  placeRings() {
+    this.ringAt = null;
+    if (!this.fighting || this.barred) return;
+    const members = this.party.members;
+    const spot = (key) => (key === YOU ? (this.walking ? null : this.you) : (this.at[key] ?? null));
+    const ytw = tagW(tagFit(LABELS.you));
+    const boxes = [{ x: this.you.x - ytw / 2, y: this.you.y + 6, w: ytw, h: TAG_H }];
+    const downed = [];
+    for (const key of Object.keys(members)) {
+      const s = spot(key);
+      if (s && members[key].down === null) boxes.push(vitalsBox(members[key], s.x, s.y));
+      else if (s) downed.push(key);
+    }
+    this.ringAt = Object.create(null);
+    for (const key of downed.sort()) {
+      const { x, y } = spot(key);
+      const near = boxes.filter((b) => b.x < x + RING / 2 && x - RING / 2 < b.x + b.w && b.y < y + RING_LOW + RING && y + RING_TOP < b.y + b.h);
+      const top = this.ringTop(x, y, near);
+      this.ringAt[key] = top;
+      boxes.push({ x: x - RING / 2, y: y + top, w: RING, h: RING });
+    }
+  }
+
   // The monster and its health bar. `hits` is how many agents are attacking it.
   foe(W, hits) {
     const m = this.monster;
@@ -1772,19 +1854,10 @@ export default class RaidParty extends View {
         .left(0)
         .top(0)
         .child(image(src(monsterArt(m.kind, part))).w(kind.w).h(kind.h));
-    // the plate over its head, a row taller while it shows status icons, kept
-    // inside the scene when the wall is low and clear of the HUD's frames above
-    // it (the stage section, and on a narrow scene the sign or the strip; not a
-    // stage note, which is short-lived and drawn over it, so the plate never jumps)
     const icons = dead ? [] : plateIcons(this.statuses, this.auras());
-    const plateH = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
+    const at = this.plateBox(W, icons); // in floor px, clear of the HUD's frames
     const mid = left + Math.round(kind.w / 2);
-    const half = plateW(kind) / 2;
-    const hud = this.hudBox ?? {};
-    const clear = [hud.sign, hud.strip, hud.stage]
-      .filter((b) => b && b.x < mid + half && mid - half < b.x + b.w)
-      .reduce((y, b) => Math.max(y, b.y + b.h + 4), 4);
-    const plateTop = Math.max(top - plateH - 4, clear - this.wallH);
+    const plateTop = at.y;
     // A press on the monster's body (foeHit) or its plate opens its card
     // (monsterCard), and not a walk there; under the pointer, as a station
     // does, the plate is outlined in white and a white arrow bobs over it
@@ -1794,7 +1867,7 @@ export default class RaidParty extends View {
     const hot = Boolean(this.foeHot);
     const plate = this.foeTarget(this.plate(m, kind, mid, plateTop, icons, hot), "plate");
     // where the plate is, in the scene, for the card to keep clear of it
-    this.plateBox = { x: mid - half, y: plateTop + this.wallH, w: 2 * half, h: plateH };
+    this.plateAt = { ...at, y: at.y + this.wallH };
     const arrow =
       hot && plateTop - 30 >= -this.wallH
         ? [
@@ -2591,16 +2664,17 @@ export default class RaidParty extends View {
       const m = Object.hasOwn(members, a.address) ? members[a.address] : null;
       return !fights(a) || !m ? -1 : m.down !== null ? 2 : m.hp < m.maxHp ? 3 : 4;
     };
-    const yourBar = Object.hasOwn(members, YOU) && !this.walking ? [vitalsBox(members[YOU], this.you.x, this.you.y)] : [];
-    this.barred = lay(order(hurt), VITALS.w, VITALS.h, (a, { x, y }) => vitalsBox(members[a.address], x, y), [yourTag, ...yourBar]);
+    const yourBar = Object.hasOwn(members, YOU) && !this.walking ? [vitalsBox(members[YOU], this.you.x, this.you.y, this.ringTop(this.you.x, this.you.y))] : [];
+    this.barred = lay(order(hurt), VITALS.w, VITALS.h, (a, { x, y }) => vitalsBox(members[a.address], x, y, this.ringTop(x, y)), [yourTag, ...yourBar]);
   }
 
   // What shows over someone in the fight whose feet are at x, y (see
-  // party.js): their HP bar, or, knocked out, stars circling over them, a
-  // gold bar running down their rest (natively, from the render after they
-  // fell) and beside it the whole seconds left of it in the pixel font, in
-  // gold (as of the countdowns' last beat, see koBeat; 30 as they fall); a flash where a blow hit them and a green plus rising off them when
-  // healed, each popping in on the tick it happened and fading on the next.
+  // party.js): their HP bar, or, knocked out, stars circling over them and
+  // over the stars the whole seconds left of their rest in the pixel font, in
+  // gold, inside a ring that is full as they fall and empties clockwise from
+  // the top a step a second (both as of the countdowns' last beat, see
+  // koBeat); a flash where a blow hit them and a green plus rising off them
+  // when healed, each popping in on the tick it happened and fading on the next.
   // Freshness is by the attack clock's ticks. Nothing for anyone not in it.
   // One box at the feet holds it all, gliding with `move` as the sprite does.
   vitals(key, x, y, move = MOVE) {
@@ -2609,18 +2683,13 @@ export default class RaidParty extends View {
     const t = this.clock;
     const out = [];
     // all of it in one box at the feet, gliding with the sprite (`move`) to a new spot
-    const bar = (inner) => div().absolute().left(-HP_W / 2 - 1).top(-78).w(HP_W + 2).h(7).p(1).bg("#141a26").child(inner);
+    // the HP bar: its track (the HP lost) under its fill, no outline round them
+    const bar = (inner) => div().absolute().left(-HP_W / 2).top(-77).w(HP_W).h(5).bg(HP_TRACK).child(inner);
     if (m.down !== null) {
-      const fresh = t <= m.down - KO_TICKS;
+      // the whole seconds left of the rest, as of the countdowns' last beat (30 as they fall)
+      // (one back from away still down, as of when it came back until the next beat)
+      const left = String(restSeconds(this.party, key, Math.max(this.koBeat, m.down - KO_TICKS, m.back ?? -Infinity)));
       out.push(
-        bar(
-          div()
-            .id(`idle-rpg-rest-${key}-${m.down}`)
-            .h(5)
-            .w(fresh ? HP_W : 0)
-            .bg(GOLD)
-            .transition("width", { duration: Math.max(TICK_STEP, Math.round(restLeft(this.party, key, t) * KO_TICKS * TICK_STEP)), easing: "linear" }),
-        ),
         // stars circling: two pictures a sixth of a turn apart, crossfaded, bobbing
         div()
           .absolute()
@@ -2631,13 +2700,23 @@ export default class RaidParty extends View {
           .loop("top", { from: -66, to: -62, period: 900 })
           .child(div().absolute().left(0).top(0).loop("opacity", { from: 1, to: 0, period: 700, easing: "linear" }).child(image(src("status/dizzy-1.png")).w(75).h(33)))
           .child(div().absolute().left(0).top(0).loop("opacity", { from: 0, to: 1, period: 700, easing: "linear" }).child(image(src("status/dizzy-2.png")).w(75).h(33))),
-        // the seconds left of the rest, by the bar where an aura's icon would be
+        // in place of the bar, over the stars: the seconds inside a ring that empties a step with each
         div()
-          .id(`idle-rpg-rest-count-${key}`)
+          .id(`idle-rpg-rest-ring-${key}`)
           .absolute()
-          .left(HP_W / 2 + 3)
-          .top(-82)
-          .child(pixelText(String(restSeconds(this.party, key, Math.max(this.koBeat, m.down - KO_TICKS))), "gold", 2)),
+          .left(-RING / 2)
+          .top(this.ringAt?.[key] ?? this.ringTop(x, y))
+          .w(RING)
+          .h(RING)
+          .child(image(src(restArt(Number(left)))).w(RING).h(RING))
+          .child(
+            div()
+              .id(`idle-rpg-rest-count-${key}`)
+              .absolute()
+              .left((RING - textW(left, 2)) / 2)
+              .top((RING - GLYPH_H * 2) / 2)
+              .child(pixelText(left, "gold", 2)),
+          ),
       );
     } else {
       const share = m.hp / m.maxHp;
@@ -3356,7 +3435,15 @@ export default class RaidParty extends View {
       }
     // whose name tags and bubbles show (see crowdMarks): everyone's, unless the party is a crowd
     this.hoverTaken = false; // a new render: the pointer's next arrival may take the hover (see critter)
+    // where the sign, the stage section (and its note) and the strip go: worked
+    // out before anything is drawn, since the boss's plate and the knocked out's
+    // rings keep clear of them (and the rings of the plate: `ringClear`, in floor px)
+    const hud = (this.hudBox = this.hudLayout(W, list, Boolean(foeKind)));
+    const plateAt = foeKind ? this.plateBox(W, this.monster.hp > 0 ? plateIcons(this.statuses, this.auras()) : []) : null;
+    this.ringClear = [hud.sign, hud.strip, hud.stage].filter(Boolean).map((b) => ({ ...b, y: b.y - this.wallH }));
+    if (plateAt) this.ringClear.push(plateAt);
     this.crowdMarks(list, W, pitch);
+    this.placeRings();
     // in a crowd you are drawn over everyone, so you (and your tag) are never lost in it
     if (this.tagged) yours.y = FLOOR_H + 1;
     for (const a of list) {
@@ -3386,9 +3473,6 @@ export default class RaidParty extends View {
       foeKind && this.settings.damageNumbers ? this.damage.filter((d) => d.monster === this.monster.id && Date.now() - d.at <= TICK_STEP + DAMAGE_MS + 250) : [];
     actors.sort((p, q) => p.y - q.y);
 
-    // where the sign, the stage section (and its note) and the strip go: worked
-    // out before anything is drawn, since the boss's plate keeps clear of them
-    const hud = (this.hudBox = this.hudLayout(W, list, Boolean(foeKind)));
     // too narrow for the map: its picker closes (and stays closed once wider again)
     if (!hud.map) this.mapOpen = false;
     // a raid is in its stage's biome, the town on the rampart
@@ -4199,7 +4283,7 @@ export default class RaidParty extends View {
   cardSpot(w, h, hud) {
     const W = Math.max(320, this.size.width);
     const H = Math.max(FLOOR_H, this.size.height);
-    const keep = [hud.sign, hud.strip, hud.stage, this.plateBox]
+    const keep = [hud.sign, hud.strip, hud.stage, this.plateAt]
       .filter(Boolean)
       .map((b) => ({ x: b.x - FOE_CLEAR, y: b.y - FOE_CLEAR, w: b.w + 2 * FOE_CLEAR, h: b.h + 2 * FOE_CLEAR }));
     const fit = (v, hi) => Math.round(clamp(v, 0, Math.max(0, hi)));

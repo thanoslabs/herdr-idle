@@ -47,7 +47,8 @@
 #               pools of light (halloween: candle, torch-a, -b, -p, -pa,
 #               -pb; winter: candle, torch, fill, fire-0 to fire-23)
 #   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark,
-#               dizzy-1, dizzy-2 (knocked out), heal, sparkle
+#               dizzy-1, dizzy-2 (knocked out), rest/1 to rest/30 (the ring round
+#               a knockout's countdown, a picture a second), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
 #               coin, star, armour, hat, decor, gear, map (the stage picker), the
 #               card's wrench, and the stage section's arrows: prev, next
@@ -1973,6 +1974,27 @@ icon("status/heal.png", [
     "..ggg..",
 ], {"g": "#3fbf6f", "L": "#9af0b0", "W": "#ffffff"})
 icon("status/sparkle.png", ["..L..", "..W..", "LWWWL", "..W..", "..L.."], {"L": "#9af0cf", "W": "#ffffff"})
+
+# The ring round a knocked-out character's countdown, in place of its HP bar
+# (status/rest/1 to -30, one for each whole second of rest left: REST_SECONDS
+# is KO_SECONDS in mods/idle-rpg/rules.js). 21x21, shown at 2 screen px a
+# pixel like the number inside it: a band 2 pixels thick between a pixel of
+# outline either side, gold for the rest still to run and the dark track for
+# what has run, emptying clockwise from the top (by each pixel's middle), so
+# the last second's is a sliver; inside, a hole 13 wide for two digits.
+REST_SECONDS = 30
+def rest_ring(n):
+    size, c = 21, 10
+    g = blank(size, size)
+    for y in range(size):
+        for x in range(size):
+            d = math.hypot(x - c, y - c)
+            if d > 10.5 or d <= 6.5: continue
+            turn = (math.atan2(x - c, c - y) / (2 * math.pi)) % 1     # clockwise from the top, 0 to 1
+            g[y][x] = OUTLINE if d > 9.5 or d <= 7.5 else "#ffd166" if turn >= 1 - n / REST_SECONDS else "#2b3649"
+    save(f"status/rest/{n}.png", g)
+for n in range(1, REST_SECONDS + 1):
+    rest_ring(n)
 
 # ---- Knocked out: each class lying on its back, its head to the left ("l")
 # or right ("r"), in every colourway, with its weapon and every hat lying with

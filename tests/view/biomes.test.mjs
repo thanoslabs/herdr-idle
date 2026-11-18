@@ -4,9 +4,9 @@
 // fought however it changes (the arrows, advancing after a kill, dropping back
 // after a time-out, the picker). Under the sky a biome keeps the day, the
 // night and the night's darkness; under a roof neither, its own light instead.
-// Every ground lets the characters' outline stand out. The picker (the map
-// left of the gear) lists the biomes reached a page at a time and picks a
-// stage exactly as the arrows step to one. (That each backdrop's tiles cover
+// Every ground lets the characters' outline and the HP bars' track stand
+// out. The picker (the map left of the gear) lists the biomes reached a page
+// at a time and picks a stage exactly as the arrows step to one. (That each backdrop's tiles cover
 // the scene at every size is in sizes.test.mjs, with the rampart's.)
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
@@ -16,6 +16,9 @@ import { agent, mountRaid, mountView, raid, walk } from "../harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
 const OUTLINE = "#141a26"; // the characters' outline (the generator's OUTLINE)
+// WCAG relative luminance of an RGB colour, and a "#rrggbb" as RGB
+const lum = (r, g, b) => [r, g, b].map((c) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4)).reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
+const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
 
 // Which backdrop is drawn: a biome's id, or "rampart", read from its ground's pictures.
 function backdrop(v) {
@@ -103,8 +106,6 @@ describe("where a raid takes place", () => {
 
   test("every ground lets the characters' dark outline stand out as well as the planks do: 4.5:1 on average or more", () => {
     // the WCAG contrast of a ground's average colour against the outline
-    const lum = (r, g, b) => [r, g, b].map((c) => (c / 255 <= 0.03928 ? c / 255 / 12.92 : ((c / 255 + 0.055) / 1.055) ** 2.4)).reduce((s, c, i) => s + c * [0.2126, 0.7152, 0.0722][i], 0);
-    const hex = (h) => [1, 3, 5].map((i) => parseInt(h.slice(i, i + 2), 16));
     const outline = lum(...hex(OUTLINE));
     const average = (file) => {
       const { rgba } = pixels(file);
@@ -120,6 +121,32 @@ describe("where a raid takes place", () => {
       assert.ok(r >= 4.5, `${b.id}: ${r.toFixed(2)}:1 (the planks are ${planks.toFixed(2)}:1)`);
     }
     assert.ok(planks >= 4.5);
+  });
+
+  // The HP bars have no outline: a bar is its dark track (the HP lost) and its
+  // fill. Over a raid's ground the track stands out as the outline does, and
+  // each fill against the track, so the HP lost reads at any share. A fill by
+  // itself against a ground reads by hue more than lightness (the owner chose
+  // no outline; the numbers are in PLAN.md).
+  const BAR_TRACK = "#141a26"; // main.js HP_TRACK
+  const BAR_TONES = { green: "#4cd47b", yellow: "#ffd166", red: "#ff5d5d" }; // main.js vitals, above half, a quarter, below
+  const contrast = (a, b) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05);
+  const groundLum = (file) => {
+    const { rgba } = pixels(file);
+    let n = 0;
+    let sum = 0;
+    for (let i = 0; i < rgba.length; i += 4) if (rgba[i + 3] === 255) (sum += lum(rgba[i], rgba[i + 1], rgba[i + 2])), (n += 1);
+    return sum / n;
+  };
+  test("an HP bar's track stands out on every ground (4.5:1 on average), and each fill against the track (3:1)", () => {
+    for (const b of BIOMES) {
+      const r = contrast(groundLum(biomeArt(b.id, "ground")), lum(...hex(BAR_TRACK)));
+      assert.ok(r >= 4.5, `${b.id}: the track at ${r.toFixed(2)}:1`);
+    }
+    for (const [name, tone] of Object.entries(BAR_TONES)) {
+      const r = contrast(lum(...hex(tone)), lum(...hex(BAR_TRACK)));
+      assert.ok(r >= 3, `${name} on the track: ${r.toFixed(2)}:1`);
+    }
   });
 });
 

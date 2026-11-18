@@ -2,13 +2,15 @@
 // that asks for one that is not), across a broad sweep of states: the town by
 // day and night at many widths, each boss in each state (blinking, roaring,
 // attacking either way, slain), every class in every colourway, weapon and
-// hat in every pose, every weapon's attack and effects, numbers of every size
-// in every colour, every panel, and the town in each season. Then: nearly
+// hat in every pose, a knockout's countdown ring at every second, every
+// weapon's attack and effects, numbers of every size in every colour, every
+// panel, and the town in each season. Then: nearly
 // every file in art/ is drawn by one of those states; the few that are not
 // are listed below, with why.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { BIOMES, BIOME_ART, CLASSES, ELLIPSIS, KINDS, LETTERS, SEASON_ART, UNKNOWN, biomeArt, catalogue, kindOf, letterArt, seasonArt } from "../../mods/idle-rpg/rules.js";
+import { KO_TICKS } from "../../mods/idle-rpg/party.js";
+import { BIOMES, BIOME_ART, CLASSES, ELLIPSIS, KINDS, KO_SECONDS, LETTERS, SEASON_ART, UNKNOWN, biomeArt, catalogue, kindOf, letterArt, restArt, seasonArt } from "../../mods/idle-rpg/rules.js";
 // the first stage each kind is fought at
 const FIRST = KINDS.map((k) => Array.from({ length: 40 }, (_, i) => i + 1).find((s) => kindOf(s) === k));
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
@@ -120,6 +122,14 @@ describe("every picture asked for is in art/", () => {
         }
       }
     }
+  });
+
+  test("a knockout's countdown ring at every second of its rest", async () => {
+    const v = await mountRaid({ classes: ["wizard", "warrior"], you: "warrior", health: 40 });
+    v.advance(2000);
+    Object.assign(v.view.party.members.t1, { hp: 0, down: v.view.clock + KO_TICKS });
+    v.until(() => (keep(v), !v.view.knocked("t1")), 40000);
+    for (let n = 1; n <= KO_SECONDS; n++) assert.ok(drawn.has(restArt(n)), restArt(n));
   });
 
   test("each boss blinking, roaring, attacking either way, and slain", async () => {
