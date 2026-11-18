@@ -29,13 +29,14 @@
 // The party is a plain object (see newParty) that these functions change in
 // place, as rules.js changes the progress:
 //   {
-//     members: { <key>: { hp, maxHp, x, y, down, hitAt, healedAt } },  (no prototype)
+//     members: { <key>: { hp, maxHp, x, y, down, hitAt, healedAt, back? } },  (no prototype)
 //     away: { <key>: { hp, maxHp, rest } },  (who left this attempt; rest: ticks of it left, or null)
 //     foe: { next, singles, pending, last, seq },
 //   }
 // A member's `down` is the tick it gets back up while it is knocked out, or
 // null; `hitAt` and `healedAt` the tick it was last hit or healed (null if
-// never), for main.js to flash it. `x`, `y` are where it stands, in floor px
+// never), for main.js to flash it; `back`, only while one came back from away
+// still knocked out, the tick it came back (its countdown counts from there). `x`, `y` are where it stands, in floor px
 // (its feet). The foe's `next` is the tick its next attack starts (null until
 // someone is there to attack), `singles` how many single blows come before its
 // next area attack, `pending` the attack under way (see Attack below) or null,
@@ -47,7 +48,7 @@
 // started, as drawn and in the old formation: see caught); the tick it started (its wind-up, or the marker on the floor) and
 // the tick it lands.
 
-import { TICK_STEP } from "./rules.js";
+import { KO_SECONDS, TICK_STEP } from "./rules.js";
 
 // Defaults chosen to be retuned; nothing else depends on their values.
 const SECOND = 1000 / TICK_STEP; // ticks
@@ -63,10 +64,11 @@ export const SINGLES_BETWEEN = [1, 2, 3];
 export const AREA_RADIUS = 70; // px either side of the spot an area attack is aimed at
 export const AREA_DEPTH = 0.5; // and this much of it up and down the floor, which is seen at a slant (foe/marker is drawn so)
 // A knocked-out character rests this long, then gets up at full HP: 30
-// seconds, the owner's number, with a countdown by the character (main.js).
+// seconds (KO_SECONDS in rules.js, which numbers the countdown's ring), the
+// owner's number, with a countdown by the character (main.js).
 // An attempt has 10 minutes (STAGE_MS), so one knocked out comes back
 // mid-fight.
-export const KO_TICKS = 30 * SECOND;
+export const KO_TICKS = KO_SECONDS * SECOND;
 // The monster's damage is the stage's (an input: see hitDamage), which is
 // what one blow does to a party of PARTY_SIZE attackers. With n attackers
 // standing a blow does (n / PARTY_SIZE) ** SCALE_POWER of it: softer for
@@ -177,6 +179,7 @@ export function syncParty(party, fighters, tick, random) {
       const hp = !was ? maxHp : down !== null ? 0 : Math.min(maxHp, Math.max(Number.MIN_VALUE, was.hp + Math.max(0, maxHp - was.maxHp)));
       if (was) delete party.away[f.key];
       party.members[f.key] = { hp, maxHp, x: f.x, y: f.y, down, hitAt: null, healedAt: null };
+      if (down !== null) party.members[f.key].back = tick;
       if (f.ox !== undefined) Object.assign(party.members[f.key], { ox: f.ox, oy: f.oy });
       joined.push(f.key);
       continue;
@@ -218,6 +221,7 @@ export function resetParty(party, tick, random) {
   for (const m of Object.values(party.members)) {
     m.hp = m.maxHp;
     m.down = m.hitAt = m.healedAt = null;
+    delete m.back;
   }
   party.foe.pending = party.foe.last = null;
   party.foe.singles = SINGLES_BETWEEN[pick(random, SINGLES_BETWEEN.length)];
@@ -232,6 +236,7 @@ export function rise(party, tick) {
   for (const [key, m] of Object.entries(party.members)) {
     if (m.down !== null && tick >= m.down) {
       m.down = null;
+      delete m.back;
       m.hp = m.maxHp;
       back.push(key);
     }

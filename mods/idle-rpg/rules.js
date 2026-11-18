@@ -150,6 +150,16 @@ export const ATTACK_TICKS = [12, 11, 10, 9, 8, 7];
 // characters on the same rank do not fall into step (narrower where it would
 // go under MIN_ATTACK_TICKS, so the average stays the rank's).
 export const ATTACK_JITTER = 2;
+// A knocked-out character rests this many seconds (party.js counts KO_TICKS
+// from it), its whole seconds left counting down inside a ring that empties a
+// step a second: status/rest/<n>, a picture for each of 1 to KO_SECONDS
+// (tools/idle-rpg-sprites.py draws them), from restArt, which gives the one
+// for `seconds` left (rounded up, kept to that range), or null for no number.
+export const KO_SECONDS = 30;
+export function restArt(seconds) {
+  if (typeof seconds !== "number" || !Number.isFinite(seconds)) return null;
+  return `status/rest/${Math.min(KO_SECONDS, Math.max(1, Math.ceil(seconds)))}.png`;
+}
 
 // Seasons: decorations the town (never a raid) puts up for part of the year,
 // following the calendar in the machine's local time, while the "Decorate in

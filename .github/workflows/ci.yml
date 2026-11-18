@@ -82,7 +82,8 @@ jobs:
           # colourway, each weapon's layer for its class in every picture it has
           # and its attack's pictures facing each way, each hat's overlay for each
           # class (no hat, no overlay), every monster's pictures (its attacks on the party too) and every character
-          # of the pixel font in every colour it has (and no other colour), every
+          # of the pixel font in every colour it has (and no other colour), the
+          # knockout countdown's ring for each second of the rest, every
           # biome's backdrop and swatch, every season's decorations, every
           # character of the lettering likewise (the placeholder and the ellipsis
           # included) and every label the HUD letters, the boss's names, and that
@@ -92,7 +93,7 @@ jobs:
           node --input-type=module <<'EOF'
           import { existsSync, readdirSync, readFileSync } from "node:fs";
           import { EFFECT_ICONS, EFFECT_MARKS, EFFECT_OVERLAYS, effectIconArt, markArt, overlayArt } from "./mods/idle-rpg/effects.js";
-          import { ATTACK_PARTS, BIOMES, BIOME_ART, CLASSES, SEASONS, SEASON_ART, ELLIPSIS, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, LABELS, LETTERS, LETTER_COLOURS, MONSTER_ART, MONSTER_ATTACKS, UNKNOWN, WEAPON_FRAMES, attackArt, attackPart, biomeArt, catalogue, clockText, glyphArt, hatArt, letterArt, letterFit, letterable, lookArt, monsterArt, seasonArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
+          import { ATTACK_PARTS, BIOMES, BIOME_ART, CLASSES, SEASONS, SEASON_ART, ELLIPSIS, FRAMES, GLYPHS, GLYPH_COLOURS, KINDS, KO_SECONDS, LABELS, LETTERS, LETTER_COLOURS, MONSTER_ART, MONSTER_ATTACKS, UNKNOWN, WEAPON_FRAMES, attackArt, attackPart, biomeArt, catalogue, clockText, glyphArt, hatArt, letterArt, letterFit, letterable, lookArt, monsterArt, restArt, seasonArt, shortNumber, weaponArt } from "./mods/idle-rpg/rules.js";
           const dir = "mods/idle-rpg";
           const unknown = KINDS.filter((k) => !MONSTER_ART[k]);
           if (unknown.length) {
@@ -209,6 +210,8 @@ jobs:
             ...KINDS.flatMap((k) => ["single", "area"].flatMap((type) => Object.entries(MONSTER_ATTACKS[k]?.[type] ?? {}).filter(([, part]) => part).flatMap(([piece]) =>
               ["l", "r"].map((side) => (attackPart(k, type, piece, side) === null ? "attack piece without a part" : monsterArt(k, attackPart(k, type, piece, side))))))),
             ...GLYPH_COLOURS.flatMap((c) => [...GLYPHS].map((ch) => glyphArt(c, ch))),
+            // the ring round a knockout's countdown, one for each second of the rest
+            ...Array.from({ length: KO_SECONDS }, (_, i) => restArt(i + 1)),
             // every biome's backdrop (the raids' scenes) and its swatch in the stage picker
             ...BIOMES.flatMap((b) => (BIOME_ART[b.id] ?? ["a biome with no BIOME_ART"]).map((part) => biomeArt(b.id, part))),
             // every season's decorations in town and its pictures of the night (seasons/<id>/)
