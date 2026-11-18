@@ -30,7 +30,7 @@
 // character of a class fights with the weapon the class has equipped.
 // Statuses live in memory with the monster they are on and are never saved.
 
-import { ATTACK_TICKS, CLASSES, CRIT_MULTIPLIER, DEFAULT_LOOK, KINDS, MIN_ATTACK_TICKS, SHOP } from "./rules.js";
+import { ATTACK_TICKS, CLASSES, CRIT_MULTIPLIER, DEFAULT_LOOK, LABELS, MIN_ATTACK_TICKS, MONSTER_KINDS, SHOP } from "./rules.js";
 
 // ---- Weapon stats ----------------------------------------------------------
 // Each weapon's factor, per class and weapon id: its blows deal this many times
@@ -59,12 +59,9 @@ const MAX_GAP_TICKS = 1e6; // a gap past this (about three days) is taken as thi
 // ---- Elements --------------------------------------------------------------
 export const WEAK_FACTOR = 1.5; // damage of a monster's weakness
 export const RESIST_FACTOR = 0.75; // damage of the element it resists
-// Each monster kind's weakness and resistance (KINDS in rules.js).
-export const WEAKNESS = {
-  slime: { weak: "frost", resist: "poison" },
-  ogre: { weak: "fire", resist: "storm" },
-  dragon: { weak: "frost", resist: "fire" },
-};
+// Each monster kind's weakness and resistance: { <kind>: { weak, resist } },
+// from its row in BIOMES (rules.js), where every kind of each biome is listed.
+export const WEAKNESS = Object.fromEntries(MONSTER_KINDS.map((k) => [k.id, { weak: k.weak, resist: k.resist }]));
 // The status each element brings (ELEMENTS in rules.js).
 export const ELEMENT_STATUS = { fire: "burn", frost: "chill", storm: "chain", poison: "venom" };
 
@@ -362,19 +359,16 @@ const AURA_TEXT = {
 };
 
 // Short lines saying what a weapon does, for the shop: its pace ("2× damage,
-// half speed"), its element's status ("Burn: +20% in 3s"), the kinds weak
-// to and resisting it ("Weak: slime, dragon", "Resist: ogre"), and a vial's
-// aura ("Aura: party +30% damage", "Half damage itself"). Unknown ids are the
-// class's default, as in statsOf.
+// half speed"), its element's status ("Burn: +20% in 3s") and the element
+// ("Fire": which kinds are weak to it or resist it is on each
+// monster's card, as thirteen kinds' names do not fit the shop's column), and
+// a vial's aura ("Aura: party +30% damage", "Half damage itself"). Unknown ids
+// are the class's default, as in statsOf.
 export function statLines(cls, weapon) {
   const w = statsOf(cls, weapon);
   const lines = [w.factor === 1 ? "Normal speed" : `${NUMBER(w.factor)}× damage, ${speedText(w.factor)}`];
   if (w.element) {
-    lines.push(STATUS_TEXT[ELEMENT_STATUS[w.element]]);
-    const weak = KINDS.filter((k) => matchup(k, w.element) === "weak");
-    const resist = KINDS.filter((k) => matchup(k, w.element) === "resist");
-    if (weak.length) lines.push(`Weak: ${weak.join(", ")}`);
-    if (resist.length) lines.push(`Resist: ${resist.join(", ")}`);
+    lines.push(STATUS_TEXT[ELEMENT_STATUS[w.element]], LABELS[w.element]);
   }
   if (AURAS.includes(w.potion)) lines.push(AURA_TEXT[w.potion], "Half damage itself");
   return lines;
@@ -384,8 +378,8 @@ export function statLines(cls, weapon) {
 // weapon's name and its first line, then the rest joined by " · ". For a weapon
 // at normal speed with more to say, the first line is its status or aura and
 // "Normal speed" goes to the second, so each line fits the shop's 210px at
-// size 10 ("Fire Blade: Burn: +20% in 3s", "Normal speed · Weak: ogre ·
-// Resist: dragon"). A weapon with nothing more: "No element".
+// size 10 ("Fire Blade: Burn: +20% in 3s", "Normal speed · Fire").
+// A weapon with nothing more: "No element".
 export function shopLines(cls, weapon) {
   const w = statsOf(cls, weapon);
   const name = (CLASSES.includes(cls) ? SHOP.weapon.items[cls].find((it) => it.id === w.id)?.name : null) ?? "Weapon";
@@ -400,7 +394,8 @@ export function shopLines(cls, weapon) {
 // marks for a damage number that hit a weakness or a resistance, in
 // art/effects/marks/; and the pictures laid over the monster while a status
 // is on it, in art/effects/<status>/ (see tools/idle-rpg-sprites.py).
-export const EFFECT_ICONS = ["burn", "chill", "venom", "hex", "haste", "might"];
+// (chain, storm's, shows only on the monster's card: a chain is over as it lands)
+export const EFFECT_ICONS = ["burn", "chill", "venom", "hex", "haste", "might", "chain"];
 export const EFFECT_MARKS = ["weak", "resist"];
 export const EFFECT_OVERLAYS = {
   burn: ["flame-1", "flame-2"],

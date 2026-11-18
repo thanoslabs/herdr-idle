@@ -52,6 +52,7 @@ import {
   equipped,
   failStage,
   healOf,
+  kindOf,
   maxHpOf,
   newProgress,
   pointsLeft,
@@ -81,10 +82,21 @@ const SWORD = 44;
 const RANGE = 360;
 const MELEE = 90;
 // each kind's picture width and bulk (MONSTERS in main.js): where the party stands
+// (tests/sim.test.mjs checks they match main.js's)
 export const MONSTERS = {
+  goblin: { w: 88, core: { x: 0, half: 30 } },
+  lizard: { w: 128, core: { x: 0, half: 44 } },
   slime: { w: 136, core: { x: 0, half: 60 } },
+  orc: { w: 144, core: { x: 0, half: 46 } },
   ogre: { w: 200, core: { x: 0, half: 62 } },
+  "chief-ogre": { w: 232, core: { x: 0, half: 68 } },
+  wyvern: { w: 248, core: { x: 0, half: 52 } },
+  draconian: { w: 144, core: { x: -6, half: 42 } },
   dragon: { w: 328, core: { x: 12, half: 84 } },
+  imp: { w: 96, core: { x: 0, half: 34 } },
+  "magma-slime": { w: 136, core: { x: 0, half: 60 } },
+  "goblin-mage": { w: 104, core: { x: -6, half: 34 } },
+  demon: { w: 280, core: { x: 0, half: 64 } },
 };
 const clamp = (n, lo, hi) => Math.max(lo, Math.min(hi, n));
 
@@ -549,8 +561,8 @@ export function play(o) {
   while (fight.now < limit && !(fight.stats.firstClears[o.until] !== undefined)) {
     fight.step();
     if (fight.now % WATCH_MS) continue;
-    if (o.weapons === "best" && fight.monster.kind !== kind) {
-      kind = fight.monster.kind;
+    if (o.weapons === "best" && kindOf(fight.monster.stage) !== kind) {
+      kind = kindOf(fight.monster.stage); // the kind fought there (bossOf's)
       for (const cls of classes) if (cls !== "healer") own(cls, bestWeapon(cls, kind));
     }
     if (o.policy === "none") continue;

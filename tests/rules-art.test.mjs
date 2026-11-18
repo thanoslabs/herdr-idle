@@ -7,6 +7,7 @@ import * as E from "../mods/idle-rpg/effects.js";
 import * as P from "../mods/idle-rpg/party.js";
 import * as R from "../mods/idle-rpg/rules.js";
 import { artFiles } from "./harness/world.mjs";
+import { pngSize } from "./harness/png.mjs";
 
 const FILES = new Set(artFiles());
 const isArt = (p) => typeof p === "string" && FILES.has(p);
@@ -106,8 +107,34 @@ describe("monsterArt and attackPart", () => {
     assert.equal(R.attackPart("ogre", "area", "shot"), null, "the ogre's slam throws nothing");
     assert.equal(R.attackPart("slime", "single", "pose", "l"), "attack/spit/l");
   });
+  test("every kind has its whole picture, its eyelids and its breathing piece; the slimes a foot, the ogres a roar", () => {
+    for (const k of R.KINDS) for (const part of ["idle", "blink", "top"]) assert.ok(R.MONSTER_ART[k].includes(part), `${k} ${part}`);
+    for (const k of ["slime", "magma-slime"]) assert.ok(R.MONSTER_ART[k].includes("base"), k);
+    for (const k of ["ogre", "chief-ogre", "dragon"]) assert.ok(R.MONSTER_ART[k].includes("roar/roar"), k);
+    assert.deepEqual(Object.keys(R.MONSTER_ART), R.KINDS);
+    assert.deepEqual(Object.keys(R.MONSTER_ATTACKS), R.KINDS);
+    // every picture of a kind in its own folder, and nothing in a folder but its own kind's
+    for (const k of R.KINDS) for (const part of R.MONSTER_ART[k]) assert.ok(R.monsterArt(k, part).startsWith(`monsters/${k}/`), `${k} ${part}`);
+    const folders = new Set([...FILES].filter((f) => f.startsWith("monsters/")).map((f) => f.split("/")[1]));
+    assert.deepEqual([...folders].sort(), [...R.KINDS].sort());
+  });
+  test("an attack's part is the same size for every kind that has it (main.js sizes them by name)", () => {
+    const sizes = new Map();
+    for (const k of R.KINDS)
+      for (const type of ["single", "area"])
+        for (const piece of ["shot", "hit", "flicker"])
+          for (const side of ["l", "r"]) {
+            const part = R.attackPart(k, type, piece, side);
+            if (!part) continue;
+            const name = part.replace(/\/[lr]$/, "");
+            const { w, h } = pngSize(R.monsterArt(k, part));
+            const seen = sizes.get(name);
+            if (seen) assert.deepEqual([w, h], seen.wh, `${k}'s ${part} is ${w}x${h}, ${seen.k}'s ${seen.wh.join("x")}`);
+            else sizes.set(name, { k, wh: [w, h] });
+          }
+  });
   test("an unknown kind or part is null", () => {
-    for (const h of HOSTILE) {
+    for (const h of [...HOSTILE, "Slime", "slime/../dragon", "chief_ogre", "magma slime"]) {
       assert.equal(R.monsterArt(h, "idle"), null);
       if (h !== undefined) assert.equal(R.monsterArt("dragon", h), null, String(h));
       assert.ok(safe(R.attackPart(h, "single", "pose")) || R.attackPart(h, "single", "pose") === null);

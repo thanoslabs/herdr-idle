@@ -556,8 +556,8 @@ describe("name tags in a crowd", () => {
   test("400 in a raid, the same name each, 60% working, 20% idle, 10% done, 10% blocked: no tag over another, as drawn", async (t) => {
     const statuses = (i) => (i % 10 < 6 ? "working" : i % 10 < 8 ? "idle" : i % 10 === 8 ? "done" : "blocked");
     const list = Array.from({ length: 400 }, (_, i) => agent(`k${i}`, statuses(i), { space_name: "Keep", tab_name: "Hall" }));
-    const { saved } = raid({ battle: true, classes: [], stage: 3 });
-    saved.best = 3;
+    const { saved } = raid({ battle: true, classes: [], stage: 30 }); // the dragon
+    saved.best = 30;
     saved.sprites = { you: "archer", ...Object.fromEntries(list.map((a, i) => [a.address, ["warrior", "wizard", "archer", "healer"][i % 4]])) };
     saved.seen = Object.fromEntries(list.map((a) => [a.address, 1_800_000_000_000]));
     const v = await mountView({ saved, agents: list, width: 1459 });
@@ -689,12 +689,12 @@ describe("name tags in a crowd", () => {
 describe("the boss's area attack in a crowd", () => {
   const EVEN = ["warrior", "wizard", "archer", "healer"];
   const inRing = (p, x, y) => ((p.x - x) / 70) ** 2 + ((p.y - y) / 35) ** 2 <= 1;
-  // Plays `n` working agents (an even mix) and you against the boss of `stage`
+  // Plays `n` working agents (an even mix) and you against the boss of `stage` (30, the dragon)
   // and checks every area attack that lands: as many caught as the old
   // formation (main's) has standing inside the ring round the target's spot
   // there, the target among them if it stands; and `exact`: they are exactly
   // those (a small party, drawn where main draws it). Returns the counts.
-  async function areas(n, { stage = 3, exact = false, want = 3, seed = 1 } = {}) {
+  async function areas(n, { stage = 30, exact = false, want = 3, seed = 1 } = {}) {
     const classes = Array.from({ length: n }, (_, i) => EVEN[i % 4]);
     const v = await mountRaid({ classes, you: "archer", stage, health: 40, level: 30 }, { width: 1459, seed });
     const view = v.view;
@@ -738,12 +738,12 @@ describe("the boss's area attack in a crowd", () => {
   });
 
   test("30 agents: the simulation's first area attack catches as many as the view's", async () => {
-    const o = { classes: Array.from({ length: 30 }, (_, i) => EVEN[i % 4]), you: "archer", stage: 3, health: 40, level: 30 };
-    const v = await mountRaid(o, { seed: 5 });
+    const o = { classes: Array.from({ length: 30 }, (_, i) => EVEN[i % 4]), you: "archer", stage: 30, health: 40, level: 30 }; // the dragon
+    const v = await mountRaid(o, { seed: 1 }); // (seed 5 caught one at stage 30, the dragon's since the biomes' monsters)
     const s = loadState(raid({ now: timeAt(), ...o }).saved);
     const progress = { stage: s.stage, best: s.best, farming: s.farming, slain: s.slain, gold: s.gold, kills: s.kills, xp: s.xp, skills: s.skills, training: s.training, looks: s.looks, hats: s.hats };
     const all = v.world.agents;
-    const f = new Fight({ progress, agents: all.map((a) => a.address), idle: [], order: all.map((a) => a.address), sprites: s.sprites, you: s.you, settings: s.settings, random: seeded(5) });
+    const f = new Fight({ progress, agents: all.map((a) => a.address), idle: [], order: all.map((a) => a.address), sprites: s.sprites, you: s.you, settings: s.settings, random: seeded(1) });
     // the first area attack each lands, and how many it caught, seen tick by tick
     const first = { view: null, sim: null };
     const look = (x, which) => {

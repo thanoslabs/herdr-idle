@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { KO_TICKS } from "../../mods/idle-rpg/party.js";
-import { KO_SECONDS, attackPart, restArt } from "../../mods/idle-rpg/rules.js";
+import { KINDS, KO_SECONDS, attackPart, kindOf, restArt } from "../../mods/idle-rpg/rules.js";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
@@ -52,7 +52,8 @@ describe("HP bars", () => {
 
 describe("the boss's attacks", () => {
   test("each kind strikes a pose, flies its shot and lands its hit; area attacks mark the floor first", async () => {
-    for (const [stage, kind] of [[1, "slime"], [2, "ogre"], [3, "dragon"]]) {
+    for (const kind of KINDS) {
+      const stage = Array.from({ length: 40 }, (_, i) => i + 1).find((s) => kindOf(s) === kind);
       const v = await mountRaid({ classes: ["warrior", "warrior", "archer", "archer"], stage, health: 30 });
       const seen = new Set();
       // the area's pose and what lands, the single blow's hit, and its pose to one side or the other
@@ -257,8 +258,10 @@ describe("the countdown's ring", () => {
     let moved = 0;
     let rings = 0;
     const plated = [];
-    for (const stage of THOROUGH ? [1, 2, 3] : [1, 3])
-      for (const icons of stage === 1 ? [false, true] : [false])
+    // the slime (10), the ogre (17) and the dragon (30), then the first stage of every other kind
+    const others = KINDS.map((k) => Array.from({ length: 40 }, (_, i) => i + 1).find((s) => kindOf(s) === k)).filter((s) => ![10, 17, 30].includes(s));
+    for (const stage of THOROUGH ? [10, 17, 30, ...others] : [10, 30, 1, 21, 40])
+      for (const icons of stage === 10 ? [false, true] : [false])
         for (const width of widths)
           for (const height of heights) {
             // two rows each side of the boss, back and front, all knocked out
@@ -278,12 +281,12 @@ describe("the countdown's ring", () => {
               // from 360px tall the HUD's frames are out of its way
               if (height >= 360) assert.ok(!hud.some((f) => near({ ...box, y: box.y - top - 110 }, f)), `${id} at ${at}: under the HUD`);
             }
-            // never left on a HUD frame; on the plate only the slime's, by the two warriors beside it, on a short scene
+            // never left on a HUD frame; on the plate only by the two warriors beside the boss, on a short scene (the ogre's and the dragon's never)
             for (const s of ringsClear(v, at)) {
               assert.ok(!s.what.includes("hud"), `${s.key} at ${at} on the HUD`);
               if (s.what.includes("plate")) {
                 plated.push(`${s.key} ${at}`);
-                assert.ok(stage === 1 && ["t2", "t6"].includes(s.key) && s.top === -78 && height <= (icons ? 270 : 250) && width <= (icons ? 1480 : 700), `${s.key} at ${at} on the plate`);
+                assert.ok(["t2", "t6"].includes(s.key) && s.top === -78 && height <= (icons ? 270 : 250) && width <= (icons ? 1480 : 700), `${s.key} at ${at} on the plate`);
               }
             }
           }
@@ -297,7 +300,7 @@ describe("the countdown's ring", () => {
     for (const n of [4, 8])
       for (const width of widths)
         for (const height of heights) {
-          const v = await mountRaid({ classes: EIGHT.slice(0, n), you: "archer", stage: 1, health: 40 }, { width, height });
+          const v = await mountRaid({ classes: EIGHT.slice(0, n), you: "archer", stage: 10, health: 40 }, { width, height });
           v.advance(1000);
           const keys = Object.keys(v.view.party.members).sort();
           const sets = [...keys.map((k) => [k]), ...keys.flatMap((a, i) => keys.slice(i + 1).map((b) => [a, b]))];

@@ -38,7 +38,7 @@ describe("what the frames say", () => {
   test("the stage section: the stage and the time; FARM while farming; the plate keeps only the boss's name and HP", async () => {
     const v = await mountRaid({ stage: 12, best: 14, farming: true, status: "idle" });
     assert.deepEqual(v.text("idle-rpg-stage"), stageTexts({ stage: 12, farming: true, clock: "10:00", running: false }));
-    assert.deepEqual(v.text("idle-rpg-plate"), ["DRAGON", "5.3K/5.3K"]);
+    assert.deepEqual(v.text("idle-rpg-plate"), ["ORC", "5.3K/5.3K"]);
     assert.ok(!v.text("idle-rpg-plate").some((t) => /stage|\d:\d\d/i.test(t)));
   });
   test("the stage section keeps its width while farming and while paused, with an arrow at each end", async () => {

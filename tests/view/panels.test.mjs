@@ -80,7 +80,14 @@ describe("the codex", () => {
     const saved = savedState(7, { now: timeAt(), extra: { kills: { slime: 4, ogre: 0, dragon: 1 }, slain: 9 } });
     const v = await mountView({ saved });
     v.click("idle-rpg-slain");
-    assert.deepEqual(v.text("idle-rpg-codex"), ["Codex", "×", "Slime", "4", "???", "0", "Dragon", "1", "Before the codex", "4"]);
+    assert.deepEqual(v.text("idle-rpg-codex"), [
+      "Codex", "×",
+      "Forest", "???", "0", "???", "0", "Slime", "4",
+      "Hills", "???", "0", "???", "0", "???", "0",
+      "Caves", "???", "0", "???", "0", "Dragon", "1",
+      "Hell", "???", "0", "???", "0", "???", "0", "???", "0",
+      "Before the codex", "4",
+    ]); // prettier-ignore
   });
 });
 
@@ -147,7 +154,7 @@ describe("the shop", () => {
     v.click("idle-rpg-shop-kind-weapon");
     v.click("idle-rpg-shop-wizard");
     // the one on, until another is clicked
-    assert.deepEqual([v.text("idle-rpg-shop-about-1"), v.text("idle-rpg-shop-about-2")], [["Fire Staff: Burn: +20% in 3s"], ["Normal speed · Weak: ogre · Resist: dragon"]]);
+    assert.deepEqual([v.text("idle-rpg-shop-about-1"), v.text("idle-rpg-shop-about-2")], [["Fire Staff: Burn: +20% in 3s"], ["Normal speed · Fire"]]);
     v.click("idle-rpg-shop-item-frost");
     assert.deepEqual(v.text("idle-rpg-shop-about-1"), ["Ice Wand: 0.75× damage, 4/3 speed"]);
     v.click("idle-rpg-shop-healer");
@@ -281,7 +288,7 @@ describe("settings", () => {
 
 describe("a later version's state", () => {
   test("is read and played, never written: buying, settings, kills and closing save nothing", async () => {
-    const saved = savedState(9, { now: timeAt(), extra: { gold: 300, xp: { you: 0, wizard: 5000, healer: 5000, warrior: 5000, archer: 5000 } } });
+    const saved = savedState(10, { now: timeAt(), extra: { gold: 300, xp: { you: 0, wizard: 5000, healer: 5000, warrior: 5000, archer: 5000 } } });
     const v = await mountView({ saved, agents: [] });
     assert.equal(v.view.readOnly, true);
     v.click("idle-rpg-gold");
@@ -292,6 +299,6 @@ describe("a later version's state", () => {
     v.clickFloor(400, 90);
     v.close();
     assert.deepEqual(v.saves, []);
-    assert.equal(v.stored.version, 9);
+    assert.equal(v.stored.version, 10);
   });
 });

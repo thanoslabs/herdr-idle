@@ -2,7 +2,9 @@
 // state as each version of the mod wrote it (see save() in main.js and its
 // history: v1 progress, v2 skills, v3 the shop's colours, v4 hats and
 // settings, v5 weapons, v6 stages and Attack training, v7 Health training,
-// v8 town decor).
+// v8 town decor, v9 the biomes' monsters: kills of thirteen kinds).
+
+import { KINDS } from "../../mods/idle-rpg/rules.js";
 
 let seq = 0;
 
@@ -41,7 +43,7 @@ const XP = { you: 1200, wizard: 900, healer: 300, warrior: 2500, archer: 40 };
 
 /**
  * Saved state as version `version` of the mod wrote it (0: before versions,
- * under an older key; 9: a later version than this one). `now` is the time
+ * under an older key; 10: a later version than this one). `now` is the time
  * agents were last seen; `extra` is merged over the top.
  */
 export function savedState(version, { now = Date.now(), sprites = {}, extra = {} } = {}) {
@@ -70,7 +72,8 @@ export function savedState(version, { now = Date.now(), sprites = {}, extra = {}
     v.settings = { damageNumbers: false, advance: false };
   }
   if (version >= 8) v.decor = { owned: ["default", "halloween"], equipped: "halloween" };
-  if (version >= 9) v.relics = { amulet: 1 }; // something only a later version knows
+  if (version >= 9) v.kills = { ...v.kills, goblin: 5, "chief-ogre": 2, demon: 1 };
+  if (version >= 10) v.relics = { amulet: 1 }; // something only a later version knows
   return { ...v, ...extra };
 }
 
@@ -97,7 +100,7 @@ export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer"
     ]),
   );
   const saved = {
-    version: 8,
+    version: 9,
     you: youAt,
     spots: {},
     sprites: { you, ...Object.fromEntries(keys.map((k, i) => [k, classes[i]])) },
@@ -108,7 +111,7 @@ export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer"
     farming,
     slain,
     gold,
-    kills: { slime: 0, ogre: 0, dragon: 0 },
+    kills: Object.fromEntries(KINDS.map((k) => [k, 0])),
     xp: { you: 0, ...Object.fromEntries(CLASSES.map((c) => [c, xp])) },
     skills: Object.fromEntries(CLASSES.map((c) => [c, { power: 0, haste: 0, crit: 0, ...(skills[c] ?? {}) }])),
     training: Object.fromEntries(CLASSES.map((c) => [c, { attack, health }])),

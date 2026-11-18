@@ -28,11 +28,7 @@
 
 export const CLASSES = ["wizard", "healer", "warrior", "archer"];
 export const YOU = "you"; // the person's key in `sprites`, `xp` and as an open card
-export const STATE_VERSION = 8;
-// The kinds of boss, in the order the stages cycle through them (slime, ogre,
-// dragon, slime, ...). main.js draws them (MONSTERS there), each needs its
-// pictures in MONSTER_ART below.
-export const KINDS = ["slime", "ogre", "dragon"];
+export const STATE_VERSION = 9;
 
 // Biomes: where a raid takes place. Every BIOME_STAGES stages the fight moves
 // to the next biome, in this order, and after the last the four repeat
@@ -40,16 +36,68 @@ export const KINDS = ["slime", "ogre", "dragon"];
 // again, ...). The town (out of a raid) is always the castle rampart. Each
 // biome has its own backdrop (BIOME_ART, drawn by tools/idle-rpg-sprites.py
 // into scene/<id>/); `outdoors` biomes have the sky, its day and night and
-// the night's darkness, the others a fixed light of their own. The kinds of
-// monster still cycle by stage (KINDS); a biome's own monsters are to come.
-// Each name is a label (LABELS) the stage picker letters.
+// the night's darkness, the others a fixed light of their own. Each name is
+// a label (LABELS) the stage picker letters.
+//
+// Each biome has its own kinds of monster, { id, name, weak, resist }, in
+// order: the last is its boss, fought at its tenth stage; the others share
+// its first nine stages in turn (kindOf). `weak` is the element (ELEMENTS)
+// that hurts it most, `resist` the one it shrugs off (effects.js applies
+// them); every element is some kinds' weakness and others' resistance, so
+// the party has reason to re-equip as it moves on. A kind's id names its
+// pictures' folder (monsters/<id>/, MONSTER_ART) and its look in main.js
+// (MONSTERS there); its name is lettered on its plate (LABELS).
 export const BIOME_STAGES = 10;
 export const BIOMES = [
-  { id: "forest", name: "Forest", outdoors: true },
-  { id: "hills", name: "Hills", outdoors: true },
-  { id: "caves", name: "Caves", outdoors: false },
-  { id: "hell", name: "Hell", outdoors: false },
+  {
+    id: "forest",
+    name: "Forest",
+    outdoors: true,
+    kinds: [
+      { id: "goblin", name: "Goblin", weak: "fire", resist: "poison" }, // scavengers that eat anything; afraid of fire
+      { id: "lizard", name: "Lizard", weak: "frost", resist: "storm" }, // cold-blooded; its scales shed sparks
+      { id: "slime", name: "Slime", weak: "frost", resist: "poison" },
+    ],
+  },
+  {
+    id: "hills",
+    name: "Hills",
+    outdoors: true,
+    kinds: [
+      { id: "orc", name: "Orc", weak: "poison", resist: "frost" }, // hardy hill folk, used to the cold
+      { id: "ogre", name: "Ogre", weak: "fire", resist: "storm" },
+      { id: "chief-ogre", name: "Chief Ogre", weak: "storm", resist: "frost" }, // furs against the cold; its crown draws lightning
+    ],
+  },
+  {
+    id: "caves",
+    name: "Caves",
+    outdoors: false,
+    kinds: [
+      { id: "wyvern", name: "Wyvern", weak: "storm", resist: "poison" }, // struck from the air; venom in its own tail
+      { id: "draconian", name: "Draconian", weak: "poison", resist: "fire" }, // dragon-blooded; poison finds the gaps in its scales
+      { id: "dragon", name: "Dragon", weak: "frost", resist: "fire" },
+    ],
+  },
+  {
+    id: "hell",
+    name: "Hell",
+    outdoors: false,
+    kinds: [
+      { id: "imp", name: "Imp", weak: "frost", resist: "fire" },
+      { id: "magma-slime", name: "Magma Slime", weak: "frost", resist: "fire" },
+      { id: "goblin-mage", name: "Goblin Mage", weak: "poison", resist: "storm" }, // a frail body behind its lightning
+      { id: "demon", name: "Demon", weak: "storm", resist: "fire" },
+    ],
+  },
 ];
+// Every kind of monster, biome by biome: { id, name, weak, resist, biome }.
+export const MONSTER_KINDS = BIOMES.flatMap((b) => b.kinds.map((k) => ({ ...k, biome: b.id })));
+// Their ids, in that order. main.js draws them (MONSTERS there), each needs
+// its pictures in MONSTER_ART below.
+export const KINDS = MONSTER_KINDS.map((k) => k.id);
+// A kind's row of MONSTER_KINDS, or null for anything that is not one.
+export const kindInfo = (id) => MONSTER_KINDS.find((k) => k.id === id) ?? null;
 
 // Stages. Defaults chosen with a simulation (see PLAN.md) to be retuned; nothing
 // else depends on their values. Boss HP grows exponentially, by HP_GROWTH a
@@ -249,7 +297,8 @@ const HATS = HAT_NAMES.map(([id, name], i) => ({ id, name, price: i ? HAT_PRICES
 const DECOR = [{ id: DEFAULT_LOOK, name: "None", price: 0 }, ...SEASONS.map(({ id, name, price }) => ({ id, name, price }))];
 // What a weapon's attacks carry (effects.js says what each does): an element,
 // or null for none, and for the healer's potions, which potion it is.
-export const ELEMENTS = ["fire", "frost", "storm", "poison"];
+const ELEMENT_NAMES = [["fire", "Fire"], ["frost", "Frost"], ["storm", "Storm"], ["poison", "Poison"]];
+export const ELEMENTS = ELEMENT_NAMES.map(([id]) => id);
 export const POTIONS = ["heal", "haste", "might", "hex"];
 // Each class's weapons as [id, name, element] and, for the healer, whose
 // "weapon" is the potion it throws, [id, name, element, potion]. The default is
@@ -349,25 +398,77 @@ const ATTACK_ART = {
 // flies at the target and what lands on it; `area`, at a spot on the floor:
 // the pose while its marker shows, what flies there (null: nothing) and what
 // covers the spot as it lands ("-1"/"-2" frames flicker, see foe in main.js).
+// (The slime-like magma slime and the ogre-like chief ogre share their
+// cousins' attacks, recoloured; a part's name is drawn the same size for
+// every kind that has it, see ATTACK_SIZE in main.js.)
+const SLIME_ATTACKS = {
+  single: { pose: "attack/spit/*", shot: "attack/glob", hit: "attack/splat" },
+  area: { pose: "attack/squash", shot: "attack/glob", hit: "attack/puddle" },
+};
+const OGRE_ATTACKS = {
+  single: { pose: "attack/swing/*", shot: "attack/arc/*", hit: "attack/thud" },
+  area: { pose: "attack/slam", shot: null, hit: "attack/quake" },
+};
 export const MONSTER_ATTACKS = {
-  slime: {
-    single: { pose: "attack/spit/*", shot: "attack/glob", hit: "attack/splat" },
-    area: { pose: "attack/squash", shot: "attack/glob", hit: "attack/puddle" },
+  goblin: {
+    single: { pose: "attack/throw/*", shot: "attack/dagger/*", hit: "attack/nick" },
+    area: { pose: "attack/toss", shot: "attack/bomb", hit: "attack/boom" },
   },
-  ogre: {
-    single: { pose: "attack/swing/*", shot: "attack/arc/*", hit: "attack/thud" },
-    area: { pose: "attack/slam", shot: null, hit: "attack/quake" },
+  lizard: {
+    single: { pose: "attack/lunge/*", shot: null, hit: "attack/bite" },
+    area: { pose: "attack/lash", shot: null, hit: "attack/sweep" },
+  },
+  slime: SLIME_ATTACKS,
+  orc: {
+    single: { pose: "attack/chop/*", shot: null, hit: "attack/cleave" },
+    area: { pose: "attack/stomp", shot: null, hit: "attack/quake" },
+  },
+  ogre: OGRE_ATTACKS,
+  "chief-ogre": OGRE_ATTACKS,
+  wyvern: {
+    single: { pose: "attack/sting/*", shot: "attack/barb/*", hit: "attack/jab" },
+    area: { pose: "attack/beat", shot: null, hit: "attack/gale" },
+  },
+  draconian: {
+    single: { pose: "attack/thrust/*", shot: null, hit: "attack/pierce" },
+    area: { pose: "attack/flame", shot: "attack/ember/*", hit: "attack/scorch" },
   },
   dragon: {
     single: { pose: "attack/bite", shot: null, hit: "attack/claw" },
     area: { pose: "attack/breath", shot: "attack/fireball/*", hit: "attack/blaze-1", flicker: "attack/blaze-2" },
   },
+  imp: {
+    single: { pose: "attack/hurl/*", shot: "attack/firebolt/*", hit: "attack/singe" },
+    area: { pose: "attack/summon", shot: null, hit: "attack/pyre" },
+  },
+  "magma-slime": SLIME_ATTACKS,
+  "goblin-mage": {
+    single: { pose: "attack/cast/*", shot: "attack/bolt/*", hit: "attack/zap" },
+    area: { pose: "attack/chant", shot: null, hit: "attack/rune" },
+  },
+  demon: {
+    single: { pose: "attack/smite/*", shot: null, hit: "attack/rend" },
+    area: { pose: "attack/inferno", shot: "attack/hellball/*", hit: "attack/hellfire-1", flicker: "attack/hellfire-2" },
+  },
 };
 const sides = (part) => (part.includes("*") ? ["l", "r"].map((x) => part.replace("*", x)) : [part]);
+// The pieces that move: the slime's dome (`top`) sinks into its foot
+// (`base`); the rest breathe with an upper body (`top`) over the whole
+// picture; the ogres roar, and the dragon's tail sways behind its body.
 export const MONSTER_ART = {
+  goblin: ["idle", "blink", "top"],
+  lizard: ["idle", "blink", "top"],
   slime: ["idle", "blink", "top", "base"],
+  orc: ["idle", "blink", "top"],
   ogre: ["idle", "blink", "top", "roar/roar"],
+  "chief-ogre": ["idle", "blink", "top", "roar/roar"],
+  wyvern: ["idle", "blink", "top"],
+  draconian: ["idle", "blink", "top"],
   dragon: ["idle", "blink", "top", "body", "tail", "roar/rear", "roar/roar", "roar/top", "roar/wave"],
+  imp: ["idle", "blink", "top"],
+  "magma-slime": ["idle", "blink", "top", "base"],
+  "goblin-mage": ["idle", "blink", "top"],
+  demon: ["idle", "blink", "top"],
 };
 for (const [kind, both] of Object.entries(MONSTER_ATTACKS))
   for (const a of Object.values(both)) for (const part of Object.values(a)) if (part) for (const p of sides(part)) if (!MONSTER_ART[kind].includes(p)) MONSTER_ART[kind].push(p);
@@ -641,6 +742,16 @@ export const LABELS = {
   stages: (a, b) => `Stages ${a}-${b}`,
   range: (a, b) => `${a}-${b}`,
   ...Object.fromEntries(BIOMES.map((b) => [b.id, b.name])),
+  // the monster's card (a press on it or its plate): where it is fought, its
+  // HP, what it is weak to and resists (by the element's name), how many of
+  // its kind have fallen; and every kind's name, on its plate and its card
+  where: (biome, n) => `${biome} · Stage ${n}`,
+  hp: (text) => `HP ${text}`,
+  weak: "Weak",
+  resist: "Resists",
+  killed: (n) => `Slain ${n}`,
+  ...Object.fromEntries(ELEMENT_NAMES.map(([id, name]) => [id, name])),
+  ...Object.fromEntries(MONSTER_KINDS.map((k) => [k.id, k.name])),
 };
 
 const MAX = Number.MAX_SAFE_INTEGER;
@@ -708,8 +819,22 @@ export function stageOf(s) {
   return typeof s === "number" && Number.isFinite(s) && s >= 1 ? Math.min(Math.floor(s), MAX_STAGE) : 1;
 }
 
-// The kind of boss at stage `s`: slime, ogre, dragon, slime, ...
-export const stageKind = (s) => KINDS[(stageOf(s) - 1) % KINDS.length];
+// The kind of monster fought at stage `s` (anything that is not a stage counts
+// as stage 1): its biome's (biomeOf) last kind, its boss, at the biome's tenth
+// stage (10, 20, ... 40, 50, ...); before that its other kinds in turn over its
+// first nine stages, as evenly as they go, the earlier taking the extra (two
+// kinds: 5 and 4 stages; three: 3 each).
+export function kindOf(s) {
+  const n = stageOf(s);
+  const kinds = BIOMES.find((b) => b.id === biomeOf(n)).kinds;
+  const at = (n - 1) % BIOME_STAGES;
+  const regular = kinds.length - 1;
+  if (at === BIOME_STAGES - 1 || regular < 1) return kinds[kinds.length - 1].id;
+  const each = Math.floor((BIOME_STAGES - 1) / regular);
+  const extra = (BIOME_STAGES - 1) % regular; // the first `extra` kinds get one stage more
+  const i = at < extra * (each + 1) ? Math.floor(at / (each + 1)) : extra + Math.floor((at - extra * (each + 1)) / each);
+  return kinds[i].id;
+}
 
 // The HP of stage `s`'s boss: STAGE_HP x HP_GROWTH^(s-1) x s^HP_POWER, a real number.
 export const bossHp = (s) => STAGE_HP * HP_GROWTH ** (stageOf(s) - 1) * stageOf(s) ** HP_POWER;
@@ -738,7 +863,7 @@ export const stageTime = (_s) => STAGE_MS;
 // Stage `s`'s boss at full HP: { kind, hp, maxHp, stage, id }.
 export function bossOf(s, id = 1) {
   const stage = stageOf(s);
-  return { kind: stageKind(stage), hp: bossHp(stage), maxHp: bossHp(stage), stage, id };
+  return { kind: kindOf(stage), hp: bossHp(stage), maxHp: bossHp(stage), stage, id };
 }
 
 // A class's training with every kind at 0: { attack: 0, health: 0 }.
@@ -1207,6 +1332,20 @@ const STAGES_SINCE = 6;
 // The version that first had Health training: state saved before it has none.
 const HEALTH_SINCE = 7;
 
+// The version that first had a biome's own monsters: state saved before it
+// counts kills of the three kinds it fought (slime, ogre, dragon) and of no
+// other, whatever it says, since no other could have been slain.
+const BIOME_KINDS_SINCE = 9;
+const FIRST_KINDS = ["slime", "ogre", "dragon"];
+
+// The saved kill counts by kind: every one of KINDS, a whole number from 0 up
+// (anything else 0); a kind state saved by `version` could not have known
+// counts 0, and anything else saved there is dropped.
+function killsOf(saved, version) {
+  const known = (k) => version >= BIOME_KINDS_SINCE || FIRST_KINDS.includes(k);
+  return Object.fromEntries(KINDS.map((k) => [k, record(saved) && has(saved, k) && known(k) ? count(saved[k]) : 0]));
+}
+
 // A class's saved training: each kind a whole number from 0 up (anything else
 // is 0), cut down to MAX_TRAINING.
 function trainingOfSaved(saved, version) {
@@ -1228,7 +1367,8 @@ function ranksOf(saved, cls, xp) {
 
 // The saved state as this version keeps it, from whatever was read back:
 // older versions without the progress fields, skill ranks, looks, weapons,
-// hats, settings, stages, training or town decor, or anything malformed. Never throws; a
+// hats, settings, stages, training, town decor or the biomes' monsters, or
+// anything malformed. Never throws; a
 // bad field falls back to its default, a bad entry is dropped. The boss is
 // not saved: an attempt starts afresh at the saved stage when the layout
 // loads (main.js makes it, see bossOf).
@@ -1263,7 +1403,8 @@ export function loadState(saved) {
     // `slain` predates the counts by kind, which start from zero
     slain: count(s.slain),
     gold: count(s.gold),
-    kills: Object.fromEntries(KINDS.map((k) => [k, count(record(s.kills) ? s.kills[k] : 0)])),
+    // versions 1 to 8 fought only slimes, ogres and dragons: every other kind 0
+    kills: killsOf(s.kills, count(s.version)),
     xp,
     // version 1 had no skills: every rank starts at 0
     skills: Object.fromEntries(CLASSES.map((c) => [c, ranksOf(record(s.skills) ? s.skills[c] : undefined, c, xp[c])])),

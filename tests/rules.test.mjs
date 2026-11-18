@@ -98,8 +98,42 @@ describe("skill points and ranks", () => {
 });
 
 describe("stages and the boss's numbers", () => {
-  test("the kinds cycle slime, ogre, dragon", () => {
-    assert.deepEqual([1, 2, 3, 4, 5, 6, 7].map(R.stageKind), ["slime", "ogre", "dragon", "slime", "ogre", "dragon", "slime"]);
+  test("each biome's kinds: its boss at its tenth stage, the others sharing the first nine in turn (kindOf)", () => {
+    const want = [
+      ...Array(5).fill("goblin"), ...Array(4).fill("lizard"), "slime",
+      ...Array(5).fill("orc"), ...Array(4).fill("ogre"), "chief-ogre",
+      ...Array(5).fill("wyvern"), ...Array(4).fill("draconian"), "dragon",
+      ...Array(3).fill("imp"), ...Array(3).fill("magma-slime"), ...Array(3).fill("goblin-mage"), "demon",
+    ]; // prettier-ignore
+    const got = Array.from({ length: 80 }, (_, i) => R.kindOf(i + 1));
+    assert.deepEqual(got.slice(0, 40), want);
+    assert.deepEqual(got.slice(40), want, "round again from 41");
+    for (let s = 1; s <= 80; s++) assert.ok(R.kindInfo(R.kindOf(s)).biome === R.biomeOf(s), `stage ${s}: a kind of its biome`);
+    // MAX_STAGE (1000) is hell's tenth stage; past it, as it
+    assert.deepEqual([R.kindOf(R.MAX_STAGE), R.kindOf(R.MAX_STAGE - 1), R.kindOf(5000), R.kindOf(991)], ["demon", "goblin-mage", "demon", "imp"]);
+    for (const bad of [0, -3, NaN, Infinity, "4", null, undefined, {}]) assert.equal(R.kindOf(bad), "goblin", String(bad));
+    assert.equal(R.kindOf(9.9), "lizard", "a fraction counts as its whole stage");
+  });
+  test("every biome has its kinds, the last its boss; the kinds' ids, names and elements", () => {
+    assert.deepEqual(
+      R.BIOMES.map((b) => b.kinds.map((k) => k.name)),
+      [["Goblin", "Lizard", "Slime"], ["Orc", "Ogre", "Chief Ogre"], ["Wyvern", "Draconian", "Dragon"], ["Imp", "Magma Slime", "Goblin Mage", "Demon"]],
+    );
+    assert.equal(new Set(R.KINDS).size, 13);
+    for (const k of R.MONSTER_KINDS) {
+      assert.match(k.id, /^[a-z]+(-[a-z]+)?$/, "a folder name");
+      assert.ok(R.ELEMENTS.includes(k.weak) && R.ELEMENTS.includes(k.resist) && k.weak !== k.resist, k.id);
+      assert.equal(R.LABELS[k.id], k.name);
+    }
+    for (const bad of ["hydra", "__proto__", "constructor", null, 3]) assert.equal(R.kindInfo(bad), null);
+  });
+  test("in a round of the biomes (1-40), the old cycle (slime, ogre, dragon) and kindOf agree only at stages 10, 17 and 30, whose fights are unchanged", () => {
+    // the cycle before the biomes' monsters: stage s fought ["slime", "ogre", "dragon"][(s - 1) % 3]
+    const same = Array.from({ length: 40 }, (_, i) => i + 1).filter((s) => R.kindOf(s) === ["slime", "ogre", "dragon"][(s - 1) % 3]);
+    assert.deepEqual(same, [10, 17, 30]);
+    // (the cycle repeats every 3, the biomes every 40: further on they meet elsewhere)
+    const later = Array.from({ length: 120 }, (_, i) => i + 1).filter((s) => R.kindOf(s) === ["slime", "ogre", "dragon"][(s - 1) % 3]);
+    assert.deepEqual(later, [10, 17, 30, 56, 59, 98]);
   });
   test("a stage is a whole number from 1 to MAX_STAGE", () => {
     assert.equal(R.stageOf(7.9), 7);
@@ -115,7 +149,7 @@ describe("stages and the boss's numbers", () => {
     for (let s = 1; s < 60; s++) assert.ok(R.bossHp(s + 1) > R.bossHp(s));
   });
   test("bossOf gives the stage's boss at full HP", () => {
-    assert.deepEqual(R.bossOf(5, 9), { kind: "ogre", hp: R.bossHp(5), maxHp: R.bossHp(5), stage: 5, id: 9 });
+    assert.deepEqual(R.bossOf(5, 9), { kind: "goblin", hp: R.bossHp(5), maxHp: R.bossHp(5), stage: 5, id: 9 });
     assert.equal(R.bossOf("junk").stage, 1);
   });
   test("the boss's blow: 4 x 1.175^(s-1) x s^0.5 (5 before no-wipes)", () => {
@@ -253,8 +287,8 @@ describe("biomes", () => {
   test("only the forest and the hills are under the sky", () => {
     assert.deepEqual(R.BIOMES.filter((b) => b.outdoors).map((b) => b.id), ["forest", "hills"]);
   });
-  test("the monsters still cycle by stage, whatever the biome", () => {
-    assert.deepEqual([10, 11, 12, 13].map(R.stageKind), ["slime", "ogre", "dragon", "slime"]);
+  test("a stage's monster is of its biome", () => {
+    assert.deepEqual([10, 11, 20, 21, 30, 31, 40, 41].map(R.kindOf), ["slime", "orc", "chief-ogre", "wyvern", "dragon", "imp", "demon", "goblin"]);
   });
 });
 
@@ -281,7 +315,12 @@ describe("picking, clearing and failing stages", () => {
   test("a kill pays, counts its kind and reaches the next stage; advancing moves on", () => {
     const p = fresh();
     R.slay(p, R.bossOf(1), true, 4);
-    assert.deepEqual([p.slain, p.kills.slime, p.gold, p.best, p.stage], [1, 1, 2, 2, 2]);
+    assert.deepEqual([p.slain, p.kills.goblin, p.gold, p.best, p.stage], [1, 1, 2, 2, 2]);
+    R.slay(p, R.bossOf(40), true, 4);
+    assert.deepEqual([p.slain, p.kills.demon, p.best], [2, 1, 41]);
+    R.slay(p, { kind: "hydra", stage: 2 }, true, 4);
+    assert.equal(p.slain, 3, "an unknown kind counts in the total only");
+    assert.ok(!("hydra" in p.kills));
   });
   test("a kill pays the gold of the attackers that took part", () => {
     for (const [n, gold] of [[1, 3], [2, 6], [7, 22]]) {

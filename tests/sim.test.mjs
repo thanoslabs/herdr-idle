@@ -7,8 +7,9 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { newProgress, trainingOf } from "../mods/idle-rpg/rules.js";
-import { bestWeapon, buyTraining, parse, play, spendPoints, time } from "../tools/sim.mjs";
+import { readFileSync } from "node:fs";
+import { KINDS, kindOf, newProgress, trainingOf } from "../mods/idle-rpg/rules.js";
+import { MONSTERS, bestWeapon, buyTraining, parse, play, spendPoints, time } from "../tools/sim.mjs";
 
 const SIM = fileURLToPath(new URL("../tools/sim.mjs", import.meta.url));
 
@@ -72,5 +73,21 @@ describe("the simulation", () => {
   });
   test("times read as PLAN.md writes them", () => {
     assert.deepEqual([time(5000), time(630000), time(5.76e6), time(1.3e8), time(undefined)], ["5s", "10.5m", "1.6h", "1.50d", "never"]);
+  });
+  test("its monsters stand where main.js's do: every kind's width and bulk (MONSTERS there)", () => {
+    const main = readFileSync(new URL("../mods/idle-rpg/main.js", import.meta.url), "utf8");
+    const drawn = Object.fromEntries(
+      [...main.matchAll(/^ {2}"?([a-z-]+)"?: \{ w: (\d+), h: \d+, core: \{ x: (-?\d+), y: \d+, r: \d+, half: (\d+) \}/gm)].map((m) => [m[1], { w: +m[2], core: { x: +m[3], half: +m[4] } }]),
+    );
+    assert.deepEqual(Object.keys(drawn), KINDS);
+    assert.deepEqual(MONSTERS, drawn);
+  });
+  test("it fights each stage's kind (kindOf), and with --weapons best re-equips for it", () => {
+    const o = parse(["--smoke", "--weapons", "best"]);
+    const r = play({ ...o, until: 2 });
+    assert.ok(r.best >= 3);
+    assert.equal(kindOf(1), "goblin");
+    assert.equal(bestWeapon("archer", "goblin"), "flame", "the goblin is weak to fire");
+    assert.equal(bestWeapon("wizard", "demon"), "storm", "the demon to storm");
   });
 });

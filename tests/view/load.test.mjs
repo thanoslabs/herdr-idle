@@ -69,7 +69,7 @@ describe("older keys and garbage", () => {
 
 describe("a later version's save", () => {
   test("is read and played but never written, not even its new fields lost", async () => {
-    const saved = savedState(9, { now: NOW });
+    const saved = savedState(10, { now: NOW });
     const v = await mount(saved);
     assert.equal(v.view.readOnly, true);
     assert.equal(v.view.progress.stage, 4);

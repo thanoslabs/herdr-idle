@@ -11,7 +11,9 @@
 // with the sizes and pixels it breaks by (see tests/README.md).
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { CLASSES } from "../../mods/idle-rpg/rules.js";
+import { CLASSES, KINDS, kindOf } from "../../mods/idle-rpg/rules.js";
+// the first stage each kind is fought at
+const FIRST = KINDS.map((k) => Array.from({ length: 40 }, (_, i) => i + 1).find((s) => kindOf(s) === k));
 import { drawnIn, opaqueBounds } from "../harness/png.mjs";
 import { agent, mountRaid, mountView, raid, walk } from "../harness/view.mjs";
 
@@ -185,9 +187,9 @@ describe("the scenery", () => {
 });
 
 describe("staying inside the scene", () => {
-  test("the boss's visible pixels and its plate", { todo: "on a short scene the boss's top is cut: the dragon's by up to 66px (scenes under 296px tall), the ogre's by up to 2px (under 232px)" }, async () => {
+  test("the boss's visible pixels and its plate", { todo: "on a short scene the bigger bosses' tops are cut: the dragon's by up to 66px (scenes under 296px tall), the demon's by up to 58px, the chief ogre's by up to 30px, the ogre's and the draconian's by 2px (under 232px)" }, async () => {
     const found = [];
-    for (const stage of [1, 2, 3])
+    for (const stage of FIRST)
       found.push(
         ...(await sweep(
           () => mountRaid({ stage }),
@@ -203,13 +205,13 @@ describe("staying inside the scene", () => {
 
   test("the plate stays inside, clear of the frames above it, with and without its icons", async () => {
     const found = [];
-    for (const stage of [1, 2, 3])
+    for (const stage of FIRST)
       found.push(
         ...(await sweep(
           async () => {
-            // the ogre with statuses on it (the plate a row taller); the others without
-            const v = await mountRaid({ stage, ...(stage === 2 ? { classes: ["wizard", "warrior"], weapons: { wizard: "venom", warrior: "flame" }, you: "healer", level: 3 } : {}) });
-            if (stage === 2) v.until((h) => h.has("idle-rpg-plate-icons"), 120000);
+            // the ogre (stage 17) with statuses on it (the plate a row taller); the others without
+            const v = await mountRaid({ stage, ...(stage === 17 ? { classes: ["wizard", "warrior"], weapons: { wizard: "venom", warrior: "flame" }, you: "healer", level: 20, health: 40 } : {}) });
+            if (stage === 17) v.until((h) => h.has("idle-rpg-plate-icons"), 120000);
             return v;
           },
           (v, w, h) => {
@@ -339,7 +341,7 @@ describe("staying inside the scene", () => {
 describe("nothing hard-coded to a width", () => {
   test("the party and the boss are centred on the scene at every width", async () => {
     for (const w of WIDTHS.filter((x) => x >= 640)) {
-      const v = await mountRaid({ classes: ["warrior", "archer"] }, { width: w });
+      const v = await mountRaid({ classes: ["warrior", "archer"], stage: 10 }, { width: w });
       const b = v.box(`idle-rpg-monster-${v.view.monster.id}`);
       assert.equal(Math.round(b.x + 136 / 2), Math.round(w / 2), `the slime at ${w}`);
       const f = v.view.formation(v.world.agents, w, { w: 136, core: { x: 0, half: 60 } });

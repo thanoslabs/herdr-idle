@@ -5,10 +5,12 @@
 // is in sizes.test.mjs and hud.test.mjs.)
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { bossHp, shortNumber } from "../../mods/idle-rpg/rules.js";
+import { KINDS as ALL, bossHp, kindInfo, kindOf, shortNumber } from "../../mods/idle-rpg/rules.js";
 import { mountRaid } from "../harness/view.mjs";
 
-const KINDS = { 1: "SLIME", 2: "OGRE", 3: "DRAGON" };
+// each kind's name as its plate letters it, by the first stage it is fought at
+const FIRST = ALL.map((k) => Array.from({ length: 40 }, (_, i) => i + 1).find((s) => kindOf(s) === k));
+const KINDS = Object.fromEntries(FIRST.map((s) => [s, kindInfo(kindOf(s)).name.toUpperCase()]));
 const inside = (a, b) => a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
 // Sets the boss's HP and draws it (nobody attacking, so nothing else changes it).
 function setHp(v, hp) {
@@ -18,7 +20,7 @@ function setHp(v, hp) {
 
 describe("the boss's plate", () => {
   test("each kind's name and HP in the lettering, in a pixel frame", async () => {
-    for (const stage of [1, 2, 3]) {
+    for (const stage of FIRST) {
       const v = await mountRaid({ stage, status: "idle" });
       const max = shortNumber(Math.ceil(bossHp(stage)));
       assert.deepEqual(v.text("idle-rpg-plate"), [KINDS[stage], `${max}/${max}`]);
@@ -38,7 +40,7 @@ describe("the boss's plate", () => {
     }
   });
   test("wide enough for the widest HP beside the name, so they never meet", async () => {
-    for (const stage of [1, 2, 3]) {
+    for (const stage of FIRST) {
       const v = await mountRaid({ stage, status: "idle" });
       v.view.monster.maxHp = 9.94e99;
       setHp(v, 9.94e99);
@@ -47,11 +49,11 @@ describe("the boss's plate", () => {
       const [name, hp] = v.runs("idle-rpg-plate").map((r) => v.box(r.el));
       assert.ok(name.x + name.w + 8 <= hp.x, `${KINDS[stage]}: the name ends at ${name.x + name.w}, the HP starts at ${hp.x}`);
       assert.ok(inside(hp, plate));
-      assert.ok(plate.w >= 152 && plate.w <= 200, `${plate.w}`);
+      assert.ok(plate.w >= 152 && plate.w <= 220, `${KINDS[stage]}: ${plate.w}`); // "Magma Slime" the widest
     }
   });
   test("the plate keeps one width per kind, whatever the HP reads", async () => {
-    for (const stage of [1, 2, 3]) {
+    for (const stage of FIRST) {
       const v = await mountRaid({ stage, status: "idle" });
       const w0 = v.box("idle-rpg-plate").w;
       setHp(v, 1);
@@ -94,7 +96,7 @@ describe("the boss's plate", () => {
     assert.ok(row.y + 18 <= plate.y + plate.h - 4, "inside the frame's edge");
   });
   test("once the boss is down: <NAME> SLAIN! in gold over the empty bar, no HP", async () => {
-    for (const stage of [1, 2, 3]) {
+    for (const stage of FIRST) {
       const v = await mountRaid({ stage, settings: { advance: false } });
       v.view.monster.hp = 1;
       v.until((h) => h.view.monster.hp <= 0, 60000);
