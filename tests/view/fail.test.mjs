@@ -1,6 +1,6 @@
 // Failed attempts through main.js: only running out of time, with the boss
 // alive, loses one: it drops the fight back (failStage; the rule is in
-// ./expect.mjs) into farming, with a note under the stage section, saved once;
+// ./expect.mjs) into farming, saying so in the stage section, saved once;
 // the pulsing next arrow ends it. Everyone knocked out at once ends nothing:
 // they rest and get up, and the time runs on.
 import assert from "node:assert/strict";
@@ -16,7 +16,7 @@ const STALEMATE = { classes: ["warrior"], you: "healer", stage: 15, health: 40 }
 const DOOMED = { classes: ["wizard", "archer"], you: "archer", stage: 30 };
 
 describe("a time-out", () => {
-  test("after 10 minutes of fighting: back a stage, farming, a red note, saved once", async () => {
+  test("after 10 minutes of fighting: back a stage, farming, red in the stage section, saved once", async () => {
     const v = await mountRaid(STALEMATE);
     const saves = v.saves.length;
     v.until((h) => h.view.timesUp, 11 * 60000, 1000);
@@ -26,23 +26,80 @@ describe("a time-out", () => {
     assert.equal(v.saves.length, saves + 1);
     assert.deepEqual(v.stored.stage, want.stage);
     assert.deepEqual([v.view.monster.stage, v.view.monster.hp, v.view.left], [want.stage, bossHp(want.stage), 600000]);
-    const note = v.ids("idle-rpg-timesup-")[0];
+    const note = v.ids("idle-rpg-stage-timesup-")[0];
     assert.deepEqual(v.text(note), [`TIME'S UP! BACK TO STAGE ${want.stage}`]);
     assert.deepEqual(v.runs(note)[0].colours, ["red"]);
     assert.deepEqual(v.text("idle-rpg-stage").slice(0, 2), stageTexts({ stage: want.stage, farming: true, clock: "x" }).slice(0, 2));
+    assert.deepEqual(v.ids("idle-rpg-timesup-"), [], "no note under the section");
   });
 
-  test("the note fades a second later and is gone after 2.6s", async () => {
+  test("it takes the time's place, fades a second later and is gone after 2.6s, the time coming back as it goes", async () => {
     const v = await mountRaid(STALEMATE);
     v.view.left = 2000; // the last two seconds of an attempt (the 10 minutes are the test above's)
     v.until((h) => h.view.timesUp, 5000);
-    const id = v.ids("idle-rpg-timesup-")[0];
+    const id = v.ids("idle-rpg-stage-timesup-")[0];
     assert.equal(v.get(id).style.opacity, 1);
+    assert.equal(v.get("idle-rpg-stage-clock").style.opacity, 0, "the time hidden under it");
+    const [msg, clock] = [v.box(id), v.box("idle-rpg-stage-clock")];
+    assert.equal(msg.x + msg.w, clock.x + clock.w, "ending where the time ends");
     v.advance(1250);
     assert.equal(v.get(id).style.opacity, 0, "fading");
     assert.equal(v.get(id).transitions.opacity.duration, 1600);
+    assert.equal(v.get("idle-rpg-stage-clock").style.opacity, 1, "the time comes back");
+    assert.deepEqual(v.get("idle-rpg-stage-clock").transitions.opacity, { duration: 200, delay: 1600, easing: "ease-out" }, "once it has faded");
     v.advance(2000);
     assert.equal(v.find(id), null);
+    assert.equal(v.get("idle-rpg-stage-clock").style.opacity, undefined, "plain again");
+  });
+
+  test("everyone stopping work just after it: the watch fades it and brings the time and (PAUSED) back, no sooner", async () => {
+    const v = await mountRaid(STALEMATE);
+    v.view.left = 2000;
+    v.until((h) => h.view.timesUp, 5000);
+    const at = v.view.timesUp.at;
+    const id = v.ids("idle-rpg-stage-timesup-")[0];
+    v.advance(500);
+    v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
+    const seen = [];
+    v.until((h) => {
+      if (h.view.ticking) return false;
+      const shown = h.has(id);
+      // "(PAUSED)" never over it, fading or not
+      if (shown) assert.equal(h.has("idle-rpg-stage-paused"), false, `(PAUSED) under it at +${h.now - at}ms`);
+      if (shown && h.get(id).style.opacity === 0 && !seen.includes("fading")) {
+        seen.push("fading", h.now - at);
+        // the time comes back natively once it has faded
+        assert.deepEqual([h.get("idle-rpg-stage-clock").style.opacity, h.get("idle-rpg-stage-clock").transitions.opacity?.delay], [1, 1600]);
+      }
+      if (!shown) seen.push("gone", h.now - at);
+      return !shown;
+    }, 6000, 250);
+    assert.equal(seen[0], "fading");
+    assert.ok(seen[1] >= 1000 && seen[1] < 2000, `faded from +${seen[1]}ms`);
+    assert.ok(seen[3] > 2600 && seen[3] <= 3600, `gone at +${seen[3]}ms`);
+    assert.deepEqual(v.runs("idle-rpg-stage-paused").map((r) => r.text), ["(PAUSED)"], "(PAUSED) back with the time");
+    assert.equal(v.find("idle-rpg-stage-clock").style.opacity, undefined);
+    assert.equal(v.view.timesUp, null);
+    // nothing after it but the standing timers (a blink's two renders in 4s)
+    const r1 = v.renders;
+    v.advance(4000);
+    assert.ok(v.renders - r1 <= 2, `${v.renders - r1} renders after it`);
+  });
+
+  test("(PAUSED) never shows over it, whenever everyone stops working while it fades", async () => {
+    for (const after of [1200, 1800, 2400]) {
+      const v = await mountRaid(STALEMATE);
+      v.view.left = 2000;
+      v.until((h) => h.view.timesUp, 5000);
+      const id = v.ids("idle-rpg-stage-timesup-")[0];
+      v.advance(after);
+      v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
+      v.until((h) => {
+        if (h.has(id)) assert.equal(h.has("idle-rpg-stage-paused"), false, `(PAUSED) under it, stopped at +${after}ms`);
+        return !h.has(id);
+      }, 5000, 250);
+      assert.ok(v.has("idle-rpg-stage-paused"), `(PAUSED) back after it, stopped at +${after}ms`);
+    }
   });
 
   test("at stage 1 the same boss is simply back, with the full time", async () => {
@@ -52,7 +109,7 @@ describe("a time-out", () => {
     v.until((h) => h.view.timesUp, 5000);
     const id = v.view.monster.id;
     assert.deepEqual([v.view.progress.stage, v.view.monster.id, v.view.monster.hp, v.view.left], [1, id, bossHp(1), 600000]);
-    assert.deepEqual(v.text(v.ids("idle-rpg-timesup-")[0]), ["TIME'S UP!"]);
+    assert.deepEqual(v.text(v.ids("idle-rpg-stage-timesup-")[0]), ["TIME'S UP!"]);
   });
 });
 
@@ -116,7 +173,7 @@ describe("everyone down at once", () => {
     assert.equal(v.view.clock, 2400);
     const want = afterFail(30, 30);
     assert.deepEqual([v.view.progress.stage, v.view.progress.farming], [want.stage, want.farming]);
-    assert.deepEqual(v.text(v.ids("idle-rpg-timesup-")[0]), [`TIME'S UP! BACK TO STAGE ${want.stage}`]);
+    assert.deepEqual(v.text(v.ids("idle-rpg-stage-timesup-")[0]), [`TIME'S UP! BACK TO STAGE ${want.stage}`]);
     assert.equal(v.saves.length, saves + 1);
     assert.equal(v.view.left, 600000, "a fresh attempt");
     for (const m of Object.values(v.view.party.members)) assert.deepEqual([m.hp === m.maxHp, m.down], [true, null]);

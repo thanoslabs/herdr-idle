@@ -217,7 +217,7 @@ export function restArt(seconds) {
 // Each { id, name, months: [1-12], price }; adding a season is a row here, its
 // pictures in SEASON_ART (drawn by tools/idle-rpg-sprites.py into
 // seasons/<id>/) and drawing them in main.js.
-export const DECOR_PRICE = 25; // gold for each set of town decor: between the Santa Hat and the Pumpkin
+export const DECOR_PRICE = 2500; // gold for each set of town decor: a mid-game buy (see PLAN.md)
 export const SEASONS = [
   { id: "halloween", name: "Halloween", months: [10], price: DECOR_PRICE },
   { id: "winter", name: "Winter", months: [12], price: DECOR_PRICE },
@@ -578,7 +578,7 @@ export function glyphArt(colour, ch) {
 }
 
 // The lettering: a second pixel face, for the words and numbers of the HUD
-// (the sign, the stage section and its notes, the boss's plate) and the name
+// (the sign, the stage section, the boss's plate) and the name
 // tags in the scene, drawn by tools/idle-rpg-sprites.py into
 // lettering/<colour>/. The same height as the font, with the same digits and
 // signs, but letters as wide as they need (M and W 5 art px, N 4; the font's
@@ -712,9 +712,9 @@ export function letterFit(text, max = Infinity) {
 // Every label the HUD sets in the lettering, as text (main.js draws them in
 // capitals; CI and the tests check each can be drawn): the sign's title, its
 // button, its line while nobody is in; the stage section's stage and farm
-// mark; a failed attempt's note (fail() in main.js: why, then where it went
-// back to) and the countdown to the next stage; the boss's plate once it is
-// down; the tags of you and the stations in town. The numbers beside them are
+// mark, and what it says in place of the time: a failed attempt (fail() in
+// main.js: why, then where it went back to), the boss slain and the countdown
+// to the next stage; the tags of you and the stations in town. The numbers beside them are
 // shortNumber's and clockText's. (An agent's tag is its space and tab names,
 // any text: see letterFit.)
 export const LABELS = {
@@ -727,8 +727,13 @@ export const LABELS = {
   stage: (n) => `Stage ${n}`,
   timesUp: "Time's up!",
   back: (why, n) => `${why} Back to stage ${n}`,
-  moving: (n, s) => `Moving to stage ${n} in ${s}`,
+  // in the stage section while the boss lies dead: its kind slain (or only
+  // "Slain!" where the name does not fit), and on a first clear the countdown
+  // to the next stage (or only its seconds)
   slain: (name) => `${name} slain!`,
+  slainBare: "Slain!",
+  next: (n, s) => `Next: stage ${n} in ${s}`,
+  nextIn: (s) => `Next in ${s}`,
   you: "You",
   codex: "Codex",
   training: "Training",

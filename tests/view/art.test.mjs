@@ -210,9 +210,10 @@ describe("every picture asked for is in art/", () => {
     v.click("idle-rpg-stage-next");
     v.view.timesUp = { at: v.now, id: 3, text: "Time's up! Back to stage 2" };
     v.setAgents([...v.world.agents]);
-    assert.ok(v.has("idle-rpg-timesup-3"));
+    assert.ok(v.has("idle-rpg-stage-timesup-3"));
     keep(v);
-    // nobody working: the time stands still, "(PAUSED)" in grey
+    // nobody working: the time stands still, "(PAUSED)" in grey (once "Time's up!" is over)
+    v.view.timesUp = null;
     v.setAgents(v.world.agents.map((a) => ({ ...a, status: "idle" })));
     assert.ok(v.has("idle-rpg-stage-paused"));
     keep(v);
@@ -235,7 +236,7 @@ describe("every picture asked for is in art/", () => {
 const NAME_SIGNS = "and at backslash bar comma dot dquote ellipsis equals hash less lsquare more percent query rsquare semi star tilde under unknown";
 const UNDRAWN_LETTERING = {
   white: "",
-  gold: `close colon dash j k open plus point q quote slash u x ${NAME_SIGNS}`,
+  gold: `close dash j k open plus point q quote slash u ${NAME_SIGNS}`, // (colon and x: "NEXT: STAGE 2 IN 5")
   // (the monster's card: "FOREST · STAGE 7", "WEAK", "RESISTS" in grey)
   grey: `bang j m plus point q quote slash x z ${NAME_SIGNS.replace("dot ", "")}`,
   red: `close colon d dash f h j l n open plus point q r slash v w x y z ${NAME_SIGNS}`,

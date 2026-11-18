@@ -14,7 +14,7 @@
 // scene's edges, under the HUD, with no handlers, moving nobody.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { SEASONS, seasonOf } from "../../mods/idle-rpg/rules.js";
+import { DECOR_PRICE, SEASONS, seasonOf } from "../../mods/idle-rpg/rules.js";
 import { El, walk } from "../harness/elements.mjs";
 import { agent, agents, mountRaid, mountView, raid, savedState, timeAt } from "../harness/view.mjs";
 
@@ -529,7 +529,7 @@ describe("town decor bought and equipped (decorOf)", () => {
     assert.deepEqual(v.text("idle-rpg-settings").slice(2), ["Show damage numbers", "Advance after a kill", "Decorate in season", "Season over my decor"]);
     assert.equal(v.get("idle-rpg-setting-seasonFirst-knob").style.left, 0, "its saved value, kept while it was hidden");
     // buying a set brings it up at once
-    const b = await town({ gold: 25 });
+    const b = await town({ gold: DECOR_PRICE });
     b.click("idle-rpg-station-shop");
     b.click("idle-rpg-shop-kind-decor");
     b.click("idle-rpg-shop-buy-halloween");

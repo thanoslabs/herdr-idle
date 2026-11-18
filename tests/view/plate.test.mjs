@@ -1,7 +1,7 @@
 // The boss's name plate in pixel style: a HUD frame with the boss's name (gold)
 // and HP (white) in the lettering, a hard-edged HP bar green, yellow or red by
-// the share left, the status icons' row inside the frame, and "<NAME> SLAIN!"
-// once it is down. (Where it sits, inside the scene and clear of the frames,
+// the share left, the status icons' row inside the frame, and once it is down
+// only its name over the empty bar (the stage section says it was slain). (Where it sits, inside the scene and clear of the frames,
 // is in sizes.test.mjs and hud.test.mjs.)
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
@@ -95,12 +95,12 @@ describe("the boss's plate", () => {
     assert.ok(row.y >= plate.y + 32, "under the bar");
     assert.ok(row.y + 18 <= plate.y + plate.h - 4, "inside the frame's edge");
   });
-  test("once the boss is down: <NAME> SLAIN! in gold over the empty bar, no HP", async () => {
+  test("once the boss is down: its name in gold over the empty bar, no HP, no \"slain\"", async () => {
     for (const stage of FIRST) {
       const v = await mountRaid({ stage, settings: { advance: false } });
       v.view.monster.hp = 1;
       v.until((h) => h.view.monster.hp <= 0, 60000);
-      assert.deepEqual(v.text("idle-rpg-plate"), [`${KINDS[stage]} SLAIN!`]);
+      assert.deepEqual(v.text("idle-rpg-plate"), [KINDS[stage]]);
       assert.deepEqual(v.runs("idle-rpg-plate")[0].colours, ["gold"]);
       assert.equal(v.get("idle-rpg-monster-hp").style.w, 0);
       assert.equal(v.box("idle-rpg-plate").h, 38, "no icons once it is down");
