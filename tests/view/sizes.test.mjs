@@ -246,7 +246,7 @@ describe("staying inside the scene", () => {
     assert.ok(!found.length, summary(found));
   });
 
-  test("the three frames and the stage note", async () => {
+  test("the three frames, time's up in the stage section", async () => {
     const found = await sweep(
       async () => {
         const v = await mountRaid({ gold: 1e15, slain: 1e15, level: 50, stage: 999, best: 1000, farming: true });
@@ -254,8 +254,8 @@ describe("staying inside the scene", () => {
         return v;
       },
       (v, w, h) => {
-        v.view.timesUp.at = v.now; // keep the note up
-        return ["idle-rpg-sign", "idle-rpg-hud", "idle-rpg-stage", "idle-rpg-timesup-1"].filter((id) => v.has(id)).flatMap((id) => outside(id, v.box(id), w, h));
+        v.view.timesUp.at = v.now; // keep it up
+        return ["idle-rpg-sign", "idle-rpg-hud", "idle-rpg-stage", "idle-rpg-stage-timesup-1"].filter((id) => v.has(id)).flatMap((id) => outside(id, v.box(id), w, h));
       },
     );
     assert.ok(!found.length, summary(found));
@@ -321,20 +321,58 @@ describe("staying inside the scene", () => {
     assert.ok(cut.has("raid 320x230"));
   });
 
-  test("the cards (yours and an agent's)", async () => {
-    const found = await sweep(
-      () => mountRaid({ classes: ["archer", "wizard"] }),
-      (v, w, h) => {
-        const out = [];
-        for (const who of ["critter-t2", "idle-rpg-you"]) {
-          v.click(who);
-          if (v.has("idle-rpg-card")) out.push(...outside(`${who}'s card`, { ...v.box("idle-rpg-card"), w: 232, h: who === "idle-rpg-you" ? 123 : 146 }, w, h));
-          v.click("idle-rpg-card-x");
+  // A card goes clear of the HUD's frames where it can (above, beside either
+  // side, or either lowered under them): six agents' cards at their default
+  // spots meet a frame only in the lowest raid (146px cards before the Health
+  // row met them 36 times on this sweep: town 296 10, raid 230 9, 296 12, 360 5).
+  test("an agent's card keeps clear of the HUD's frames where there is a place", async () => {
+    const meet = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    const n = {};
+    for (const battle of [false, true]) {
+      const v = await mountRaid({ battle, classes: ["warrior", "archer", "wizard", "healer", "archer", "wizard"], statuses: Array(6).fill("idle") });
+      for (const h of [230, 296, 360, 420, 480, 560])
+        for (const w of [640, 1280, 1920]) {
+          v.resize(w, h);
+          for (const a of v.world.agents) {
+            v.click(`critter-${a.address}`);
+            if (!v.has("idle-rpg-card")) continue;
+            const c = { ...v.box("idle-rpg-card"), h: 164 };
+            if (["idle-rpg-sign", "idle-rpg-hud", "idle-rpg-stage"].some((id) => v.has(id) && meet(c, v.box(id)))) n[`${battle ? "raid" : "town"} ${h}`] = (n[`${battle ? "raid" : "town"} ${h}`] ?? 0) + 1;
+            v.click("idle-rpg-card-x");
+          }
         }
-        return out;
-      },
-    );
-    assert.ok(!found.length, summary(found));
+    }
+    assert.deepEqual(n, { "raid 230": 6 });
+  });
+
+  // A card's height as main.js estimates it (infoCard: the agent's 164, yours
+  // 123, 70 more with the class picker open), cut to the scene less 2px, its
+  // content scrolling, where the scene is lower than that.
+  test("the cards (yours and an agent's), with the class picker open or not", async () => {
+    for (const battle of [true, false]) {
+      const found = await sweep(
+        () => mountRaid({ classes: ["archer", "wizard"], battle }),
+        (v, w, h) => {
+          const out = [];
+          for (const who of ["critter-t2", "idle-rpg-you"])
+            for (const picking of [false, true]) {
+              v.click(who);
+              if (who === "idle-rpg-you") v.release(who);
+              if (v.has("idle-rpg-card")) {
+                if (picking) v.click("idle-rpg-card-wrench");
+                const full = (who === "idle-rpg-you" ? 123 : 164) + (picking ? 70 : 0);
+                const card = v.get("idle-rpg-card");
+                const cut = full > h - 2;
+                if (cut !== Boolean(card.style.overflow_y_scroll) || (cut && card.style.max_h !== h - 2)) out.push({ what: `${who}'s card${picking ? " picking" : ""}: not cut to the scene`, side: "", by: full - h });
+                out.push(...outside(`${who}'s card${picking ? " picking" : ""} ${battle ? "raid" : "town"}`, { ...v.box(card), w: 232, h: Math.min(full, h - 2) }, w, h));
+                v.click("idle-rpg-card-x");
+              }
+            }
+          return out;
+        },
+      );
+      assert.ok(!found.length, summary(found));
+    }
   });
 });
 

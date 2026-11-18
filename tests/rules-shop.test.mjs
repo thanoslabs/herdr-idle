@@ -125,7 +125,7 @@ describe("equipping", () => {
 describe("town decor", () => {
   test("the catalogue: None, then each season's set at its price (SEASONS), the same for every class", () => {
     for (const c of R.CLASSES)
-      assert.deepEqual(R.catalogue(c, "decor").map((it) => [it.id, it.name, it.price]), [["default", "None", 0], ["halloween", "Halloween", 25], ["winter", "Winter", 25]]);
+      assert.deepEqual(R.catalogue(c, "decor").map((it) => [it.id, it.name, it.price]), [["default", "None", 0], ["halloween", "Halloween", 2500], ["winter", "Winter", 2500]]);
     assert.deepEqual(R.SEASONS.map((s) => s.price), [R.DECOR_PRICE, R.DECOR_PRICE]);
     assert.equal(R.SHOP.decor.town, "decor");
     assert.equal(R.SHOP.decor.shared, undefined);
@@ -133,11 +133,11 @@ describe("town decor", () => {
     for (const c of R.CLASSES) assert.equal(R.newProgress().looks[c].decor, undefined, "no class wears it");
   });
   test("buying: not without the gold, exactly the price is enough, never twice; it belongs to the town, for every class", () => {
-    const p = rich(24);
+    const p = rich(R.DECOR_PRICE - 1);
     assert.equal(R.canBuy(p, "wizard", "decor", "winter"), false, "a coin short");
     assert.equal(R.buy(p, "wizard", "decor", "winter"), false);
-    assert.equal(p.gold, 24);
-    p.gold = 25;
+    assert.equal(p.gold, R.DECOR_PRICE - 1);
+    p.gold = R.DECOR_PRICE;
     assert.ok(R.buy(p, "wizard", "decor", "winter"));
     assert.equal(p.gold, 0);
     assert.deepEqual(p.decor, { owned: ["default", "winter"], equipped: "default" }, "bought, not put on (the shop puts it on)");
@@ -145,14 +145,14 @@ describe("town decor", () => {
       assert.ok(R.owns(p, c, "decor", "winter"), c);
       assert.equal(R.canBuy(p, c, "decor", "winter"), false, `${c}: already owned`);
     }
-    p.gold = 100;
+    p.gold = 3 * R.DECOR_PRICE;
     assert.equal(R.buy(p, "archer", "decor", "winter"), false, "never twice");
     assert.equal(R.buy(p, "archer", "decor", "default"), false, "None is owned from the start");
     for (const bad of ["spring", "__proto__", "constructor", "party"]) assert.equal(R.buy(p, "archer", "decor", bad), false, bad);
-    assert.equal(p.gold, 100);
+    assert.equal(p.gold, 3 * R.DECOR_PRICE);
   });
   test("equipping is free, for the town whichever class does it; None takes it down", () => {
-    const p = rich(60);
+    const p = rich(2 * R.DECOR_PRICE + 10);
     assert.equal(R.equip(p, "healer", "decor", "halloween"), false, "not owned");
     R.buy(p, "healer", "decor", "halloween");
     R.buy(p, "healer", "decor", "winter");
@@ -169,7 +169,7 @@ describe("town decor", () => {
   });
   test("missing or malformed records: made on a buy, read as nothing owned", () => {
     for (const bad of [undefined, null, "winter", [], { owned: "winter" }]) {
-      const p = rich(25);
+      const p = rich(R.DECOR_PRICE);
       p.decor = bad;
       assert.equal(R.equipped(p, "wizard", "decor"), "default");
       assert.equal(R.owns(p, "wizard", "decor", "winter"), false);

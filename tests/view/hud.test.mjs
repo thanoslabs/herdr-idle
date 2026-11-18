@@ -1,9 +1,11 @@
 // The HUD's three pixel frames: what they say (read back from the lettering),
-// the stage section apart from the boss's plate, the notes under it, and
-// hudLayout swept across widths, insets, status counts and big numbers: no
-// two frames overlap and none leaves the scene.
+// the stage section apart from the boss's plate, what it says in the time's
+// place (a boss slain, the countdown to the next stage, time's up) at every
+// width, and hudLayout swept across widths, insets, status counts and big
+// numbers: no two frames overlap and none leaves the scene.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
+import { LABELS, letterFit, lettersWidth } from "../../mods/idle-rpg/rules.js";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 import { stageTexts } from "./expect.mjs";
 
@@ -80,19 +82,20 @@ describe("what the frames say", () => {
     const pause = full.box("idle-rpg-stage-paused");
     assert.ok(farm.x + farm.w <= pause.x, "farm and (PAUSED) do not overlap at its narrowest");
   });
-  test("the stage section and the plate are apart; a note lies under the section, over the plate", async () => {
+  test("the stage section and the plate are apart, time's up or not; no note under the section", async () => {
     for (const stage of [1, 2, 3])
       for (const height of [230, 360, 560]) {
         const v = await mountRaid({ stage, status: "idle" }, { height });
+        const before = { stage: v.box("idle-rpg-stage"), plate: v.box("idle-rpg-plate") };
         v.view.timesUp = { at: v.now, id: 9, text: `Time's up! Back to stage ${stage}` };
         v.setAgents([...v.world.agents]);
         const s = v.box("idle-rpg-stage");
         const p = v.box("idle-rpg-plate");
-        const n = v.box("idle-rpg-timesup-9");
         assert.ok(p.y >= s.y + s.h, `the plate (${p.y}) under the section (${s.y + s.h}) at stage ${stage}, height ${height}`);
-        assert.ok(n.y >= s.y + s.h, "the note under the section");
-        const order = v.all((el) => el.key === "idle-rpg-plate" || el.key === "idle-rpg-timesup-9").map((el) => el.key);
-        assert.deepEqual(order, ["idle-rpg-plate", "idle-rpg-timesup-9"], "the note is drawn after (over) the plate");
+        assert.deepEqual({ stage: s, plate: p }, before, "neither moves nor grows");
+        assert.deepEqual(v.text("idle-rpg-stage-timesup-9"), [`TIME'S UP! BACK TO STAGE ${stage}`]);
+        assert.deepEqual(v.ids("idle-rpg-timesup-"), []);
+        assert.deepEqual(v.ids("idle-rpg-advance-"), []);
       }
   });
 });
@@ -105,7 +108,7 @@ describe("hudLayout", () => {
   const insets = THOROUGH ? [0, 8, 16, 40, 84, 100, 120] : [0, 16, 84, 120];
   const statuses = { none: [], one: ["working"], all: ["blocked", "working", "done", "idle"] };
 
-  test(`no frame overlaps another or leaves the scene (${widths.length} widths x ${insets.length} insets x agents, counts, numbers, notes)`, async () => {
+  test(`no frame overlaps another or leaves the scene (${widths.length} widths x ${insets.length} insets x agents, counts, numbers)`, async () => {
     const v = await mountRaid({});
     const view = v.view;
     const problems = [];
@@ -116,16 +119,15 @@ describe("hudLayout", () => {
           const list = sts.flatMap((st) => Array.from({ length: big ? 150 : 3 }, (_, i) => agent(`${st}${i}`, st)));
           Object.assign(view.progress, big ? { gold: 9.9e15, slain: 9.9e15, stage: 999, best: 1000 } : { gold: 0, slain: 0, stage: 1, best: 1 }, { farming });
           view.progress.xp.wizard = big ? 9e15 : 0;
-          for (const note of [null, "Time's up! Back to stage 999"]) {
-            view.timesUp = note ? { at: Date.now(), id: 1, text: note } : null;
+          {
             for (const inset of insets) {
               v.world.props = { inset };
               for (const W of widths) {
                 view.size = { width: W, height: 230 };
                 const fight = view.battle && W >= 640;
                 const h = view.hudLayout(W, list, fight);
-                const boxes = { sign: h.sign, strip: h.strip, stage: h.stage, note: h.note?.box };
-                const tag = `${W}px inset ${inset}, ${name}${big ? " big" : ""}${farming ? " farming" : ""}${note ? " +note" : ""}`;
+                const boxes = { sign: h.sign, strip: h.strip, stage: h.stage };
+                const tag = `${W}px inset ${inset}, ${name}${big ? " big" : ""}${farming ? " farming" : ""}`;
                 for (const [k, b] of Object.entries(boxes)) {
                   if (!b) continue;
                   if (b.x < 0 || b.x + b.w > W || b.y < 0) problems.push(`${k} outside at ${tag}: ${JSON.stringify(b)}`);
@@ -162,5 +164,117 @@ describe("hudLayout", () => {
     // the section never shrinks below its fullest line, so it stays in the second row up to about 900px;
     // at 640 the strip, the map's chip wider in a raid, joins it there (beside it)
     assert.deepEqual(rows, [[640, false, 54, 54], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
+  });
+});
+
+// What the stage section says in the time's place while the boss lies dead
+// (slain, the countdown to the next stage) or after a failed attempt (time's
+// up): at every width, in the section's own height and width, between the
+// stage (and its farm mark) and the next arrow, never meeting the sign, the
+// strip (the map and the gear chips in it) or the plate; the longest wording
+// that fits, shorter where the section is narrow.
+describe("what the stage section says when something happens", () => {
+  const W = (t) => lettersWidth(letterFit(String(t))) * 2;
+  const up = (t) => t.toUpperCase();
+  const range = (a, b, step) => Array.from({ length: Math.floor((b - a) / step) + 1 }, (_, i) => a + i * step);
+  // thorough: every width at the lowest and tallest scene, every 7th at every 10px of height
+  const sizes = THOROUGH
+    ? [...range(320, 2918, 1).flatMap((w) => [230, 560].map((h) => [w, h])), ...range(320, 2918, 7).flatMap((w) => range(240, 550, 10).map((h) => [w, h]))]
+    : range(320, 2918, 37).flatMap((w) => [230, 360, 560].map((h) => [w, h])).concat([[2918, 230], [640, 560]]);
+  const name = (kind) => (kind === "goblin-mage" ? "Goblin Mage" : "Orc");
+  // each state: how to set it on the view, and its wordings from the longest (as rules.js's LABELS give them)
+  const STATES = {
+    slain: (v, kind, s) => {
+      Object.assign(v.view.monster, { kind, hp: 0, slainAt: v.now, advancing: undefined });
+      return { id: `idle-rpg-stage-slain-${v.view.monster.id}`, colour: "gold", texts: [LABELS.slain(name(kind)), LABELS.slainBare] };
+    },
+    "slain, farming": (v, kind, s) => {
+      v.view.progress.farming = true;
+      return STATES.slain(v, kind, s);
+    },
+    advancing: (v, kind, s) => {
+      Object.assign(v.view.progress, { stage: s + 1, best: s + 1 });
+      Object.assign(v.view.monster, { kind, hp: 0, slainAt: v.now - 1500, advancing: s + 1 });
+      const [n, next, soon] = [name(kind), LABELS.next(s + 1, 4), LABELS.nextIn(4)];
+      return { id: `idle-rpg-stage-slain-${v.view.monster.id}`, colour: "gold", texts: [`${LABELS.slain(n)} ${next}`, `${LABELS.slain(n)} ${soon}`, `${LABELS.slainBare} ${soon}`, soon] };
+    },
+    "time's up": (v, kind, s) => {
+      v.view.progress.farming = true;
+      v.view.timesUp = { at: v.now, id: 7, text: LABELS.back(LABELS.timesUp, s) };
+      return { id: "idle-rpg-stage-timesup-7", colour: "red", texts: [LABELS.back(LABELS.timesUp, s), LABELS.timesUp], hides: true };
+    },
+  };
+  const overlap = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+
+  for (const [state, set] of Object.entries(STATES))
+    test(`${state}: inside the section, clear of everything, the longest wording that fits (${sizes.length} sizes, big and small numbers)`, async () => {
+      const problems = [];
+      const shown = new Set();
+      for (const [kind, stage, best] of [["goblin-mage", 999, 1000], ["orc", 12, 14]]) {
+        const v = await mountRaid({ stage, best, classes: ["warrior", "archer", "wizard"], statuses: ["working", "blocked", "done"], gold: 1e15, slain: 1e15 });
+        const want = set(v, kind, stage);
+        for (const [w, h] of sizes) {
+          v.resize(w, h);
+          const tag = `${state} ${kind} at ${w}x${h}`;
+          if (!v.view.hudBox.stage) {
+            if (v.has(want.id)) problems.push(`${tag}: shown with no section`);
+            continue;
+          }
+          const s = v.box("idle-rpg-stage");
+          if (s.h !== 42 || s.w !== v.view.stageWidth(w)) problems.push(`${tag}: the section is ${s.w}x${s.h}`);
+          const runs = v.runs(want.id);
+          if (runs.length !== 1) {
+            problems.push(`${tag}: ${runs.length} runs`);
+            continue;
+          }
+          const [{ text, colours }] = runs;
+          shown.add(text);
+          const i = want.texts.map(up).indexOf(text);
+          if (i < 0) problems.push(`${tag}: "${text}"`);
+          if (colours.some((c) => c !== want.colour)) problems.push(`${tag}: in ${colours}`);
+          const m = v.box(want.id);
+          const next = v.box("idle-rpg-stage-next");
+          const words = v.box(v.runs("idle-rpg-stage")[0].el);
+          const before = v.has("idle-rpg-stage-farm") ? v.box("idle-rpg-stage-farm") : words;
+          // its room: from 8px after the stage (and its farm mark) to the time's end, 6px before the next arrow
+          const room = next.x - 6 - (before.x + before.w + 8);
+          if (m.x < before.x + before.w + 8 || m.x + m.w > next.x - 6) problems.push(`${tag}: "${text}" from ${m.x} to ${m.x + m.w}, room ${before.x + before.w + 8} to ${next.x - 6}`);
+          if (m.y < s.y + 4 || m.y + m.h > s.y + s.h - 4) problems.push(`${tag}: out of the frame's height`);
+          if (i > 0 && W(want.texts[i - 1]) <= room) problems.push(`${tag}: "${text}" where "${want.texts[i - 1]}" fits`);
+          for (const id of ["idle-rpg-sign", "idle-rpg-hud", "idle-rpg-map", "idle-rpg-gear", "idle-rpg-plate"])
+            if (v.has(id) && overlap(s, v.box(id))) problems.push(`${tag}: the section meets ${id}`);
+          if (want.hides) for (const id of ["idle-rpg-stage-clock", "idle-rpg-stage-paused"]) if (v.has(id) && v.get(id).style.opacity !== 0) problems.push(`${tag}: ${id} shows under it`);
+          for (const old of ["idle-rpg-timesup-", "idle-rpg-advance-"]) if (v.ids(old).length) problems.push(`${tag}: a note`);
+        }
+      }
+      assert.ok(problems.length === 0, `${problems.length} problems, e.g.\n${problems.slice(0, 8).join("\n")}`);
+      // the full wording somewhere, and a shorter one where the section is narrow
+      const texts = [...shown];
+      assert.ok(texts.length >= 2, `only ${texts.join(" | ")}`);
+    });
+
+  test("the section's size and place are as without a message, and its height never changes", async () => {
+    for (const w of [640, 700, 800, 1000, 1280, 1920, 2918]) {
+      const v = await mountRaid({ stage: 12, best: 14 }, { width: w });
+      const plain = v.box("idle-rpg-stage");
+      STATES.advancing(v, "orc", 12);
+      v.render();
+      assert.deepEqual(v.box("idle-rpg-stage"), plain, `${w}px`);
+    }
+  });
+
+  test("at 1920 wide every wording is whole; at 640, where the section is at its narrowest, the kind's name goes first", async () => {
+    const wide = await mountRaid({ stage: 12, best: 13 }, { width: 1920 });
+    STATES.advancing(wide, "goblin-mage", 12);
+    wide.render();
+    assert.deepEqual(wide.text(wide.ids("idle-rpg-stage-slain-")[0]), ["GOBLIN MAGE SLAIN! NEXT: STAGE 13 IN 4"]);
+    const narrow = await mountRaid({ stage: 12, best: 13 }, { width: 640 });
+    STATES.advancing(narrow, "goblin-mage", 12);
+    narrow.render();
+    assert.deepEqual(narrow.text(narrow.ids("idle-rpg-stage-slain-")[0]), ["SLAIN! NEXT IN 4"]);
+    const farm = await mountRaid({ stage: 12, best: 14 }, { width: 640 });
+    STATES["time's up"](farm, "orc", 12);
+    farm.render();
+    assert.deepEqual(farm.text("idle-rpg-stage-timesup-7"), ["TIME'S UP!"]);
   });
 });

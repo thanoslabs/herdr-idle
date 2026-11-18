@@ -3,7 +3,7 @@
 // shop, the settings' switches, and a later version's state staying read-only.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { trainingPrice } from "../../mods/idle-rpg/rules.js";
+import { DECOR_PRICE, trainingPrice } from "../../mods/idle-rpg/rules.js";
 import { misshapen, mountRaid, mountView, raid, savedState, timeAt } from "../harness/view.mjs";
 
 const PANELS = ["idle-rpg-codex", "idle-rpg-skills", "idle-rpg-shop", "idle-rpg-settings"];
@@ -180,7 +180,7 @@ describe("the shop's town decor", () => {
     assert.deepEqual(v.text("idle-rpg-shop").filter((t) => t.startsWith("Bought once")), ["Bought once, for the town"]);
     for (const c of ["wizard", "healer", "warrior", "archer"]) {
       v.click(`idle-rpg-shop-${c}`);
-      assert.deepEqual(tiles(v), [["None", "Equipped"], ["Halloween", "Buy 25"], ["Winter", "Buy 25"]], c);
+      assert.deepEqual(tiles(v), [["None", "Equipped"], ["Halloween", "Buy 2.5K"], ["Winter", "Buy 2.5K"]], c);
       assert.deepEqual(v.images("idle-rpg-shop-item-default"), [], `${c}: None has no picture`);
       for (const id of ["halloween", "winter"]) {
         assert.deepEqual(v.images(`idle-rpg-shop-item-${id}`).map((p) => p.split("/art/")[1]), [`seasons/${id}/icon.png`], `${c} ${id}`);
@@ -195,25 +195,26 @@ describe("the shop's town decor", () => {
     assert.equal(v.get("idle-rpg-shop-item-winter").style.h, 78);
   });
   test("buying: dimmed and dead while short, the price exactly is enough; it goes up at once and saves; for every class", async () => {
-    const v = await mountRaid({ gold: 24, battle: false, status: "idle" });
+    assert.equal(DECOR_PRICE, 2500);
+    const v = await mountRaid({ gold: DECOR_PRICE - 1, battle: false, status: "idle" });
     v.click("idle-rpg-station-shop");
     v.click("idle-rpg-shop-kind-decor");
-    assert.equal(v.get("idle-rpg-shop-buy-winter").handlers.click, undefined, "24 gold, 25 the price");
+    assert.equal(v.get("idle-rpg-shop-buy-winter").handlers.click, undefined, "2,499 gold, 2,500 the price");
     v.click("idle-rpg-shop-buy-winter");
-    assert.equal(v.view.progress.gold, 24);
+    assert.equal(v.view.progress.gold, DECOR_PRICE - 1);
     assert.deepEqual(v.ids("idle-rpg-season-"), [], "out of season, nothing bought: nothing up");
-    v.view.progress.gold = 25; // a kill's worth more
+    v.view.progress.gold = DECOR_PRICE; // a coin more
     v.render();
     const n = v.saves.length;
     v.click("idle-rpg-shop-buy-winter");
     assert.equal(v.saves.length, n + 1, "saved at once");
     assert.equal(v.view.progress.gold, 0);
     assert.deepEqual(v.stored.decor, { owned: ["default", "winter"], equipped: "winter" }, "bought and put up, as a hat is put on");
-    assert.deepEqual(tiles(v), [["None", "Equip"], ["Halloween", "Buy 25"], ["Winter", "Equipped"]]);
+    assert.deepEqual(tiles(v), [["None", "Equip"], ["Halloween", "Buy 2.5K"], ["Winter", "Equipped"]]);
     assert.ok(v.has("idle-rpg-season-string-a"), "the town is decorated for winter in January");
     for (const c of ["wizard", "healer", "warrior", "archer"]) {
       v.click(`idle-rpg-shop-${c}`);
-      assert.deepEqual(tiles(v), [["None", "Equip"], ["Halloween", "Buy 25"], ["Winter", "Equipped"]], c);
+      assert.deepEqual(tiles(v), [["None", "Equip"], ["Halloween", "Buy 2.5K"], ["Winter", "Equipped"]], c);
     }
   });
   test("None takes it down and Equip puts it back up, free, from any class's tab", async () => {

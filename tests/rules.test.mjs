@@ -443,7 +443,7 @@ describe("clockText", () => {
 describe("labels", () => {
   test("every HUD label can be lettered, with any stage and countdown", () => {
     for (const n of [1, 9, 10, 99, 100, 999, R.MAX_STAGE]) {
-      for (const text of [R.LABELS.title, R.LABELS.start, R.LABELS.stop, R.LABELS.empty, R.LABELS.farm, R.LABELS.stage(n), R.LABELS.timesUp, R.LABELS.back(R.LABELS.timesUp, n), R.LABELS.moving(n, 5), R.LABELS.map, R.LABELS.stages(n, n + 39), R.LABELS.range(n, n + 9)])
+      for (const text of [R.LABELS.title, R.LABELS.start, R.LABELS.stop, R.LABELS.empty, R.LABELS.farm, R.LABELS.stage(n), R.LABELS.timesUp, R.LABELS.back(R.LABELS.timesUp, n), R.LABELS.slainBare, R.LABELS.next(n, 5), R.LABELS.nextIn(5), R.LABELS.map, R.LABELS.stages(n, n + 39), R.LABELS.range(n, n + 9)])
         assert.ok(R.letterable(text), text);
     }
     assert.equal(R.LABELS.wiped, undefined, "no wipes, so no note for one");
