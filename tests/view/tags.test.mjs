@@ -19,7 +19,7 @@ const U = UNKNOWN;
 // A town (or raid) with agents named `names` ([space, tab] each), their classes known.
 async function named(names, { battle = false, width = 1280, height = 360, spots = null, status = "idle" } = {}) {
   const list = names.map(([space_name, tab_name], i) => agent(`n${i}`, status, { space_name, tab_name }));
-  const { saved } = raid({ battle, classes: [] });
+  const { saved } = raid({ view: battle ? "raid" : "town", classes: [] });
   saved.sprites = { you: "archer", ...Object.fromEntries(list.map((a, i) => [a.address, CLASSES[i % 4]])) };
   saved.seen = Object.fromEntries(list.map((a) => [a.address, 1_800_000_000_000]));
   if (spots) saved.spots = spots;
@@ -139,7 +139,7 @@ describe("an agent's tag", () => {
 
 describe("your tag and the stations'", () => {
   test("YOU, outlined in white while your card is open", async () => {
-    const v = await mountRaid({ battle: false });
+    const v = await mountRaid({ view: "town" });
     assert.deepEqual(v.text("idle-rpg-you-tag"), ["YOU"]);
     const edge = () => v.get("idle-rpg-you-tag").kids[1].style.bg;
     assert.equal(edge(), "#141a26");
@@ -149,7 +149,7 @@ describe("your tag and the stations'", () => {
     assert.equal(edge(), "#ffffff");
   });
   test("CODEX, TRAINING and SHOP under the stations, outlined in white on a solid fill under the pointer", async () => {
-    const v = await mountRaid({ battle: false });
+    const v = await mountRaid({ view: "town" });
     assert.deepEqual(["codex", "skills", "shop"].map((s) => v.text(`idle-rpg-station-${s}-tag`)[0]), ["CODEX", "TRAINING", "SHOP"]);
     for (const s of ["codex", "skills", "shop"]) {
       const tag = () => v.get(`idle-rpg-station-${s}-tag`);

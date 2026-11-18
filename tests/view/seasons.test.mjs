@@ -27,7 +27,7 @@ const OCT = on(2026, 10, 15);
 const DEC = on(2026, 12, 15);
 const OUT = { september: on(2026, 9, 15), november: on(2026, 11, 17), january: on(2027, 1, 15) };
 
-const town = (o = {}, view = {}) => mountRaid({ battle: false, status: "idle", ...o }, view);
+const town = (o = {}, view = {}) => mountRaid({ view: "town", status: "idle", ...o }, view);
 const decor = (v) => v.ids("idle-rpg-season");
 const seasonal = (v) => v.images().filter((p) => p.includes("/art/seasons/"));
 const named = (v, part) => v.images().filter((p) => p.endsWith(`/art/seasons/${part}.png`)).length;
@@ -248,7 +248,7 @@ describe("nothing out of season, with the switch off, or in a raid", () => {
     for (const phase of [0.25, 0.75])
       for (const [at, name] of [[OCT, "October"], [DEC, "December"]]) {
         const list = [...agents(5, "idle"), agent("w1", "working")];
-        const mount = (when, seasonalOn) => mountView({ saved: raid({ battle: false, settings: { seasonal: seasonalOn } }).saved, agents: list, phase, at: when });
+        const mount = (when, seasonalOn) => mountView({ saved: raid({ view: "town", settings: { seasonal: seasonalOn } }).saved, agents: list, phase, at: when });
         const off = await mount(at, false);
         const out = await mount(undefined, true); // the harness's own clock: January, out of season
         assert.equal(off.view.settings.seasonal, false);
@@ -291,7 +291,7 @@ describe("nothing out of season, with the switch off, or in a raid", () => {
           assert.deepEqual(seasonal(v), [], `stage ${stage} ${w}px`);
         }
         // back in town they are up
-        v.click("idle-rpg-battle-toggle");
+        v.click("idle-rpg-view-toggle");
         assert.ok(decor(v).length > 0);
       }
   });
@@ -348,7 +348,7 @@ describe("only scenery", () => {
     for (const n of parties)
       for (const at of [OCT, DEC])
         for (const height of [230, 360, 560]) {
-          const v = await mountView({ saved: raid({ battle: false }).saved, agents: agents(n, "idle"), at, height });
+          const v = await mountView({ saved: raid({ view: "town" }).saved, agents: agents(n, "idle"), at, height });
           for (const w of widths) {
             v.resize(w, height);
             const W = Math.max(320, w);
@@ -387,7 +387,7 @@ describe("only scenery", () => {
     const hs = THOROUGH ? Array.from({ length: 26 }, (_, i) => 200 + i * 8) : [200, 230, 250, 272, 296, 321, 360, 400];
     for (const at of [OCT, DEC])
       for (const n of [4, 40]) {
-        const v = await mountView({ saved: raid({ battle: false }).saved, agents: agents(n, "idle"), at });
+        const v = await mountView({ saved: raid({ view: "town" }).saved, agents: agents(n, "idle"), at });
         for (const h of hs)
           for (const w of ws) {
             v.resize(w, h);
@@ -409,7 +409,7 @@ describe("only scenery", () => {
     for (const n of parties) {
       const layouts = [];
       for (const at of [undefined, OCT, DEC]) {
-        const v = await mountView({ saved: raid({ battle: false, classes: [] }).saved, agents: agents(n, "idle"), at, seed: 7 });
+        const v = await mountView({ saved: raid({ view: "town", classes: [] }).saved, agents: agents(n, "idle"), at, seed: 7 });
         const out = [];
         for (const w of widths) {
           v.resize(w);
@@ -450,7 +450,7 @@ test("every season has decorations to draw (SEASONS)", async () => {
 
 describe("town decor bought and equipped (decorOf)", () => {
   const owned = (equipped) => ({ owned: ["default", "halloween", "winter"], equipped });
-  const mountTown = (o, at, phase) => mountView({ saved: raid({ battle: false, now: timeAt(phase, at), ...o }).saved, agents: [...agents(5, "idle"), agent("w1", "working")], phase, at });
+  const mountTown = (o, at, phase) => mountView({ saved: raid({ view: "town", now: timeAt(phase, at), ...o }).saved, agents: [...agents(5, "idle"), agent("w1", "working")], phase, at });
   const what = (v) => (v.has("idle-rpg-season-barrel") ? "halloween" : v.has("idle-rpg-season-string-a") ? "winter" : decor(v).length ? "?" : null);
 
   test("out of season, an equipped set is drawn exactly as its own month draws it: day and night, every width", async () => {
@@ -573,7 +573,7 @@ describe("town decor bought and equipped (decorOf)", () => {
           assert.deepEqual(decor(v), [], `${set} stage ${stage} ${w}px`);
           assert.deepEqual(seasonal(v), [], `${set} stage ${stage} ${w}px`);
         }
-        v.click("idle-rpg-battle-toggle");
+        v.click("idle-rpg-view-toggle");
         assert.equal(what(v), set);
       }
   });

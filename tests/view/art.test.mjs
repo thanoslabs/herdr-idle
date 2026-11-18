@@ -43,7 +43,7 @@ describe("every picture asked for is in art/", () => {
   test("the town, by day and night, at every width", async () => {
     const widths = THOROUGH ? Array.from({ length: 131 }, (_, i) => 320 + i * 16) : [320, 480, ...Array.from({ length: 24 }, (_, i) => 1056 + i * 32), 2400];
     for (const phase of [0.25, 0.5, 0.75]) {
-      const { saved } = raid({ battle: false, gold: 5 });
+      const { saved } = raid({ view: "town", gold: 5 });
       const v = await mountView({ saved, agents: ["working", "blocked", "done", "idle"].map((s, i) => agent(`t${i + 1}`, s)), phase });
       for (const w of widths) v.resize(w);
       v.resize(1280);
@@ -58,7 +58,7 @@ describe("every picture asked for is in art/", () => {
     const widths = Array.from({ length: 163 }, (_, i) => 320 + i * 16);
     for (const [season, month] of [["halloween", 10], ["winter", 12]]) {
       for (const phase of [0.25, 0.75]) {
-        const { saved } = raid({ battle: false });
+        const { saved } = raid({ view: "town" });
         const v = await mountView({ saved, agents: [agent("t1", "idle")], phase, at: new Date(2026, month - 1, 15, 12).getTime() });
         for (const w of widths) {
           v.resize(w);
@@ -74,7 +74,7 @@ describe("every picture asked for is in art/", () => {
     // a few characters a name, so none is cut off; then one cut (the ellipsis) and one with no letter (the box)
     const chars = [...LETTERS].filter((ch) => ch !== " " && ch !== ELLIPSIS && ch !== UNKNOWN);
     const names = [...Array.from({ length: Math.ceil(chars.length / 6) }, (_, i) => chars.slice(i * 6, i * 6 + 6).join("")), "a very long name indeed", "\u65e5\u672c"];
-    const { saved } = raid({ battle: false, classes: [] });
+    const { saved } = raid({ view: "town", classes: [] });
     const v = await mountView({ saved, agents: names.map((n, i) => agent(`n${i}`, "idle", { space_name: n, tab_name: "" })) });
     keep(v);
     for (const ch of LETTERS) if (ch !== " ") assert.ok(drawn.has(letterArt("white", ch)), `white ${ch}`);
@@ -90,7 +90,7 @@ describe("every picture asked for is in art/", () => {
       for (const [a, w, h] of combos) {
         const o = { classes: [cls, cls], you: cls, youAt: { x: 600, y: 120 }, armours: { [cls]: a }, weapons: { [cls]: w }, hats: { [cls]: h }, gold: 100, slain: 1, level: 3 };
         // in town: standing, walking (you), dangling each way (an agent)
-        const town = await mountRaid({ ...o, battle: false, status: "idle" });
+        const town = await mountRaid({ ...o, view: "town", status: "idle" });
         town.clickFloor(900, 60);
         town.advance(170);
         town.press("critter-t1");
@@ -223,7 +223,7 @@ describe("every picture asked for is in art/", () => {
       m.click("idle-rpg-monster-hit");
       keep(m);
     }
-    const empty = await mountView({ saved: raid({ battle: false }).saved, agents: [] });
+    const empty = await mountView({ saved: raid({ view: "town" }).saved, agents: [] });
     keep(empty);
   });
 });

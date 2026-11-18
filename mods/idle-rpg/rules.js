@@ -29,6 +29,8 @@
 export const CLASSES = ["wizard", "healer", "warrior", "archer"];
 export const YOU = "you"; // the person's key in `sprites`, `xp` and as an open card
 export const STATE_VERSION = 9;
+// The views of the one game (main.js): the town, the raid and the board.
+export const VIEWS = ["town", "raid", "board"];
 
 // Biomes: where a raid takes place. Every BIOME_STAGES stages the fight moves
 // to the next biome, in this order, and after the last the four repeat
@@ -719,8 +721,10 @@ export function letterFit(text, max = Infinity) {
 // any text: see letterFit.)
 export const LABELS = {
   title: "Raid Party",
-  start: "Start Raid",
-  stop: "Return to town",
+  // the sign's button between the town and the raid, two views of the one
+  // fight, which runs in either (and on the board) whenever anyone works
+  toRaid: "To the raid",
+  toTown: "To town",
   empty: "nobody in yet",
   farm: "farm",
   paused: "(paused)", // by the time, while nobody is in the fight
@@ -740,9 +744,18 @@ export const LABELS = {
   shop: "Shop",
   // the stage picker (the map in the top-right strip): its title, the stages
   // of the page it shows, a biome's stages beside its name, and the names
-  // the line in the empty scene while no agent is in: in town, and in a raid's biome
+  // the line in the empty scene while no agent is in: in town, and in the raid view's biome
   quietTown: "The rampart is quiet",
   quietRaid: "The raid is quiet",
+  // the board (the chip in the top-right strip): its columns' titles, each
+  // with a shorter one for a narrow column, and its line while it has no cards
+  inProgress: "In progress",
+  doing: "Doing",
+  inReview: "In review",
+  review: "Review",
+  completed: "Completed",
+  done: "Done",
+  noWork: "No work found yet",
   map: "Map",
   stages: (a, b) => `Stages ${a}-${b}`,
   range: (a, b) => `${a}-${b}`,
@@ -1399,7 +1412,8 @@ export function loadState(saved) {
     spots: entries(s.spots, point),
     sprites: entries(s.sprites, (c) => (CLASSES.includes(c) ? c : undefined)),
     seen: entries(s.seen, (t) => (finite(t) ? t : undefined)),
-    battle: typeof s.battle === "boolean" ? s.battle : true,
+    // which view shows (VIEWS); before the board, a boolean `battle` saved the raid (true) or the town
+    view: VIEWS.includes(s.view) ? s.view : s.battle === false ? "town" : "raid",
     // the stage being fought is one reached, else the highest reached
     stage: staged && stageOf(s.stage) === s.stage && s.stage <= best ? s.stage : best,
     best,

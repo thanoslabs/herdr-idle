@@ -195,11 +195,11 @@ describe("a healer standing by", () => {
     assert.equal(v.view.left, 600000);
   });
 
-  test("done and blocked healers stand by too; a carried one does not throw", async () => {
+  test("done and blocked healers stand by too; a carried one too (carrying, in town, changes nothing in the fight)", async () => {
     const v = await mountRaid({ classes: ["warrior", "healer", "healer", "healer"], statuses: ["working", "done", "blocked", "idle"] });
     assert.deepEqual(v.view.standby(), ["t2", "t3", "t4"]);
     v.view.drag = { address: "t4", x: 400, y: 60, vx: 0, last: 0 };
-    assert.deepEqual(v.view.standby(), ["t2", "t3"]);
+    assert.deepEqual(v.view.standby(), ["t2", "t3", "t4"]);
   });
 
   test("one that stops working mid-attack lands no blow: it only heals from then on", async () => {

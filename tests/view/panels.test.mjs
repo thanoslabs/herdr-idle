@@ -57,12 +57,12 @@ describe("opening and closing", () => {
   test("starting or ending a raid closes it", async () => {
     const v = await mountRaid(rich);
     v.click("idle-rpg-gold");
-    v.click("idle-rpg-battle-toggle");
+    v.click("idle-rpg-view-toggle");
     assert.deepEqual(open(v), []);
-    assert.equal(v.view.battle, false);
+    assert.equal(v.view.view, "town");
   });
   test("between raids the stations open them: book, dummy, stall; under the pointer they light up", async () => {
-    const v = await mountRaid({ ...rich, battle: false });
+    const v = await mountRaid({ ...rich, view: "town" });
     for (const [station, panel] of [["codex", "idle-rpg-codex"], ["skills", "idle-rpg-skills"], ["shop", "idle-rpg-shop"]]) {
       v.hover(`idle-rpg-station-${station}`);
       assert.ok(v.images(`idle-rpg-station-${station}`).some((p) => p.endsWith("hot.png")), station);
@@ -196,7 +196,7 @@ describe("the shop's town decor", () => {
   });
   test("buying: dimmed and dead while short, the price exactly is enough; it goes up at once and saves; for every class", async () => {
     assert.equal(DECOR_PRICE, 2500);
-    const v = await mountRaid({ gold: DECOR_PRICE - 1, battle: false, status: "idle" });
+    const v = await mountRaid({ gold: DECOR_PRICE - 1, view: "town", status: "idle" });
     v.click("idle-rpg-station-shop");
     v.click("idle-rpg-shop-kind-decor");
     assert.equal(v.get("idle-rpg-shop-buy-winter").handlers.click, undefined, "2,499 gold, 2,500 the price");
@@ -219,7 +219,7 @@ describe("the shop's town decor", () => {
   });
   test("None takes it down and Equip puts it back up, free, from any class's tab", async () => {
     const decor = { owned: ["default", "halloween", "winter"], equipped: "halloween" };
-    const v = await mountView({ saved: raid({ battle: false, gold: 7, decor, now: timeAt() }).saved, agents: [] });
+    const v = await mountView({ saved: raid({ view: "town", gold: 7, decor, now: timeAt() }).saved, agents: [] });
     v.click("idle-rpg-station-shop");
     v.click("idle-rpg-shop-kind-decor");
     assert.ok(v.has("idle-rpg-season-barrel"));
@@ -243,7 +243,7 @@ describe("the shop's town decor", () => {
   });
   test("in October with the winter set on, the shop says it is on though the season's shows (Season over my decor)", async () => {
     const decor = { owned: ["default", "winter"], equipped: "winter" };
-    const v = await mountView({ saved: raid({ battle: false, decor, now: timeAt(0.25, OCT) }).saved, agents: [], at: OCT });
+    const v = await mountView({ saved: raid({ view: "town", decor, now: timeAt(0.25, OCT) }).saved, agents: [], at: OCT });
     assert.ok(v.has("idle-rpg-season-barrel") && !v.has("idle-rpg-season-string-a"));
     v.click("idle-rpg-station-shop");
     v.click("idle-rpg-shop-kind-decor");

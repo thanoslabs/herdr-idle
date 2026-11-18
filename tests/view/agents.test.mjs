@@ -8,7 +8,7 @@ import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 
 describe("coming and going", () => {
   test("an agent's card shows where it works and what it is; Go to terminal focuses it", async () => {
-    const v = await mountRaid({ classes: ["archer"], battle: false, status: "blocked" });
+    const v = await mountRaid({ classes: ["archer"], view: "town", status: "blocked" });
     v.click("critter-t1");
     v.release("critter-t1");
     const text = v.text("idle-rpg-card");
@@ -63,7 +63,7 @@ describe("coming and going", () => {
 describe("odd addresses", () => {
   test("an address like 'constructor' or '__proto__' is an agent like any other", { todo: "spots and sprites are plain objects: such an address reads Object.prototype's member as its spot (drawn at y NaN), and '__proto__' sets Object.prototype.x and .y to NaN (main.js render, `s.x = ...` on this.spots[a.address])" }, async () => {
     for (const address of ["constructor", "toString", "__proto__"]) {
-      const v = await mountView({ saved: raid({ battle: false }).saved, agents: [agent(address, "idle")] });
+      const v = await mountView({ saved: raid({ view: "town" }).saved, agents: [agent(address, "idle")] });
       try {
         const b = v.box(`critter-${address}`);
         assert.ok(Number.isFinite(b.x) && Number.isFinite(b.y), `${address} drawn at ${b.x}, ${b.y}`);
@@ -97,7 +97,7 @@ describe("the card's Health row", () => {
   const want = (hp, max) => ({ text: ["Health", hpText(hp, max)], bar: [`${Math.round((100 * hp) / max)}%`, tone(hp / max)] });
 
   test("it takes the class row's place on your card (the card no taller); an agent's has it after what it is doing", async () => {
-    const v = await mountRaid({ classes: ["archer"], you: "wizard", battle: false, status: "idle" });
+    const v = await mountRaid({ classes: ["archer"], you: "wizard", view: "town", status: "idle" });
     open(v, "you");
     const you = v.text("idle-rpg-card");
     assert.deepEqual(you.slice(0, 4), ["You", "×", "Health", hpText(maxHpOf(v.view.progress, "wizard"), maxHpOf(v.view.progress, "wizard"))]);
@@ -160,7 +160,7 @@ describe("the card's Health row", () => {
   });
 
   test("out of the fight: their full max HP (class level and Health training), in town, idle, or after the attempt", async () => {
-    const v = await mountRaid({ classes: ["warrior"], you: "healer", battle: false, status: "idle", level: 7, health: 3 });
+    const v = await mountRaid({ classes: ["warrior"], you: "healer", view: "town", status: "idle", level: 7, health: 3 });
     for (const key of ["t1", "you"]) {
       open(v, key);
       const max = maxHpOf(v.view.progress, v.view.sprites[key]);

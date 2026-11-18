@@ -51,8 +51,9 @@
 #               time), rest/1 to rest/30 (the ring round a knockout's countdown,
 #               a picture a second), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
-#               coin, star, armour, hat, decor, gear, map (the stage picker), the
-#               card's wrench, and the stage section's arrows: prev, next
+#               coin, star, armour, hat, decor, gear, map (the stage picker),
+#               board (the board view's chip), the card's wrench, and the stage
+#               section's arrows: prev, next
 #   effects/    weapon effects (effects.js): icons/ (burn, chill, venom, hex, haste,
 #               might, and chain, the storm's), marks/ (weak, resist), and on the boss burn/flame-1, -2,
 #               chill/crystal, glint, chain/arc/{l,r}, venom/drip-1, -2
@@ -418,7 +419,7 @@ TABLE = chars([
 ], {"c": "#f4ecd8", "g": "#9fd8e8", "p": "#c94040", "P": "#e86a6a", "y": "#ffe27a", "o": "#ff9d3c", "w": "#f4f7fb",
     "T": "#b98047", "t": "#9a6639", "d": "#6e4525"})
 save("stations/table/idle.png", TABLE)
-# ---- Stations, on the rampart between raids: each opens one of the panels ----
+# ---- Stations, on the rampart in town: each opens one of the panels ----
 # Each has a folder, stations/<name>/: "idle", the picture, and "hot", the same
 # picture inside a one-pixel white outline (so one art pixel bigger on every
 # side), shown under the pointer.
@@ -508,7 +509,7 @@ save("scene/barrel.png", chars([
     "..dddddddd..",
 ], {"T": "#b98047", "t": "#9a6639", "d": "#6e4525", "m": "#4a515c"}))
 
-# ---- The campfire, in the middle of the floor between raids (scenery, not a
+# ---- The campfire, in the middle of the floor in town (scenery, not a
 # station), in campfire/. "base" is the ring of stones, the crossed logs, the
 # embers between them and the low heart of the flames; it never changes. The
 # stones and logs are outlined like the sprites, and each stone and log is
@@ -693,7 +694,7 @@ TORCH_LIGHT = (48.5, 4.5, 9, 40, 1.15)
 dark("light/torch.png", 96, TORCH_LIGHT)                 # one torch's stretch of wall, the flame near the top
 dark("light/candle.png", 68, (28.5, 9, 3, 24, 1.0))      # the left end, lit only by the candle on the table
 dark("light/fill.png", 96)                               # no flame: as wide as a torch's, laid over what is left and clipped (a picture is never stretched: the app keeps its proportions)
-# The campfire's stretch (between raids), 80 wide with the fire in the middle,
+# The campfire's stretch (in town), 80 wide with the fire in the middle,
 # cut into the row of pictures wherever the fire stands. The torches' pools
 # reach into it, so it carries their light as well as its own. The torches'
 # pictures start 68 art px from the left and repeat every 96, and the fire
@@ -777,7 +778,7 @@ icon("icons/star.png", [                                    # skill points to sp
     ".y...y.",
 ], {"y": "#ffd166", "h": "#fff6cf"})
 
-# ---- Monsters (battle mode): drawn from shapes, outlined like the sprites ----
+# ---- Monsters (the raid view): drawn from shapes, outlined like the sprites ----
 class Pix:
     def __init__(self, w, h):
         self.w, self.h = w + 2, h + 2                 # 1px margin for the outline
@@ -939,7 +940,7 @@ icon("monsters/dragon/roar/wave.png", [                                 # rings 
     "...ww",
 ], {"w": "#f2c98a"})
 
-# ---- Attacks (battle mode), in attacks/, by what flies or lands, then by
+# ---- Attacks (the raid view), in attacks/, by what flies or lands, then by
 # the weapon's variant of it (see ATTACK_ART in mods/idle-rpg/rules.js, which
 # picks them for each weapon): the warrior's slash/, the archer's arrow/, the
 # wizard's spell/ and the burst/ where it lands, the healer's potion/ and its
@@ -1086,7 +1087,7 @@ for name, colours in POTION_COLOURS.items():
 for name, pal in (("fire", {"y": "#ff9d3c", "W": "#ffe27a"}), ("frost", {"y": "#9fd0f5", "W": "#ffffff"})):
     save(f"attacks/spark/{name}.png", chars(["..y..", ".yWy.", "yWWWy", ".yWy.", "..y.."], pal))
 
-# ---- Fighting poses (battle mode), on a 22x16 grid so a weapon can reach out.
+# ---- Fighting poses (the raid view), on a 22x16 grid so a weapon can reach out.
 # Drawn attacking to the right: "stance", "windup" and "strike", each a folder
 # in the look's; "r" faces right and "l" is the mirror image, for attacking to
 # the left. Each pose is drawn in every colourway, with the same swaps as the
@@ -1610,7 +1611,7 @@ for hat, by_class in HATS.items():
         for (frame, b), (_, g) in zip(body, over):
             save(f"hats/{hat}/{cls}/{frame}.png", overlay(g, b))
 
-# ==== Monsters fight back (battle mode) =====================================
+# ==== Monsters fight back (the raid view) ===================================
 # Everything below is for the monster's attacks on the party (see
 # mods/idle-rpg/party.js), added after all the rest so nothing above changes:
 #   monsters/<kind>/attack/  each monster's two attacks. A pose is a whole
@@ -2533,6 +2534,19 @@ icon("icons/map.png", [
     "pdpSSppp",
     "...SS...",
 ], {"p": "#e8d7a8", "S": "#c4ab78", "d": "#7a5230", "r": "#d0403a"})
+
+# ---- The board: a small cork board with cards pinned up in three columns
+# (icons/), left of the map in the top-right corner ----
+icon("icons/board.png", [
+    "dddddddd",
+    "wwcyycgg",
+    "wrcyrcgr",
+    "cccccccc",
+    "wwcyyccc",
+    "wrcyrccc",
+    "cccccccc",
+    "dddddddd",
+], {"d": "#7a5230", "c": "#c4ab78", "w": "#f4ecd8", "y": "#ffd166", "g": "#6fdc9a", "r": "#d0403a"})
 
 # ---- Seasons (seasons/<season>/): the town's decorations for part of the year
 # (SEASONS and SEASON_ART in mods/idle-rpg/rules.js), each outlined like the

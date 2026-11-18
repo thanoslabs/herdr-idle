@@ -75,7 +75,7 @@ describe("the pointer", () => {
   for (const origin of [{ x: 0, y: 0 }, ORIGIN])
     describe(`with the view at ${origin.x},${origin.y} in the window`, () => {
       test("a click on the floor walks you to that point", async () => {
-        const v = await mountRaid({ battle: false }, { origin });
+        const v = await mountRaid({ view: "town" }, { origin });
         v.clickFloor(500, 80);
         assert.deepEqual(v.view.you, { x: 500, y: 80 });
         assert.equal(v.view.walking, true);
@@ -83,7 +83,7 @@ describe("the pointer", () => {
         assert.equal(v.view.walking, false);
       });
       test("dragging an agent drops it where it is let go", async () => {
-        const { saved } = raid({ battle: false, classes: ["archer"] });
+        const { saved } = raid({ view: "town", classes: ["archer"] });
         const v = await mountView({ saved, agents: [agent("t1", "idle")], origin });
         v.press("critter-t1");
         v.move({ x: 700, y: 300 });
@@ -102,7 +102,7 @@ describe("the pointer", () => {
     });
 
   test("a press on the floor abandoned off the scene walks nobody, and leaves no press behind", async () => {
-    const v = await mountRaid({ battle: false });
+    const v = await mountRaid({ view: "town" });
     const you = { ...v.view.you };
     v.press({ x: 500, y: 300 });
     assert.ok(v.view.press);

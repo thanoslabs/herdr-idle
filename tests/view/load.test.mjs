@@ -40,7 +40,7 @@ describe("older keys and garbage", () => {
   for (const key of ["raid-party.state", "rpg.state", "snow-loft.state"])
     test(`state under the layout's old key ${key} is read`, async () => {
       const v = await mount(savedState(0, { now: NOW, extra: { battle: false } }), { key });
-      assert.equal(v.view.battle, false);
+      assert.equal(v.view.view, "town"); // a save from before the board: `battle: false` is the town
       assert.equal(v.view.sprites.you, "wizard");
       assert.deepEqual(v.view.spots.t1, { x: 250, y: 64 });
     });
