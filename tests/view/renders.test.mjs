@@ -155,3 +155,38 @@ describe("in a fight", () => {
     for (const [s, n] of perSecond) assert.equal(n, 1, `${n} of the attack clock's renders in second ${s}`);
   });
 });
+
+// What the stage section says in the time's place (a boss slain, the
+// countdown to the next stage, time's up) is drawn on renders there are
+// anyway: the counts are those of the notes under the section it replaced.
+describe("the stage section's messages", () => {
+  test("a first clear's countdown: the watch's once a second, as the note's was", async () => {
+    const v = await mountRaid({ classes: ["warrior", "archer", "wizard"], you: "warrior", stage: 1, level: 4 });
+    v.until((h) => h.view.monster.hp <= 0, 120000);
+    const r0 = v.renders;
+    v.advance(5500);
+    assert.equal(v.renders - r0, 6);
+    // with nobody working, only the watch draws it: one a second
+    const q = await mountRaid({ classes: ["warrior"], stage: 1, status: "idle" });
+    Object.assign(q.view.progress, { stage: 2, best: 2 });
+    Object.assign(q.view.monster, { hp: 0, slainAt: q.now, advancing: 2 });
+    const q0 = q.renders;
+    q.advance(4900);
+    assert.equal(q.renders - q0, 4);
+  });
+  test("slain with no countdown: no render of its own", async () => {
+    const v = await mountRaid({ classes: ["warrior"], stage: 1, best: 3, status: "idle" });
+    Object.assign(v.view.monster, { hp: 0, slainAt: v.now });
+    const r0 = v.renders;
+    v.advance(2900);
+    assert.equal(v.renders - r0, 0);
+  });
+  test("time's up: the one render that starts its fade, the time's return native, as before", async () => {
+    const v = await mountRaid({ classes: ["warrior"], you: "healer", stage: 15, health: 40 });
+    v.view.left = 2000;
+    v.until((h) => h.view.timesUp, 5000);
+    const r0 = v.renders;
+    v.advance(4000);
+    assert.equal(v.renders - r0, 17);
+  });
+});

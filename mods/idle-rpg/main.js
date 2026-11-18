@@ -73,6 +73,7 @@ import {
   CLASSES,
   DEFAULT_LOOK,
   ELEMENTS,
+  KO_SECONDS,
   LABELS,
   CLASS_SKILLS,
   MAX_RANK,
@@ -288,9 +289,9 @@ for (const [id, kind] of Object.entries(MONSTERS)) kind.name = kindInfo(id)?.nam
 const WATCH_MS = 1000; // how often to look for a monster due, or someone ready to attack
 const RESPAWN_MS = 3000; // how long a fallen boss lies there before the next (its fade takes 1.6s)
 // after the kill that first clears a stage and moves on to a new one, the wait
-// is longer, with "Moving to stage N in 3" counting it down under the stage section
+// is longer, with "Next: stage N in 3" counting it down in the stage section
 const ADVANCE_MS = 5000;
-const TIMES_UP_FRESH = 1000; // the "Time's up!" note under the stage section shows this long,
+const TIMES_UP_FRESH = 1000; // "Time's up!" shows in the stage section this long,
 const TIMES_UP_MS = 2600; // then fades out until this long after the attempt ran out
 // Monsters fighting back (party.js runs it). Where what each kind's attack
 // sends flying sets off (its mouth or club, px from its picture's top-left, in
@@ -316,6 +317,8 @@ Object.assign(SHOT_FROM, {
 const LUNGE = 10;
 const HP_W = 40; // a character's HP bar, over its head
 const HP_TRACK = "#141a26"; // the bar's empty part
+// its fill's colour by the share left: green above a half, yellow above a quarter, else red
+const hpTone = (share) => (share > 0.5 ? "#4cd47b" : share > 0.25 ? "#ffd166" : "#ff5d5d");
 // A knocked-out character's countdown ring (status/rest/, 21 art px at 2 screen
 // px each, like the number inside), in place of the bar, just over the stars
 const RING = 42;
@@ -409,7 +412,7 @@ const MAX_DAMAGE = 12;
 // The HUD, three pixel frames along the top of the scene (see hudLayout): the
 // sign top left (the title, the counts as chips, the raid button), the stage
 // section top centre while the fight shows (the stage with its arrows, the
-// time left and its bar; the stage notes under it), and the strip top right
+// time left, or what just happened, and its bar), and the strip top right
 // (the status icons, then the gear). Each is a dark slate panel with a bevel
 // (framePieces: frame/ corners over bands of FRAME_COLOURS), its words and
 // numbers in the lettering (letterText), everything at 2 screen px an art px.
@@ -438,7 +441,6 @@ const RAID_BUTTON = {
 // A chip's states: see-through until the pointer is over it (a lighter square),
 // sunk while pressed or while its panel is open (a darker square, outlined).
 const CHIP = { hover: "#ffffff26", edge: "#ffffff40", down: "#00000050" };
-const NOTE_H = 28; // a stage note: a line of lettering in a frame
 // What a class's skill ranks give, in words, for the skills panel.
 // `p` is the progress, `c` the class, `ranks` its ranks.
 const SKILL_TEXT = {
@@ -961,7 +963,7 @@ export default class RaidParty extends View {
     // of the attack clock while anyone is in the fight with a live boss (see clockRuns).
     this.monster = bossOf(this.progress.stage, 1);
     this.left = stageTime(this.monster.stage);
-    this.timesUp = null; // { at, id, text, fading? } after an attempt failed (its time ran out), while its note shows
+    this.timesUp = null; // { at, id, text, fading? } after an attempt failed (its time ran out), while the stage section says so
     // The attack-clock tick the knocked-out characters' countdowns were last
     // turned on (see tick): they all show their seconds as of then, so any
     // number of them turn together, once a second.
@@ -1027,6 +1029,19 @@ export default class RaidParty extends View {
       if (!this.battle || Math.max(320, this.size.width) < 640) return;
       if (this.fight()) cx.notify(); // a new monster walked in
       else if (this.monster?.advancing && this.monster.hp <= 0) cx.notify(); // the countdown to the next stage, a second at a time
+      // "Time's up!" with the attack clock stopped (everyone stopped working
+      // just after it): its fade starts here, and once it is over the time
+      // (and "(PAUSED)") are drawn back, which the clock's ticks do otherwise
+      const t = this.timesUp;
+      if (t && !this.ticking) {
+        if (!t.fading && Date.now() - t.at >= TIMES_UP_FRESH) {
+          t.fading = true;
+          cx.notify();
+        } else if (Date.now() - t.at > TIMES_UP_MS) {
+          this.timesUp = null;
+          cx.notify();
+        }
+      }
       this.wake(cx);
     });
     if (!CLASSES.includes(this.sprites[YOU])) {
@@ -1156,7 +1171,7 @@ export default class RaidParty extends View {
       const best = this.progress.best;
       slay(this.progress, m, this.settings.advance, attackers);
       // a first clear that moves the fight on to a stage never fought before:
-      // the wait is ADVANCE_MS, counted down under the stage section. Not while farming,
+      // the wait is ADVANCE_MS, counted down in the stage section. Not while farming,
       // with "Advance after a kill" off, or replaying a stage below the best.
       if (this.progress.best > best && this.progress.stage === this.progress.best && this.progress.stage !== m.stage) m.advancing = this.progress.stage;
       this.save();
@@ -1222,8 +1237,8 @@ export default class RaidParty extends View {
   // The attempt failed: its time ran out with the boss alive (the only way
   // to lose one; see tick): past stage 1 the fight goes back a stage, to farm it
   // (failStage in rules.js), with a fresh attempt there; at stage 1 the same boss is back
-  // at full HP with the full time. A note under the stage section says which ("Time's
-  // up! Back to stage 8"). Nothing is lost but the attempt; the experience
+  // at full HP with the full time. The stage section says which ("Time's up!
+  // Back to stage 8"). Nothing is lost but the attempt; the experience
   // its blows earned is saved, once.
   fail() {
     const why = LABELS.timesUp;
@@ -1594,7 +1609,7 @@ export default class RaidParty extends View {
         changed = true;
       } else if (Math.ceil(this.left / 1000) !== shown) changed = true;
     }
-    // the "Time's up!" note shows for a moment, then is drawn once more to fade out
+    // "Time's up!" shows for a moment, then is drawn once more to fade out (and the time to come back)
     const note = this.timesUp;
     if (note && !note.fading && Date.now() - note.at >= TIMES_UP_FRESH) {
       note.fading = true;
@@ -1736,8 +1751,7 @@ export default class RaidParty extends View {
   // (plateIcons) under its bar, or null with no boss shown: over its head, a
   // row taller while it shows status icons, kept inside the scene when the
   // wall is low and clear of the HUD's frames above it (the stage section, and
-  // on a narrow scene the sign or the strip; not a stage note, which is
-  // short-lived and drawn over it, so the plate never jumps).
+  // on a narrow scene the sign or the strip).
   plateBox(W, icons) {
     const kind = this.monster && MONSTERS[this.monster.kind];
     if (!this.battle || !kind || W < 640) return null;
@@ -2002,9 +2016,9 @@ export default class RaidParty extends View {
   // wide holding the boss's name in gold, its HP right of it in white (both
   // rounded up, so a boss at full HP never reads more than its maximum), and
   // under them its HP bar, green, yellow or red by the share left
-  // (PLATE_TONES), gliding between renders; once it is down, "<NAME> SLAIN!"
-  // over the empty bar. `icons` (plateIcons in effects.js): a last row of
-  // icons for the statuses on it (burn, chill, venom with its stacks) and the
+  // (PLATE_TONES), gliding between renders; once it is down, its name over
+  // the empty bar (the stage section says it was slain). `icons`
+  // (plateIcons in effects.js): a last row of icons for the statuses on it (burn, chill, venom with its stacks) and the
   // party's hex. The stage and the time left are in the stage section.
   plate(m, kind, x, top, icons = [], hot = false) {
     const dead = m.hp <= 0;
@@ -2031,7 +2045,7 @@ export default class RaidParty extends View {
           div().absolute().left(w - 2).top(2).w(2).h(h - 4).bg(TAG.hot.edge),
         ]),
       )
-      .child(letterText(dead ? LABELS.slain(kind.name) : kind.name, "gold", { left: FRAME + PLATE_PAD, top: PLATE_TEXT_Y }))
+      .child(letterText(kind.name, "gold", { left: FRAME + PLATE_PAD, top: PLATE_TEXT_Y }))
       .when(!dead, (el) => el.child(letterText(hp, "white", { left: w - FRAME - PLATE_PAD - letterW(hp), top: PLATE_TEXT_Y })))
       .child(
         div()
@@ -2668,6 +2682,38 @@ export default class RaidParty extends View {
     this.barred = lay(order(hurt), VITALS.w, VITALS.h, (a, { x, y }) => vitalsBox(members[a.address], x, y, this.ringTop(x, y)), [yourTag, ...yourBar]);
   }
 
+  // The whole seconds left of a knocked-out fighter's rest as its ring (and
+  // its card) shows them: as of the countdowns' last beat (30 as they fall),
+  // or for one back from away still down, as of when it came back until the
+  // next beat.
+  restShown(key) {
+    const m = this.party.members[key];
+    return restSeconds(this.party, key, Math.max(this.koBeat, m.down - KO_TICKS, m.back ?? -Infinity));
+  }
+
+  // What the Health row of `key`'s card shows (see infoCard): { hp, max }, or
+  // { rest }, the seconds of a knockout's rest, `max` always maxHpOf's
+  // (their class's now). In the fight, their HP now, or
+  // knocked out, the seconds their ring shows (restShown). Out of it, what
+  // they would be back with: within an attempt that is still on (the boss
+  // standing), the HP they left it with (party.js keeps it in `away`, a rise in
+  // max HP added, as syncParty does), or the rest they had left, frozen while
+  // they are away; otherwise their full max HP (maxHpOf: class level and
+  // Health training), as anyone joins a fresh attempt.
+  health(key) {
+    const p = this.party;
+    const m = Object.hasOwn(p.members, key) ? p.members[key] : null;
+    const max = maxHpOf(this.progress, this.sprites[key]);
+    // HP as the next muster will make it (syncParty: a rise in max HP added, a fall cut to it),
+    // so a class picked or a level gained mid-fight shows at once
+    const as = (hp, was) => Math.min(max, hp + Math.max(0, max - was));
+    if (m) return m.down !== null ? { rest: this.restShown(key) } : { hp: as(m.hp, m.maxHp), max };
+    const was = this.monster?.hp > 0 && Object.hasOwn(p.away, key) ? p.away[key] : null;
+    if (was && was.rest !== null) return { rest: Math.min(KO_SECONDS, Math.ceil((was.rest * TICK_STEP) / 1000)) };
+    if (was) return { hp: as(was.hp, was.maxHp), max };
+    return { hp: max, max };
+  }
+
   // What shows over someone in the fight whose feet are at x, y (see
   // party.js): their HP bar, or, knocked out, stars circling over them and
   // over the stars the whole seconds left of their rest in the pixel font, in
@@ -2686,9 +2732,7 @@ export default class RaidParty extends View {
     // the HP bar: its track (the HP lost) under its fill, no outline round them
     const bar = (inner) => div().absolute().left(-HP_W / 2).top(-77).w(HP_W).h(5).bg(HP_TRACK).child(inner);
     if (m.down !== null) {
-      // the whole seconds left of the rest, as of the countdowns' last beat (30 as they fall)
-      // (one back from away still down, as of when it came back until the next beat)
-      const left = String(restSeconds(this.party, key, Math.max(this.koBeat, m.down - KO_TICKS, m.back ?? -Infinity)));
+      const left = String(this.restShown(key));
       out.push(
         // stars circling: two pictures a sixth of a turn apart, crossfaded, bobbing
         div()
@@ -2720,8 +2764,7 @@ export default class RaidParty extends View {
       );
     } else {
       const share = m.hp / m.maxHp;
-      const tone = share > 0.5 ? "#4cd47b" : share > 0.25 ? "#ffd166" : "#ff5d5d";
-      out.push(bar(div().id(`idle-rpg-hp-${key}`).h(5).w(Math.round(HP_W * share)).bg(tone).transition("width", { duration: 150, easing: "ease-out" })));
+      out.push(bar(div().id(`idle-rpg-hp-${key}`).h(5).w(Math.round(HP_W * share)).bg(hpTone(share)).transition("width", { duration: 150, easing: "ease-out" })));
       // a healer giving the party an aura (its vial's) shows its icon by its bar
       // while the boss stands, in the box that glides with it
       const potion = statsOf(this.sprites[key], equipped(this.progress, this.sprites[key], "weapon")).potion;
@@ -3274,7 +3317,43 @@ export default class RaidParty extends View {
       );
   }
 
+  // Where a card `cardH` high (its estimated height) goes for someone whose
+  // feet are at `s` (floor px): { left, top, h, cut }. Above their head when
+  // there is room, else beside them (right, or left without room there), its
+  // top lowered to their middle but kept 4px under the scene's top and 6px
+  // over its bottom; should that not fit, as high as the scene's top, and
+  // should the scene still be too low, cut to it (`cut`, 2px off its bottom,
+  // the card scrolling inside). Of those places (above, then the side it
+  // prefers, then the other, then each lowered just under the frames it meets
+  // where the scene has room) the first clear of the HUD's frames (the sign,
+  // the strip, the stage section) is taken, else the first, as before.
+  infoSpot(s, cardH, W) {
+    const h = Math.min(cardH, FLOOR_H - 2 + this.wallH);
+    const minTop = 4 - this.wallH;
+    const beside = Math.max(minTop, Math.min(s.y - h + 24, FLOOR_H - h - 6));
+    const sideTop = beside + h > FLOOR_H - 2 ? Math.max(-this.wallH, FLOOR_H - 2 - h) : beside;
+    const lefts = { right: s.x + 44, left: s.x - 44 - CARD_W };
+    const prefer = s.x + 44 + CARD_W + 8 <= W ? ["right", "left"] : ["left", "right"];
+    const room = (x) => x >= 8 && x + CARD_W + 8 <= W;
+    const spots = [
+      ...(s.y - 72 - h >= minTop ? [{ x: s.x - CARD_W / 2, y: s.y - 72 - h }] : []),
+      { x: lefts[prefer[0]], y: sideTop },
+      ...(room(lefts[prefer[1]]) ? [{ x: lefts[prefer[1]], y: sideTop }] : []),
+    ].map((p) => ({ x: clamp(p.x, 8, Math.max(8, W - CARD_W - 8)), y: p.y }));
+    const hud = this.hudBox ?? {};
+    const frames = [hud.sign, hud.strip, hud.stage].filter(Boolean).map((b) => ({ ...b, y: b.y - this.wallH }));
+    const meets = (p, b) => p.x < b.x + b.w && b.x < p.x + CARD_W && p.y < b.y + b.h && b.y < p.y + h;
+    // each place again, lowered just under the frames it meets, where the scene has room
+    const lowered = spots.map((p) => ({ x: p.x, y: Math.max(p.y, ...frames.filter((b) => meets(p, b)).map((b) => b.y + b.h + 4)) })).filter((p) => p.y + h <= FLOOR_H - 2);
+    const at = [...spots, ...lowered].find((p) => !frames.some((b) => meets(p, b))) ?? spots[0];
+    return { left: at.x, top: at.y, h, cut: h < cardH };
+  }
+
   // The card over whoever was clicked: `a` is an agent, or null for you.
+  // Its Health row (see health): HP as "<hp>/<max>" (shortNumber, rounded up
+  // like the plate's) beside a bar in the HP bar's colours, or while knocked
+  // out "Knocked out · 12s" in gold, the ring's seconds. Drawn on every render
+  // there is anyway (a hit, a heal, the countdowns' beat).
   infoCard(a, W) {
     const key = a ? a.address : YOU;
     const s = a ? this.at[a.address] : this.you;
@@ -3284,15 +3363,29 @@ export default class RaidParty extends View {
         .text_size(11)
         .child(div().w(38).flex_none().text_color("#8ea3bb").child(k))
         .child(div().flex_1().truncate().text_color("#dbe7f3").child(v));
+    const life = this.health(key);
+    const share = life.rest === undefined ? clamp(life.hp / life.max, 0, 1) : 0;
+    const health = h_flex()
+      .id("idle-rpg-card-health")
+      .gap(6)
+      .items_center()
+      .text_size(11)
+      .child(div().w(38).flex_none().text_color("#8ea3bb").child("Health"))
+      .child(
+        life.rest !== undefined
+          ? div().flex_1().truncate().text_color(GOLD).child(`Knocked out · ${life.rest}s`)
+          : h_flex()
+              .flex_1()
+              .min_w(0)
+              .gap(4)
+              .items_center()
+              .child(div().flex_none().text_color("#dbe7f3").child(`${shortNumber(Math.ceil(life.hp))}/${shortNumber(Math.ceil(life.max))}`))
+              // the HP bar's look, its track under its fill, no outline: up to HP_W, narrower beside a long number
+              .child(div().flex_1().min_w(12).max_w(HP_W).h(5).bg(HP_TRACK).child(div().id("idle-rpg-card-hp").h(5).w(`${Math.round(share * 100)}%`).bg(hpTone(share)).transition("width", { duration: 150, easing: "ease-out" }))),
+      );
     const [word, color] = a ? (STATUS[a.status] ?? [a.status, "#9fb4cc"]) : ["", "#5cc8ff"];
     // Above their head when there is room, else beside them.
-    const cardH = (a ? 146 : 123) + (this.picking ? 70 : 0);
-    const above = s.y - 72 - cardH;
-    const minTop = 4 - this.wallH;
-    const fits = above >= minTop;
-    const side = s.x + 44 + CARD_W + 8 <= W ? s.x + 44 : s.x - 44 - CARD_W;
-    const left = clamp(fits ? s.x - CARD_W / 2 : side, 8, Math.max(8, W - CARD_W - 8));
-    const top = fits ? above : Math.max(minTop, Math.min(s.y - cardH + 24, FLOOR_H - cardH - 6));
+    const { left, top, h: cardH, cut } = this.infoSpot(s, (a ? 164 : 123) + (this.picking ? 70 : 0), W);
     const klass = this.sprites[key];
     const title = h_flex()
       .gap(6)
@@ -3327,9 +3420,10 @@ export default class RaidParty extends View {
       facts = facts
         .child(row("Agent", a.program?.name ?? a.app ?? "Agent"))
         .child(row("Status", since ? `${word} ${since}` : word))
-        .child(row("Doing", a.title || "—"));
+        .child(row("Doing", a.title || "—"))
+        .child(health);
     } else {
-      facts = facts.child(row("Class", capital(klass)));
+      facts = facts.child(health);
     }
     return v_flex()
       .id("idle-rpg-card")
@@ -3337,6 +3431,8 @@ export default class RaidParty extends View {
       .left(left)
       .top(top)
       .w(CARD_W)
+      // taller than the scene (the class picker open in the lowest one): cut to it, scrolling inside
+      .when(cut, (el) => el.max_h(cardH).overflow_y_scroll())
       .p(10)
       .gap(6)
       .rounded(10)
@@ -3435,7 +3531,7 @@ export default class RaidParty extends View {
       }
     // whose name tags and bubbles show (see crowdMarks): everyone's, unless the party is a crowd
     this.hoverTaken = false; // a new render: the pointer's next arrival may take the hover (see critter)
-    // where the sign, the stage section (and its note) and the strip go: worked
+    // where the sign, the stage section and the strip go: worked
     // out before anything is drawn, since the boss's plate and the knocked out's
     // rings keep clear of them (and the rings of the plate: `ringClear`, in floor px)
     const hud = (this.hudBox = this.hudLayout(W, list, Boolean(foeKind)));
@@ -3527,7 +3623,6 @@ export default class RaidParty extends View {
           .child(this.hud(hud.counts, hud.strip, hud.map))
           .child(this.sign(list, hud))
           .when(Boolean(hud.stage), (el) => el.child(this.stageSection(hud.stage)))
-          .when(Boolean(hud.note), (el) => el.child(this.stageNote(hud.note)))
           // over the night's dark and the HUD (in a short scene a number rising off a
           // big boss reaches the stage section), and under the cards; none has a handler
           .when(Boolean(foeKind), (el) => el.children(this.damage.map((d) => this.damageNote(d, W, foeKind))))
@@ -3721,10 +3816,9 @@ export default class RaidParty extends View {
   }
 
   // Where the HUD's frames go, in scene px from the top left: { sign, strip,
-  // stage, note } boxes { x, y, w, h } (stage and note null while the fight
-  // does not show), whether the sign has its title and where its things go
-  // (signPlan), the
-  // panels' top, and what the sign and the strip hold. They never overlap: the
+  // stage } boxes { x, y, w, h } (stage null while the fight does not
+  // show), whether the sign has its title and where its things go
+  // (signPlan), the panels' top, and what the sign and the strip hold. They never overlap: the
   // sign keeps the layout's inset and the strip HUD_EDGE from the right; the
   // stage section is centred, moved aside as far as it must be. Tried in turn
   // until one fits: all in a row with the title; without it; the stage section
@@ -3732,10 +3826,8 @@ export default class RaidParty extends View {
   // (the stage section in the first, then beside it in the second). Below
   // HUD_NARROW the strip is always under the sign, which drops its title and
   // then wraps into rows as the scene narrows (and as a last resort above it
-  // too). The stage note goes under the stage section, or lower should the
-  // sign or the strip be in its row. The panels open under the sign (raised
-  // just enough for the tallest to fit, should a wrapped sign leave too
-  // little room).
+  // too). The panels open under the sign (raised just enough for the
+  // tallest to fit, should a wrapped sign leave too little room).
   hudLayout(W, list, fight) {
     const inset = props()?.inset ?? 84;
     const right = W - HUD_EDGE;
@@ -3777,31 +3869,9 @@ export default class RaidParty extends View {
       return { sign, strip, stage, titled: t.titled, plan };
     };
     const got = tries.reduce((found, t) => found ?? place(t, false), null) ?? place(tries[tries.length - 1], true);
-    // the stage notes (a failed attempt, the countdown to the next stage) under the stage section
-    let note = null;
-    const m = this.monster;
-    const t = this.timesUp;
-    if (got.stage && t && Date.now() - t.at <= TIMES_UP_MS) note = { id: `idle-rpg-timesup-${t.id}`, text: t.text ?? LABELS.timesUp, colour: "red", fading: Boolean(t.fading) };
-    else if (got.stage && m?.advancing && m.hp <= 0) {
-      const secs = Math.max(1, Math.ceil((m.slainAt + ADVANCE_MS - Date.now()) / 1000));
-      note = { id: `idle-rpg-advance-${m.id}`, text: LABELS.moving(m.advancing, secs), colour: "gold" };
-    }
-    if (note) {
-      const w = letterW(note.text) + 2 * FRAME + 16;
-      note.box = box(Math.round(clamp(got.stage.x + got.stage.w / 2 - w / 2, HUD_EDGE, right - w)), got.stage.y + HUD_H + 4, w, NOTE_H);
-      // and lower, should the sign or the strip be in its row
-      for (let moved = true; moved; ) {
-        moved = false;
-        for (const b of [got.sign, got.strip])
-          if (!apart(note.box, b)) {
-            note.box.y = b.y + b.h + 4;
-            moved = true;
-          }
-      }
-    }
     const under = got.sign.y + got.sign.h + 4;
     const panelTop = Math.max(HUD_TOP, Math.min(under, Math.max(FLOOR_H, this.size.height) - PANEL_MAX_H - 2));
-    return { ...got, note, inset, counts, spec, panelTop, map };
+    return { ...got, inset, counts, spec, panelTop, map };
   }
 
   // The sign, top left (see signSpec, hudLayout): a pixel frame holding the
@@ -3889,7 +3959,10 @@ export default class RaidParty extends View {
   // ("9:42"), white while the time runs and grey while it stands still (nobody
   // in the fight, see clockRuns; none while the boss is down); under them a bar of the time
   // left, gliding between renders, which come at least once a second while
-  // the time runs (see tick), so nothing renders just to move it.
+  // the time runs (see tick), so nothing renders just to move it. In the
+  // time's place, ending where it ends, what just happened (stageNews): the
+  // longest of its wordings that fits between the stage (and its farm mark)
+  // and the next arrow, so a narrow section says less, never more than fits.
   stageSection(b) {
     const m = this.monster;
     const dead = m.hp <= 0;
@@ -3936,8 +4009,27 @@ export default class RaidParty extends View {
     kids.push(arrow("next", stage + 1, b.w - x0 - 18));
     const clock = dead ? "" : clockText(this.left);
     const barW = b.w - 2 * x0;
-    // the time only runs while anyone is in the fight: standing still, it says so
-    if (!dead && !running) {
+    // what just happened, in the time's place: the first wording that fits
+    const news = this.stageNews();
+    if (news) {
+      const room = right - (farming ? x + 4 + letterW(LABELS.farm) : x - 2) - 8;
+      const text = news.texts.find((t) => letterW(t) <= room) ?? news.texts[news.texts.length - 1];
+      kids.push(
+        div()
+          .id(news.id)
+          .absolute()
+          .left(right - letterW(text))
+          .top(y0 + 4)
+          .when(news.fading !== undefined, (el) => el.opacity(news.fading ? 0 : 1).transition("opacity", { duration: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-in" }))
+          .child(letterText(text, news.colour)),
+      );
+    }
+    // the time is hidden while "Time's up!" shows, and comes back as it fades
+    // away, natively (no render of its own)
+    const hide = (el) => (news?.fading === undefined ? el : el.opacity(news.fading ? 1 : 0).when(news.fading, (e) => e.transition("opacity", { duration: 200, delay: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-out" })));
+    // the time only runs while anyone is in the fight: standing still, it says
+    // so (not while "Time's up!" shows: it comes back on the render after)
+    if (!dead && !running && news?.fading === undefined) {
       kids.push(
         div()
           .id("idle-rpg-stage-paused")
@@ -3949,7 +4041,7 @@ export default class RaidParty extends View {
       );
     }
     kids.push(
-      div().id("idle-rpg-stage-clock").absolute().left(right - letterW(clock)).top(y0 + 4).child(letterText(clock, running ? "white" : "grey")),
+      hide(div().id("idle-rpg-stage-clock").absolute().left(right - letterW(clock)).top(y0 + 4).child(letterText(clock, running ? "white" : "grey"))),
       div()
         .id("idle-rpg-stage-time")
         .absolute()
@@ -3978,26 +4070,28 @@ export default class RaidParty extends View {
       .children([...framePieces(b.w, b.h), ...kids]);
   }
 
-  // A stage note under the stage section, in a frame of its own (see
-  // hudLayout): after a failed attempt, "Time's up! Back to stage 8" in
-  // red, which pops in, then on the render tick()
-  // asks for once it has shown TIMES_UP_FRESH (marking it `fading`) fades
-  // natively, gone after TIMES_UP_MS; or, while a boss that first cleared its
-  // stage lies there (see ADVANCE_MS), "Moving to stage 13 in 3" in gold,
-  // drawn again by the watch once a second (no timer of its own). Picking a
-  // stage brings a fresh boss at once, so it goes with it.
-  stageNote(n) {
-    const b = n.box;
-    return div()
-      .id(n.id)
-      .absolute()
-      .left(b.x)
-      .top(b.y - this.wallH)
-      .w(b.w)
-      .h(b.h)
-      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
-      .when(n.colour === "red", (el) => el.opacity(n.fading ? 0 : 1).transition("opacity", { duration: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-in" }))
-      .children([...framePieces(b.w, b.h), div().absolute().left(FRAME + 8).top(FRAME + 3).child(letterText(n.text, n.colour))]);
+  // What the stage section says in the time's place (see stageSection), or
+  // null: { id, colour, texts, fading? }, `texts` its wordings from the
+  // longest. While the boss lies dead, "<KIND> slain!" in gold (only
+  // "Slain!" where that does not fit) until the next boss; on a first clear
+  // moving on (see ADVANCE_MS), with "Next: stage 13 in 3" after it, or
+  // "Next in 3", drawn again by the watch once a second (no timer of its
+  // own). Else after a failed attempt, "Time's up! Back to stage 8" in red
+  // (or "Time's up!"), which shows TIMES_UP_FRESH, then on the render tick()
+  // asks for then (marking it `fading`) fades natively, gone after
+  // TIMES_UP_MS. Picking a stage brings a fresh boss at once, so either goes.
+  stageNews() {
+    const m = this.monster;
+    if (m.hp <= 0) {
+      const name = MONSTERS[m.kind]?.name ? [LABELS.slain(MONSTERS[m.kind].name)] : [];
+      if (!m.advancing) return { id: `idle-rpg-stage-slain-${m.id}`, colour: "gold", texts: [...name, LABELS.slainBare] };
+      const secs = Math.max(1, Math.ceil((m.slainAt + ADVANCE_MS - Date.now()) / 1000));
+      const [next, soon] = [LABELS.next(m.advancing, secs), LABELS.nextIn(secs)];
+      return { id: `idle-rpg-stage-slain-${m.id}`, colour: "gold", texts: [...name.flatMap((n) => [`${n} ${next}`, `${n} ${soon}`]), `${LABELS.slainBare} ${soon}`, soon] };
+    }
+    const t = this.timesUp;
+    if (!t || Date.now() - t.at > TIMES_UP_MS) return null;
+    return { id: `idle-rpg-stage-timesup-${t.id}`, colour: "red", fading: Boolean(t.fading), texts: [...new Set([t.text ?? LABELS.timesUp, LABELS.timesUp])] };
   }
 
   // The strip, top right (see hudLayout), in a frame like the sign's: an icon

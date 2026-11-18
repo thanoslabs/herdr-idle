@@ -70,7 +70,8 @@ describe("a kill", () => {
     assert.deepEqual([p.slain, p.kills.goblin, p.gold, p.best, p.stage], [1, 1, stageGold(1, attackers), 2, 2]);
     assert.ok(Math.abs(classXp(v) - xp0 - stageXp(1, attackers)) < 1e-6, "the classes earned exactly one kill's experience");
     assert.ok(Math.abs(p.xp.you - stageXp(1, attackers)) < 1e-6, "and so did you");
-    assert.deepEqual(v.text("idle-rpg-plate"), ["GOBLIN SLAIN!"]);
+    assert.deepEqual(v.text("idle-rpg-plate"), ["GOBLIN"], "the plate keeps its name; the stage section says it was slain");
+    assert.deepEqual(v.text(`idle-rpg-stage-slain-${v.view.monster.id}`), ["GOBLIN SLAIN! NEXT: STAGE 2 IN 5"]);
     // nothing more is paid while it lies there
     const snapshot = JSON.stringify(p);
     v.advance(3000);
@@ -88,21 +89,21 @@ describe("a kill", () => {
     }
   });
 
-  test("a first clear counts down five seconds under the stage section, then the next boss comes", async () => {
+  test("a first clear counts down five seconds in the stage section, then the next boss comes", async () => {
     const v = await mountRaid({ ...NO_HEALER, stage: 1, level: 4 });
     v.until((h) => h.view.monster.hp <= 0, 120000);
     const slain = v.view.monster;
     assert.equal(slain.advancing, 2);
     const notes = new Set();
     v.until((h) => {
-      for (const id of h.ids("idle-rpg-advance-")) notes.add(h.text(id).join(" "));
+      for (const id of h.ids("idle-rpg-stage-slain-")) notes.add(h.text(id).join(" "));
       return h.view.monster.id !== slain.id;
     }, 8000);
     assert.ok(v.now - (slain.slainAt) >= 5000 && v.now - slain.slainAt < 6000, `came after ${v.now - slain.slainAt}ms`);
-    assert.deepEqual([...notes].slice(0, 2), ["MOVING TO STAGE 2 IN 5", "MOVING TO STAGE 2 IN 4"]);
-    assert.ok(notes.has("MOVING TO STAGE 2 IN 1"));
+    assert.deepEqual([...notes], [5, 4, 3, 2, 1].map((s) => `GOBLIN SLAIN! NEXT: STAGE 2 IN ${s}`));
     assert.deepEqual([v.view.monster.stage, v.view.monster.hp, v.view.monster.id], [2, bossHp(2), slain.id + 1]);
-    assert.deepEqual(v.ids("idle-rpg-advance-"), [], "the note goes with it");
+    assert.deepEqual(v.ids("idle-rpg-stage-slain-"), [], "the message goes with it");
+    assert.deepEqual(v.text("idle-rpg-stage-clock"), ["10:00"], "and the time is back");
     assert.equal(v.view.left, 600000, "a fresh attempt");
   });
 
@@ -112,9 +113,10 @@ describe("a kill", () => {
       v.until((h) => h.view.monster.hp <= 0, 120000);
       const slain = v.view.monster;
       assert.equal(slain.advancing, undefined);
+      assert.deepEqual(v.text(`idle-rpg-stage-slain-${slain.id}`), ["GOBLIN SLAIN!"], "slain, no countdown");
       v.until((h) => h.view.monster.id !== slain.id, 5000);
       assert.ok(v.now - slain.slainAt >= 3000 && v.now - slain.slainAt < 4000);
-      assert.equal(v.ids("idle-rpg-advance-").length, 0);
+      assert.deepEqual(v.ids("idle-rpg-stage-slain-"), []);
       assert.equal(v.view.monster.stage, o.best ? 2 : 1);
     }
   });
