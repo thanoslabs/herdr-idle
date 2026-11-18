@@ -17,7 +17,7 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 ```
 .
 ├── layouts/                  # idle-rpg.json, idle-rpg.svg (settings preview)
-├── mods/idle-rpg/            # main.js, rules.js, party.js (the boss fighting back), effects.js (what weapons do), mod.json, art/ (PNGs in folders by entity, then animation)
+├── mods/idle-rpg/            # main.js, rules.js, party.js (the boss fighting back), effects.js (what weapons do), board.js (the quest board's cards), mod.json, art/ (PNGs in folders by entity, then animation)
 ├── themes/                   # idle-rpg.json
 ├── RECIPE.md                 # Brief another agent could rebuild it from
 ├── PLAN.md                   # Planning notes for growing it into an idle RPG
@@ -44,6 +44,7 @@ Idle RPG, a layout for the [Herdr](https://herdr.dev) desktop app that shows cod
 - Keep `RECIPE.md` well under 64 KB: Herdr's gallery drops the layout's whole listing past that, and CI fails over 60,000 bytes (`wc -c RECIPE.md`). State each fact once, in the section Herdr's order gives it, and put runs of numbers in tables.
 - Art is original. Do not copy characters or artwork from existing games or products.
 - `art/` is organised by entity, then by animation, with short names inside (`classes/<class>/<look>/walk/l.png`, `monsters/dragon/roar/top.png`); the generator's header and `RECIPE.md` list the folders. A picture whose path depends on the state or an agent gets it from a builder in `rules.js` (`lookArt`, `weaponArt`, `hatArt`, `attackArt`, `monsterArt`, `biomeArt`, `seasonArt`, `glyphArt`, `letterArt`, `restArt`) or `effects.js` (`effectIconArt`, `markArt`, `overlayArt`), never from string concatenation in `main.js`; the rest are quoted paths passed to `src()` in `main.js`. A new picture goes in the generator, in the folder of what it shows. Text a user typed (an agent's space and tab names) is drawn in the lettering only through `letterFit` in `rules.js`, which keeps every character to `LETTERS` (a box for what the face lacks, an ellipsis where a name is cut).
+- `board.js` (the quest board) is the only part that reaches outside the mod's folder: it reads agents' terminals with `hc read`, reads git files (`.git`, `commondir`, config, refs, `packed-refs`; never a network path) with `readTextFile`, and runs local, read-only git: `merge-base --is-ancestor`, plus `rev-parse --verify` when refs cannot be read from files, always behind `GIT_PREFIX` (`--no-lazy-fetch --no-optional-locks -c core.fsmonitor=false -c core.hooksPath=/dev/null`; a git without `--no-lazy-fetch` turns the check off on that machine), so a repo's own settings (a partial clone's lazy fetch, its ssh command, hooks, fsmonitor) cannot make git fetch or run anything; without those flags it would reach the network. For a space on another machine the files are read and git is run there, through herdr-core. It never runs `gh`, `fetch` or `git fetch`, and nothing read from a terminal becomes a path or a command argument. Herdr's `setTimeout` throws when called: the host passes `wait` built on `cx.timer.after`. `PLAN.md` (The quest board) lists what it reads and runs, and its limits; keep both in step.
 - `gpui-kit.d.ts` and `jsconfig.json` inside mod folders are written by Herdr and git-ignored.
 
 ## Tests
