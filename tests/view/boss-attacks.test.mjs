@@ -5,6 +5,8 @@ import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { KO_TICKS } from "../../mods/idle-rpg/party.js";
 import { KINDS, KO_SECONDS, attackPart, kindOf, restArt } from "../../mods/idle-rpg/rules.js";
+import { pathTo } from "../harness/elements.mjs";
+import { pngSize } from "../harness/png.mjs";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
@@ -89,7 +91,7 @@ describe("knockouts", () => {
     const v = await knockout();
     const pics = v.images("critter-t1");
     assert.ok(pics.some((p) => /classes\/wizard\/default\/down\/[lr]\.png$/.test(p)), pics.join());
-    assert.ok(v.images("idle-rpg-vitals-t1").some((p) => p.endsWith("status/dizzy-1.png")));
+    assert.ok(v.images("idle-rpg-vitals-t1").some((p) => p.endsWith("status/dizzy.png")));
     assert.deepEqual(v.text("idle-rpg-rest-count-t1"), ["30"]);
     assert.deepEqual(v.runs("idle-rpg-rest-count-t1")[0].colours, ["gold"]);
     assert.deepEqual(v.images("idle-rpg-rest-ring-t1")[0].split("/art/")[1], restArt(KO_SECONDS));
@@ -106,6 +108,47 @@ describe("knockouts", () => {
     }, 40000);
     assert.deepEqual(counts, [30, 29, 28, 27, 26, 25, 24, 23, 22, 21, 20, 19, 18, 17, 16, 15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1].slice(0, counts.length));
     assert.ok(counts.length >= 28, counts.join());
+  });
+
+  test("the stars circle: a strip of pictures shown one at a time in a clipped box, by gpui-kit's frames, with no render of its own", async () => {
+    const v = await knockout();
+    const stars = v.get("idle-rpg-vitals-t1").kids.find((k) => k.loops?.top);
+    // the box the countdown's ring is laid over (ringTop, vitalsBox): 75x33 from -38, -66, bobbing 4px down
+    assert.deepEqual([stars.style.left, stars.style.top, stars.style.w, stars.style.h], [-38, -66, 75, 33]);
+    assert.deepEqual(stars.loops.top, { from: -66, to: -62, period: 900 });
+    assert.equal(stars.style.overflow_hidden, true, "only the picture in the box shows");
+    // four elements in all (a box, the column, the lines and the strip), no loop but the bob
+    const els = [...v.all((n) => pathTo(n).includes(stars))];
+    assert.equal(els.length, 4);
+    assert.deepEqual(els.flatMap((e) => Object.keys(e.loops)), ["top"]);
+    const [column] = stars.kids;
+    const [lines, strip] = column.kids;
+    assert.equal(column.type, "v_flex");
+    assert.equal(strip.src.split("/art/")[1], "status/dizzy.png");
+    const frames = strip.style.h / 33;
+    assert.deepEqual([strip.style.w, frames], [75, 10]);
+    assert.deepEqual(pngSize("status/dizzy.png"), { w: 25 * 8, h: 11 * 8 * frames }, "ten 25x11 pictures, stacked");
+    // the lines: invisible, 33px each, in turn ms apart; with n of them the strip's
+    // top is at (n - frames) * 33, so picture frames - n is the one in the box
+    assert.equal(lines.style.text_color, "#00000000");
+    assert.equal(lines.style.line_height, "33px");
+    const { list, ms } = lines.sequence;
+    assert.equal(ms, 80);
+    assert.equal(list.length, frames);
+    assert.deepEqual(lines.kids.map((k) => k.text), [list[0]], "the first picture until frames takes over");
+    const shown = list.map((text) => -(column.style.top + text.split("\n").length * 33) / 33 + 0); // (+ 0: no -0)
+    assert.deepEqual(shown, Array.from({ length: frames }, (_, k) => k), "each picture once, in order, then round again");
+    // (what the pictures show, a step round each and the last running on into the first: rules-art.test.mjs)
+    // nothing of it is the view's to move: every render draws the same, the turning is the app's
+    const same = (h) => {
+      const s = h.get("idle-rpg-vitals-t1").kids.find((k) => k.loops?.top);
+      return JSON.stringify({ top: s.kids[0].style.top, lines: s.kids[0].kids[0].sequence, kids: s.kids[0].kids[0].kids.map((k) => k.text) });
+    };
+    const first = same(v);
+    for (let i = 0; i < 10; i++) {
+      v.advance(370);
+      if (v.view.knocked("t1")) assert.equal(same(v), first);
+    }
   });
 
   test("countdowns turn only on their shared beat, never between (so all turn together)", async () => {

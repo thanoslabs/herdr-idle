@@ -21,6 +21,11 @@ describe("elements", () => {
     assert.throws(() => div().child(undefined), TypeError);
     assert.deepEqual(texts(div().child("a").child(3).child(false)), ["a", "3"]);
   });
+  test("frames() is recorded as gpui-kit takes it: a list of strings, at least 16 ms apart", () => {
+    assert.deepEqual(div().frames(["a", "b"], 80).sequence, { list: ["a", "b"], ms: 80 });
+    assert.throws(() => div().frames(["a"], 15), /at least 16/);
+    assert.throws(() => div().frames([1], 80), /list of strings/);
+  });
   test("an image path must be a string, and one that is not in art/ fails the render", async () => {
     assert.throws(() => image(undefined), TypeError);
     const v = await mountRaid();

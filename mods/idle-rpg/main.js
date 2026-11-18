@@ -324,6 +324,19 @@ const hpTone = (share) => (share > 0.5 ? "#4cd47b" : share > 0.25 ? "#ffd166" : 
 const RING = 42;
 const RING_TOP = -110;
 const RING_LOW = -78; // the lowest it goes to keep clear of the HUD (see ringTop): the old bar's place
+// The stars circling a knocked-out head (status/dizzy.png): a strip of
+// `frames` pictures, w x h each (25x11 art px at 3px), each a step further
+// round a flat ring, shown one at a time in a box that clips the rest. Over
+// the strip, invisible lines h tall, as many as gpui-kit's `frames` says (its
+// own clock: no render), set how far up the strip sits, so the pictures go by
+// in turn, `ms` each, and start over (the strip covers a third of a turn).
+// The changing text sits wholly outside the clipped box: were Herdr to skip
+// laying out what is clipped away, the stars would hold on one picture
+// (still drawn right). The element is built with its first text as a child,
+// as Herdr's own spinners are; the string shown is the one `frames`' clock,
+// shared by every view, is on.
+const STARS = { w: 75, h: 33, frames: 10, ms: 80 };
+const STAR_LINES = Array.from({ length: STARS.frames }, (_, k) => Array(STARS.frames - k).fill(".").join("\n"));
 const HIT_FADE = 400; // a hit flash or an attack's impact fades out this long
 // The pictures a monster's attack shows on screen (px): what flies and what
 // lands, by its name in MONSTER_ATTACKS (rules.js).
@@ -2734,16 +2747,24 @@ export default class RaidParty extends View {
     if (m.down !== null) {
       const left = String(this.restShown(key));
       out.push(
-        // stars circling: two pictures a sixth of a turn apart, crossfaded, bobbing
+        // stars circling: the strip's pictures in turn (STARS), bobbing; picture k
+        // shows while the lines over the strip number frames - k
         div()
           .absolute()
           .left(-38)
           .top(-66)
-          .w(75)
-          .h(33)
+          .w(STARS.w)
+          .h(STARS.h)
+          .overflow_hidden()
           .loop("top", { from: -66, to: -62, period: 900 })
-          .child(div().absolute().left(0).top(0).loop("opacity", { from: 1, to: 0, period: 700, easing: "linear" }).child(image(src("status/dizzy-1.png")).w(75).h(33)))
-          .child(div().absolute().left(0).top(0).loop("opacity", { from: 0, to: 1, period: 700, easing: "linear" }).child(image(src("status/dizzy-2.png")).w(75).h(33))),
+          .child(
+            v_flex()
+              .absolute()
+              .left(0)
+              .top(-STARS.frames * STARS.h)
+              .child(div().flex_none().w(STARS.w).line_height(`${STARS.h}px`).text_size(8).text_color("#00000000").frames(STAR_LINES, STARS.ms).child(STAR_LINES[0]))
+              .child(image(src("status/dizzy.png")).flex_none().w(STARS.w).h(STARS.h * STARS.frames)),
+          ),
         // in place of the bar, over the stars: the seconds inside a ring that empties a step with each
         div()
           .id(`idle-rpg-rest-ring-${key}`)
