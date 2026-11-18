@@ -7,7 +7,7 @@ import * as E from "../mods/idle-rpg/effects.js";
 import * as P from "../mods/idle-rpg/party.js";
 import * as R from "../mods/idle-rpg/rules.js";
 import { artFiles } from "./harness/world.mjs";
-import { pngSize } from "./harness/png.mjs";
+import { pixels, pngSize } from "./harness/png.mjs";
 
 const FILES = new Set(artFiles());
 const isArt = (p) => typeof p === "string" && FILES.has(p);
@@ -362,5 +362,51 @@ describe("effects' pictures", () => {
       assert.equal(E.overlayArt(h, "flame-1"), null);
       assert.equal(E.overlayArt("burn", h), null);
     }
+  });
+});
+
+describe("the knocked-out stars (status/dizzy.png)", () => {
+  // as the generator draws them (dizzy() in tools/idle-rpg-sprites.py): ten
+  // 25x11 pictures stacked, 8 image px an art px; in each, three stars a third
+  // of a turn apart, star k of picture f at angle 0.25 - (k + f / 10) * 2pi / 3,
+  // its centre (white in front, pale behind) at 12 + round(9.5 cos), 5 + round(2.5 sin)
+  const N = 10;
+  const { w, h, rgba } = pixels("status/dizzy.png");
+  const at = (x, y) => [...rgba.subarray((y * 8 * w + x * 8) * 4, (y * 8 * w + x * 8) * 4 + 4)];
+  const hex = (x, y) => "#" + at(x, y).slice(0, 3).map((c) => c.toString(16).padStart(2, "0")).join("");
+  const picture = (f) => Array.from({ length: 11 }, (_, y) => Array.from({ length: 25 }, (_, x) => at(x, f * 11 + y).join(","))).join(";");
+  const centres = (f) => {
+    const out = [];
+    for (let y = 0; y < 11; y++) for (let x = 0; x < 25; x++) if (["#ffffff", "#ffe9a8"].includes(hex(x, f * 11 + y)) && at(x, f * 11 + y)[3] === 255) out.push(`${x},${y}`);
+    return out.sort();
+  };
+  const expected = (f) =>
+    [0, 1, 2]
+      .map((k) => {
+        const a = 0.25 - ((k + f / N) * 2 * Math.PI) / 3;
+        // Python's round: halves to even
+        const round = (v) => (Math.abs(v % 1) === 0.5 ? 2 * Math.round(v / 2) : Math.round(v));
+        return `${12 + round(9.5 * Math.cos(a))},${5 + round(2.5 * Math.sin(a))}`;
+      })
+      .sort();
+
+  test("ten 25x11 pictures, each a step on from the last, the stars where the generator's angles put them", () => {
+    assert.deepEqual([w / 8, h / 8], [25, 11 * N]);
+    for (let f = 0; f < N; f++) {
+      assert.deepEqual(centres(f), expected(f), `picture ${f}`);
+      assert.notEqual(picture(f), picture((f + 1) % N), `picture ${f} and the next are the same`);
+    }
+  });
+
+  test("the last runs on into the first: a step past picture 9 is picture 0, the stars a third of a turn on", () => {
+    assert.deepEqual(expected(N), expected(0));
+    assert.deepEqual(centres(0), expected(N));
+  });
+
+  test("every picture's top and bottom rows are clear, so a scaled strip shows no edge of a neighbour", () => {
+    for (let f = 0; f < N; f++)
+      for (const y of [0, 10])
+        for (let x = 0; x < 25; x++)
+          for (let j = 0; j < 8; j++) for (let i = 0; i < 8; i++) assert.equal(rgba[(((f * 11 + y) * 8 + j) * w + x * 8 + i) * 4 + 3], 0, `picture ${f}, row ${y}`);
   });
 });

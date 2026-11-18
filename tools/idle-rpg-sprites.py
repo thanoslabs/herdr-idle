@@ -47,8 +47,9 @@
 #               pools of light (halloween: candle, torch-a, -b, -p, -pa,
 #               -pb; winter: candle, torch, fill, fire-0 to fire-23)
 #   status/     over an agent's head: alert, done, z-1 to z-3, sword-l, sword-r, spark,
-#               dizzy-1, dizzy-2 (knocked out), rest/1 to rest/30 (the ring round
-#               a knockout's countdown, a picture a second), heal, sparkle
+#               dizzy (knocked out: stars circling, a strip shown a picture at a
+#               time), rest/1 to rest/30 (the ring round a knockout's countdown,
+#               a picture a second), heal, sparkle
 #   icons/      the sign's, the shop's and the settings': swords, sleep, skull,
 #               coin, star, armour, hat, decor, gear, map (the stage picker), the
 #               card's wrench, and the stage section's arrows: prev, next
@@ -1631,8 +1632,9 @@ for hat, by_class in HATS.items():
 #   foe/        marker, the danger ring on the floor where an area attack will
 #               land (AREA_RADIUS wide, half as deep), and hit, the flash on
 #               anyone an area attack reaches
-#   status/     dizzy-1, dizzy-2 (stars circling a knocked-out head, crossfaded),
-#               heal (a green plus rising off whoever is healed) and sparkle
+#   status/     dizzy (stars circling a knocked-out head: a strip of ten pictures
+#               a step round a flat ring each, shown in turn), heal (a green
+#               plus rising off whoever is healed) and sparkle
 #   classes/<class>/<look>/down/{l,r}, weapons/<class>/<weapon>/down/{l,r} (not
 #               the healer's: its potion shows only in its wind-up) and
 #               hats/<hat>/<class>/down/{l,r}: knocked out, lying on its back
@@ -1655,14 +1657,17 @@ def grab(draw, *args, **kw):
 def mirror(g):
     return [row[::-1] for row in g]
 
-def shout(name, g):
+def outlined(g):
     # a grid of colours, with the dark outline round it where it is see-through
     h, w = len(g), len(g[0])
     o = [r[:] for r in g]
     for y in range(h):
         for x in range(w):
             if g[y][x] is None and near(g, y, x): o[y][x] = OUTLINE
-    save(name, o)
+    return o
+
+def shout(name, g):
+    save(name, outlined(g))
 
 def pair(name, g):
     # "r" as drawn, "l" its mirror
@@ -1945,25 +1950,39 @@ icon("foe/hit.png", [                                         # whoever an area 
     "....W....",
 ], {"r": "#ff5d5d", "W": "#ffffff"})
 
-# ---- status/: over a knocked-out head, stars circling (two pictures of the
-# three stars a sixth of a turn apart, crossfaded so they seem to turn), and
-# what rises off whoever is healed: a green plus and a sparkle.
-def dizzy(i, turn):
+# ---- status/: over a knocked-out head, stars circling, and what rises off
+# whoever is healed: a green plus and a sparkle. dizzy is a strip of
+# DIZZY_FRAMES pictures stacked top to bottom (each 25x11, its top and bottom
+# rows clear, so no edge of a neighbour shows when it is scaled): three stars
+# on a flat ring (an ellipse, as a ring over the head is seen from
+# a little above), each picture a step further round, those in front moving
+# right and those behind (dimmer) left, the front ones drawn over the back
+# ones. Three stars a third of a turn apart look the same a third of a turn
+# on, so the strip covers a third of a turn and starts over seamlessly;
+# main.js shows one picture of it at a time, in turn (see vitals there).
+DIZZY_FRAMES = 10
+def dizzy():
     w, h = 23, 9
-    g = blank(w, h)
-    for k in range(3):
-        a = turn + k * 2 * math.pi / 3
-        x, y = round(11 + 9.5 * math.cos(a)), round(4 + 3 * math.sin(a))
-        far = math.sin(a) < -0.3                                  # behind the head: dimmer
-        for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
-            g[y + dy][x + dx] = "#d9a53a" if far else "#ffd166"
-        g[y][x] = "#ffe9a8" if far else "#ffffff"
-    big = [[None] * (w + 2) for _ in range(h + 2)]
-    for y in range(h):
-        for x in range(w): big[y + 1][x + 1] = g[y][x]
-    shout(f"status/dizzy-{i}.png", big)
-dizzy(1, 0.25)
-dizzy(2, 0.25 + math.pi / 3)
+    strip = []
+    for f in range(DIZZY_FRAMES):
+        g = blank(w, h)
+        stars = []
+        for k in range(3):
+            a = 0.25 - (k + f / DIZZY_FRAMES) * 2 * math.pi / 3
+            stars.append((math.sin(a), round(11 + 9.5 * math.cos(a)), round(4 + 2.5 * math.sin(a))))
+        for depth, x, y in sorted(stars):                         # the back first, the front over it
+            far = depth < -0.3                                    # behind the head: dimmer
+            for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+                g[y + dy][x + dx] = "#d9a53a" if far else "#ffd166"
+            g[y][x] = "#ffe9a8" if far else "#ffffff"
+        strip.append([None] * (w + 2))                            # each picture's own clear edge, for its outline
+        strip += [[None] + row + [None] for row in g]
+        strip.append([None] * (w + 2))
+    o = outlined(strip)
+    for f in range(DIZZY_FRAMES):                                 # the outline too stays off each picture's edge rows
+        assert not any(o[f * (h + 2)]) and not any(o[f * (h + 2) + h + 1]), f"dizzy picture {f} touches its edge"
+    save("status/dizzy.png", o)
+dizzy()
 icon("status/heal.png", [
     "..ggg..",
     "..gLg..",

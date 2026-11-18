@@ -2,7 +2,7 @@
 // v_flex() return an El that records every call into a tree the tests can
 // query: id, style values (left, top, w, h, opacity, bg, ...), children (text
 // as Text nodes), the image's path, tooltips, handlers, hover and active
-// styles, native loops and transitions.
+// styles, native loops, transitions and frames.
 //
 // Only methods gpui-kit has are accepted (METHODS, from gpui-kit.d.ts): a
 // typo in main.js fails here as it would in the app. A method main.js starts
@@ -18,7 +18,7 @@ import { recordImage } from "./world.mjs";
 export const METHODS = new Set(
   (
     "absolute active bg border border_b border_color border_l border_r border_t bottom child children cursor_pointer flex flex_1 flex_none " +
-    "font_semibold gap h hover id items_center items_start justify_between justify_center left line_height loop max_h max_w max_w_full min_w " +
+    "font_semibold frames gap h hover id items_center items_start justify_between justify_center left line_height loop max_h max_w max_w_full min_w " +
     "on_click on_hover on_mouse_down on_mouse_move on_mouse_up on_size_change opacity overflow_hidden overflow_y_scroll p pt px py relative right rounded " +
     "size_full text_center text_color text_size tooltip top transition truncate w when " +
     // not used by main.js today, but gpui-kit has them (common next steps)
@@ -48,6 +48,7 @@ export class El {
     this.activeStyle = null;
     this.loops = Object.create(null);
     this.transitions = Object.create(null);
+    this.sequence = null; // frames(): { list, ms }
     this.tip = null;
     this.parent = null;
     this.n = (serial += 1);
@@ -129,6 +130,14 @@ export class El {
 
   loop(property, policy) {
     this.loops[property] = policy;
+    return this;
+  }
+
+  // a native sequence of texts, `ms` apart, forever (one clock for every view)
+  frames(list, ms) {
+    if (!Array.isArray(list) || !list.length || list.some((t) => typeof t !== "string")) throw new TypeError(`frames() on ${this.describe()} needs a list of strings`);
+    if (!(ms >= 16)) throw new RangeError(`frames() on ${this.describe()}: ms at least 16, got ${ms}`);
+    this.sequence = { list: [...list], ms };
     return this;
   }
 
