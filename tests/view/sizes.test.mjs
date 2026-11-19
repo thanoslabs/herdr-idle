@@ -295,7 +295,7 @@ describe("staying inside the scene", () => {
     assert.equal(full, 130);
     return Math.min(full, card.style.max_h);
   };
-  test("the settings menu with four switches never runs past the scene: whole from 420px wide, cut and scrolling under it in a raid", async () => {
+  test("the settings menu with four switches never runs past the scene: whole from 420px wide, cut and scrolling under it the same in town and the raid", async () => {
     const v = await mountRaid({ classes: ["warrior", "archer", "wizard", "healer"], statuses: ["working", "blocked", "done", "idle"], stage: 999, best: 1000, gold: 1e15, slain: 1e15, decor: { owned: ["default", "winter"], equipped: "default" } });
     v.click("idle-rpg-gear");
     const found = [];
@@ -312,11 +312,13 @@ describe("staying inside the scene", () => {
         }
     }
     assert.ok(!found.length, summary(found));
-    // only in a raid under 420px wide, in the lowest scenes, is it cut
+    // only under 420px wide, in the lowest scenes, is it cut; the HUD is the
+    // same in every view, so it is cut in town exactly where in the raid
     for (const c of cut) {
       const [where, size] = c.split(" ");
       const [w] = size.split("x").map(Number);
-      assert.ok(where === "raid" && w < 420, c);
+      assert.ok(w < 420, c);
+      assert.ok(cut.has(`${where === "raid" ? "town" : "raid"} ${size}`), `${c}, not in the other view`);
     }
     assert.ok(cut.has("raid 320x230"));
   });

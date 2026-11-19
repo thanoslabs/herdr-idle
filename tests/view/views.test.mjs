@@ -312,9 +312,9 @@ describe("switching views", () => {
     assert.equal(v.view.view, "town");
     assert.equal(label(v), up(LABELS.toRaid));
     assert.equal(v.runs("idle-rpg-view-toggle")[0].colours[0], "white");
-    // the town: stations and campfire, no boss, the stage section running on, the kill and gold chips gone to the stations
-    for (const id of ["idle-rpg-station-shop", "idle-rpg-fire-glow", "idle-rpg-stage", "idle-rpg-map", "idle-rpg-board-chip"]) assert.ok(v.has(id), id);
-    for (const id of ["idle-rpg-plate", "idle-rpg-gold", "idle-rpg-slain", "idle-rpg-board"]) assert.ok(!v.has(id), id);
+    // the town: stations and campfire, no boss, the stage section running on, the sign and the strip as in the raid
+    for (const id of ["idle-rpg-station-shop", "idle-rpg-fire-glow", "idle-rpg-stage", "idle-rpg-gold", "idle-rpg-slain", "idle-rpg-map", "idle-rpg-board-chip"]) assert.ok(v.has(id), id);
+    for (const id of ["idle-rpg-plate", "idle-rpg-board"]) assert.ok(!v.has(id), id);
     const clock = v.view.left;
     v.advance(5000);
     assert.ok(v.view.left < clock, "the attempt's time runs in town");
@@ -332,8 +332,8 @@ describe("switching views", () => {
       assert.ok(v.has("idle-rpg-board"));
       assert.equal(v.get("idle-rpg-board-chip").style.bg, "#00000050", "sunk while the board shows");
       assert.equal(v.get("idle-rpg-board-chip").tip, "Back");
-      assert.ok(!v.has("idle-rpg-map"), "no map on the board");
-      assert.ok(v.has("idle-rpg-gold") && v.has("idle-rpg-slain"), "the kill and gold chips on the board's sign (no stations there)");
+      assert.ok(v.has("idle-rpg-map"), "the map on the board, as in every view");
+      assert.ok(v.has("idle-rpg-gold") && v.has("idle-rpg-slain"), "the kill and gold chips on the board's sign, as in every view");
       for (const id of ["idle-rpg-plate", "idle-rpg-station-shop", "idle-rpg-fire-glow", "idle-rpg-you"]) assert.ok(!v.has(id), `${id} on the board`);
       assert.equal(label(v), up(from === "raid" ? LABELS.toTown : LABELS.toRaid));
       v.click("idle-rpg-board-chip");
@@ -516,7 +516,7 @@ describe("the board's layout", () => {
 });
 
 describe("the stage section in town", () => {
-  test("never over a station (its tag and hover arrow), nor a small party's spots, at every size; compact where the full one does not fit", async () => {
+  test("never over a station (its tag and hover arrow), nor a small party's spots but where neither row has room, at every size; compact where the full one does not fit", async () => {
     const range = (a, b, step) => Array.from({ length: Math.floor((b - a) / step) + 1 }, (_, i) => a + i * step);
     const widths = THOROUGH ? range(320, 2918, 3) : [...range(320, 1400, 16), 1920, 2918];
     const heights = THOROUGH ? range(230, 560, 5) : range(230, 560, 10);
@@ -535,7 +535,9 @@ describe("the stage section in town", () => {
           const arrow = { x: b.x + b.w / 2 - 14, y: b.y - 38, w: 28, h: 28 }; // the arrow over it, hovered
           for (const [what, k] of [["", b], [" tag", tag], [" arrow", arrow]]) if (overlap(st, k)) problems.push(`${w}x${h}: over the ${id}${what}`);
         }
-        for (const id of ["idle-rpg-you", "critter-t1", "critter-t2", "critter-t3"]) if (overlap(st, v.box(id))) problems.push(`${w}x${h}: over ${id}`);
+        // (the sign and the strip stay where they are in the raid, so with the sign at
+        // its widest the section has no room clear of everyone at 640px in the lowest scenes)
+        for (const id of ["idle-rpg-you", "critter-t1", "critter-t2", "critter-t3"]) if (overlap(st, v.box(id)) && !(w < 656 && h < 250)) problems.push(`${w}x${h}: over ${id}`);
         if (st.w < v.view.stageWidth(w)) {
           compact += 1;
           if (v.has("idle-rpg-stage-paused") || v.has("idle-rpg-stage-farm")) problems.push(`${w}x${h}: compact with the full section's marks`);
@@ -550,7 +552,7 @@ describe("the stage section in town", () => {
 });
 
 describe("the strip's chips", () => {
-  test("the board chip at every width in every view, the map from 640 in town and the raid only; inside the strip, apart", async () => {
+  test("the board chip at every width in every view, the map from 640 in every view; inside the strip, apart", async () => {
     const problems = [];
     const widths = THOROUGH ? Array.from({ length: 401 }, (_, i) => 320 + i) : [320, 360, 400, 480, 560, 639, 640, 700, 900, 1280];
     for (const view of VIEWS)
@@ -563,7 +565,7 @@ describe("the strip's chips", () => {
             const tag = `${view} ${statuses.length} statuses ${w}x${h}`;
             const strip = v.box("idle-rpg-hud");
             if (!inside(strip, { x: 0, y: 0, w, h })) problems.push(`${tag}: the strip leaves the scene`);
-            const map = w >= 640 && view !== "board";
+            const map = w >= 640;
             if (v.has("idle-rpg-map") !== map) problems.push(`${tag}: the map ${map ? "missing" : "shown"}`);
             const chips = ["idle-rpg-board-chip", "idle-rpg-map", "idle-rpg-gear"].filter((id) => v.has(id)).map((id) => [id, v.box(id)]);
             if (chips.length !== (map ? 3 : 2)) problems.push(`${tag}: ${chips.map(([id]) => id)}`);

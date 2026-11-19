@@ -3919,23 +3919,28 @@ export default class RaidParty extends View {
   }
 
   // What the sign holds (see sign): "nobody in yet" while there are no agents;
-  // in the raid and on the board (the town has its stations), once anything
-  // has been slain or earned, the kill count (it opens the codex) and the gold (the shop); once there is a point or gold to
+  // once anything has been slain or earned, the kill count (it opens the
+  // codex) and the gold (the shop); once there is a point or gold to
   // spend or anything trained, the star with the skill points left to spend
   // across all classes (the skills and training); and the button to the
   // raid or the town (see base). With how wide each is, for hudLayout.
+  // Nothing here depends on the view but the button's words, and the button
+  // is as wide as the wider of them, so the sign, the button and everything
+  // right of them stay put across a switch (owner's request: clicking the
+  // button again in the same place goes back).
   signSpec(list) {
     const { slain, gold } = this.progress;
     const spare = pointsLeftAll(this.progress);
     const earned = gold > 0 || CLASSES.some((c) => pointsEarned(this.progress.xp[c]) > 0 || TRAINING.some(({ key }) => trainingOf(this.progress, c, key) > 0));
     const counts = [];
-    if (this.view !== "town" && (slain > 0 || gold > 0)) counts.push({ id: "slain", art: "icons/skull.png", n: slain }, { id: "gold", art: "icons/coin.png", n: gold });
+    if (slain > 0 || gold > 0) counts.push({ id: "slain", art: "icons/skull.png", n: slain }, { id: "gold", art: "icons/coin.png", n: gold });
     if (earned) counts.push({ id: "points", art: "icons/star.png", n: spare });
     const empty = list.length === 0;
     const label = this.base() === "raid" ? LABELS.toTown : LABELS.toRaid;
     const parts = [...(empty ? [letterW(LABELS.empty)] : []), ...counts.map((c) => countW(c.n))];
     const countsW = parts.reduce((x, w) => x + w, 0) + 4 * Math.max(0, parts.length - 1);
-    return { counts, empty, spare, label, countsW, buttonW: letterW(label) + 12, titleW: letterW(LABELS.title) };
+    const buttonW = Math.max(letterW(LABELS.toTown), letterW(LABELS.toRaid)) + 12;
+    return { counts, empty, spare, label, countsW, buttonW, titleW: letterW(LABELS.title) };
   }
 
   // Where each thing on the sign goes, and the sign's size: { w, h, rows,
@@ -4001,7 +4006,7 @@ export default class RaidParty extends View {
   }
 
   // The stage section's compact width, for town when the full one would meet
-  // a station (see hudLayout): an arrow at each end, "STAGE N" and the time,
+  // a station wherever it could go (see hudLayout): an arrow at each end, "STAGE N" and the time,
   // no farm mark or "(PAUSED)" (the pulsing arrow and the grey time say them).
   stageCompactWidth() {
     const digits = "8".repeat(Math.max(3, String(this.progress.best).length));
@@ -4039,21 +4044,26 @@ export default class RaidParty extends View {
   // then wraps into rows as the scene narrows (and as a last resort above it
   // too). The panels open under the sign (raised just enough for the
   // tallest to fit, should a wrapped sign leave too little room).
-  // In town (from HUD_NARROW wide) the stage section keeps clear of the
-  // stations (with their tags and hover arrows: townBlocks), first of
-  // everyone's drawn spot too, taking its compact width (stageCompactWidth)
-  // where the full one does not fit; an arrangement with the strip clear of
-  // the stations too is preferred. Only where nothing fits is it placed as
+  // The sign and the strip (what they hold, their sizes and places) never
+  // depend on the view, only on the scene's size and the state (owner's
+  // request: "we should not be changing what icons are in the top bars, or
+  // their widths"), so a click on the sign's button or the board chip can be
+  // undone by a click in the same place. Only the stage section may differ:
+  // in town (from HUD_NARROW wide), with the sign and the strip where they
+  // are anywhere else, it keeps clear of the stations (with their tags and
+  // hover arrows: townBlocks), first of everyone's drawn spot too, in its
+  // own row or the other, taking its compact width (stageCompactWidth)
+  // where the full one does not fit. Only where nothing fits is it placed as
   // anywhere else.
   hudLayout(W, list, fight) {
     const inset = props()?.inset ?? 84;
     const right = W - HUD_EDGE;
     const counts = tally(list);
     const spec = this.signSpec(list);
-    // the map (the stage picker), left of the gear, in town or the raid (not
-    // on the board), from HUD_NARROW wide (its card needs the room); the
-    // board chip, left of them, at any width (the board fits any)
-    const map = W >= HUD_NARROW && this.view !== "board";
+    // the map (the stage picker), left of the gear, from HUD_NARROW wide (its
+    // card needs the room); the board chip, left of them, at any width (the
+    // board fits any); all three in every view
+    const map = W >= HUD_NARROW;
     const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + 34 + MAP_GAP + (map ? 34 + MAP_GAP : 0) + 34 + 2;
     const stageW = fight ? this.stageWidth(W) : 0;
     const box = (x, y, w, h = HUD_H) => ({ x, y, w, h });
@@ -4072,43 +4082,48 @@ export default class RaidParty extends View {
             { titled: false, strip: 2, stage: 2 },
             { titled: false, strip: 2, stage: 2, wrap: true },
           ];
-    // `blocks`: boxes to keep the stage section (and the strip, `hard`) clear of, 4px round
-    const meets = (b, list) => list.some((o) => o.x < b.x + b.w + 4 && b.x - 4 < o.x + o.w && o.y < b.y + b.h + 4 && b.y - 4 < o.y + o.h);
-    const place = (t, force, blocks = null) => {
+    // where the stage section's row `row` (1 or 2) is beside the sign and the strip, and the room left in it
+    const rowOf = (sign, strip, t, row) => {
+      const y = row === 1 ? HUD_TOP : Math.max(sign.y + sign.h, t.strip === 1 ? strip.y + strip.h : 0) + 4;
+      const lo = across(sign, y, HUD_H) ? sign.x + sign.w + HUD_GAP : HUD_EDGE;
+      const hi = across(strip, y, HUD_H) ? strip.x - HUD_GAP : right;
+      return { y, lo, hi };
+    };
+    // the same arrangement in every view (no view is read here)
+    const place = (t, force) => {
       const plan = this.signPlan(spec, t.titled, t.wrap ? wrap : null);
       const sign = box(inset, HUD_TOP, plan.w, plan.h);
       const strip = box(right - stripW, t.strip === 1 ? HUD_TOP : sign.y + sign.h + 4, stripW);
       if (!force && (sign.x + sign.w > right || !apart(sign, strip))) return null;
-      if (blocks?.strip && meets(strip, blocks.hard)) return null;
       let stage = null;
       if (fight) {
-        const y = t.stage === 1 ? HUD_TOP : Math.max(sign.y + sign.h, t.strip === 1 ? strip.y + strip.h : 0) + 4;
-        const lo = across(sign, y, HUD_H) ? sign.x + sign.w + HUD_GAP : HUD_EDGE;
-        const hi = across(strip, y, HUD_H) ? strip.x - HUD_GAP : right;
-        if (!blocks) {
-          if (!force && hi - lo < stageW) return null;
-          stage = box(Math.round(clamp(W / 2 - stageW / 2, lo, Math.max(lo, hi - stageW))), y, stageW);
-        } else {
-          // the place nearest the middle clear of them, full width first, then compact
-          const all = [...blocks.hard, ...blocks.soft];
+        const { y, lo, hi } = rowOf(sign, strip, t, t.stage);
+        if (!force && hi - lo < stageW) return null;
+        stage = box(Math.round(clamp(W / 2 - stageW / 2, lo, Math.max(lo, hi - stageW))), y, stageW);
+      }
+      return { sign, strip, stage, titled: t.titled, plan, t };
+    };
+    const { t, ...got } = tries.reduce((f, t) => f ?? place(t, false), null) ?? place(tries[tries.length - 1], true);
+    // In town, the stage section alone moves clear of the stations (and first of
+    // everyone too, 4px round), the sign and the strip staying where they are:
+    // the place nearest the middle, in its own row, then the other; full width
+    // first, then compact.
+    if (fight && this.view === "town" && W >= HUD_NARROW) {
+      const town = this.townBlocks();
+      const meets = (b, list) => list.some((o) => o.x < b.x + b.w + 4 && b.x - 4 < o.x + o.w && o.y < b.y + b.h + 4 && b.y - 4 < o.y + o.h);
+      const clear = (all) => {
+        for (const row of [t.stage, 3 - t.stage])
           for (const w of [stageW, this.stageCompactWidth()]) {
+            const { y, lo, hi } = rowOf(got.sign, got.strip, t, row);
             const mid = W / 2 - w / 2;
             const xs = [mid, ...all.flatMap((b) => [b.x + b.w + 5, b.x - w - 5])].map((x) => Math.round(clamp(x, lo, Math.max(lo, hi - w))));
-            const x = xs.filter((x) => x + w <= hi && !meets(box(x, y, w), all)).sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid))[0];
-            if (x !== undefined) {
-              stage = box(x, y, w);
-              break;
-            }
+            const x = xs.filter((x) => x >= lo && x + w <= hi && !meets(box(x, y, w), all)).sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid))[0];
+            if (x !== undefined) return box(x, y, w);
           }
-          if (!stage) return null;
-        }
-      }
-      return { sign, strip, stage, titled: t.titled, plan };
-    };
-    const town = this.view === "town" && W >= HUD_NARROW ? this.townBlocks() : null;
-    // clear of everyone and the strip clear of the stations too; then the stations only; then the section alone so
-    const passes = town ? [true, false].flatMap((strip) => [{ ...town, strip }, { hard: town.hard, soft: [], strip }]).concat([null]) : [null];
-    const got = passes.reduce((found, blocks) => found ?? tries.reduce((f, t) => f ?? place(t, false, blocks), null), null) ?? place(tries[tries.length - 1], true);
+        return null;
+      };
+      got.stage = clear([...town.hard, ...town.soft]) ?? clear(town.hard) ?? got.stage;
+    }
     const under = got.sign.y + got.sign.h + 4;
     const panelTop = Math.max(HUD_TOP, Math.min(under, Math.max(FLOOR_H, this.size.height) - PANEL_MAX_H - 2));
     return { ...got, inset, counts, spec, panelTop, map };
@@ -4120,7 +4135,8 @@ export default class RaidParty extends View {
   // gold square while there are points to spend, dimmed when there are none)
   // and the button between the town and the raid, red "To town" in the raid
   // and slate "To the raid" in town; on the board, the one of them the board
-  // chip does not go back to (see base). Neither starts nor stops anything
+  // chip does not go back to (see base). Its words centred on a button as wide
+  // as the wider of them, so it keeps its size. Neither starts nor stops anything
   // (the fight runs in every view: see setView). In a row, or wrapped into rows on a narrow scene (signPlan).
   // Drawn on the floor, over the night's dark, like the strip.
   sign(list, hud) {
@@ -4336,9 +4352,10 @@ export default class RaidParty extends View {
   // for each status with agents in it, in the order of tally, with how many on
   // a badge at its bottom-right corner in the pixel font, then the board
   // chip (sunk while the board shows: it opens it, and again goes back to the
-  // view it was opened from), from HUD_NARROW wide in town or the raid
-  // (`map`) the map, a chip that opens the stage picker, and the gear, a
-  // chip that opens the settings menu. Drawn on the floor over the night's dark and
+  // view it was opened from), from HUD_NARROW wide (`map`) the map, a chip
+  // that opens the stage picker (over the board too), and the gear, a chip
+  // that opens the settings menu: the same chips in the same places in every
+  // view (see hudLayout). Drawn on the floor over the night's dark and
   // under the cards. `b` is its box: beside the sign, or under it below
   // HUD_NARROW wide.
   hud(counts, b, map = false) {
@@ -4632,7 +4649,7 @@ export default class RaidParty extends View {
   // ten stages, a grid of numbered chips, the stage being fought in gold and
   // sunk, a stage the arrows could go to white, and one they could not grey
   // and dead (canSelectStage, the arrows' own rule). Picking one does what the
-  // arrows do (toStage) and closes it, in town as in the raid (the fight runs in both).
+  // arrows do (toStage) and closes it, in every view (the fight runs in each).
   mapCard(strip) {
     if (this.mapAt !== this.progress.stage) this.mapFollow(); // the stage changed under it: follow it
     // (read as the rules read them, so no odd value in memory makes an odd page)
@@ -4977,7 +4994,7 @@ export default class RaidParty extends View {
   }
 
   // In town the rampart has three stations, each opening one of the
-  // panels the sign's chips open in the raid and on the board: the book on the table is the
+  // panels the sign's chips open (in town too): the book on the table is the
   // codex, the merchant's stall the shop, and the training dummy the skills
   // and training (the skill points waiting to be spent are on the sign's star). Returns elements for the
   // floor; they stand at the back, between the banners and torches.
