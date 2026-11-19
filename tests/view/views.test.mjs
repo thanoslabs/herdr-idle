@@ -1,9 +1,12 @@
 // The three views of the one game (main.js setView): the town, the raid and
-// the board. The fight runs in each exactly as in the raid (the same seed,
-// the same kills, gold, experience, stage and party after minutes, switching
-// or not); the sign's button goes between the town and the raid, the board
-// chip opens the board and goes back; the view is saved (and read from an
-// older save's `battle`); the board's placeholder lays out at every size,
+// the board. The agents' fight runs in each exactly as in the raid (the same
+// seed, the same kills, gold, experience, stage and party after minutes,
+// switching or not); you are in it only in the raid view (knocked out, until
+// your rest is over, wherever you look, and never walking); nothing of the
+// fight is drawn out of the raid but a knockout; the sign's button goes
+// between the town and the raid, the board chip opens the board and goes
+// back; the view and the board's way back are saved (the view also read from
+// an older save's `battle`); the board's placeholder lays out at every size,
 // cards and all, under the HUD; the strip keeps its chips at narrow widths;
 // and no view renders more often than the raid.
 import assert from "node:assert/strict";
@@ -40,79 +43,227 @@ function snapshot(x) {
   };
 }
 
-describe("the fight runs in every view as in the raid", () => {
+// Whether `v` draws anything of the fight (`down`: a knockout's lying pose,
+// stars and rest are allowed, as in town): what it is, or null.
+const FIGHT_IDS = ["idle-rpg-hp-", "idle-rpg-hurt-", "idle-rpg-healed-", "idle-rpg-aura-", "idle-rpg-damage-", "idle-rpg-crit-", "idle-rpg-shot-", "idle-rpg-lob-", "idle-rpg-foe-", "idle-rpg-marker-", "idle-rpg-monster", "idle-rpg-plate", "idle-rpg-roar-"];
+const FIGHT_ART = ["/stance/", "/windup/", "/strike/", "art/attacks/", "art/effects/", "art/foe/", "art/monsters/", "status/heal.png", "status/sparkle.png"];
+function fightDrawn(v, down = false) {
+  const id = FIGHT_IDS.flatMap((p) => v.ids(p)).filter((i) => i !== "idle-rpg-monster-time")[0]; // (the stage section's bar, not the monster's)
+  if (id) return id;
+  const art = v.images().find((p) => FIGHT_ART.some((f) => p.includes(f)) || (!down && (p.includes("/down/") || p.includes("status/dizzy.png") || p.includes("status/rest/"))));
+  if (art) return art;
+  const ring = !down && v.ids("idle-rpg-rest-")[0];
+  return ring || (v.view.youFights ? "youFights" : null);
+}
+
+describe("the fight runs in every view as in the raid (for the agents)", () => {
   const minutes = THOROUGH ? 20 : 4;
+  const seeds = THOROUGH ? [1, 7, 42] : [3];
   // a party with a healer standing by, through first clears, knockouts and heals
   const SETUPS = {
-    "you a healer (ranged: in the fight from anywhere)": { classes: ["warrior", "archer", "wizard", "healer"], statuses: ["working", "working", "working", "idle"], you: "healer", stage: 9, level: 6 },
+    "you a healer (ranged: in the raid's fight from anywhere)": { classes: ["warrior", "archer", "wizard", "healer"], statuses: ["working", "working", "working", "idle"], you: "healer", stage: 9, level: 6 },
     "you a warrior out of reach": { classes: ["warrior", "archer", "healer"], statuses: ["working", "working", "working"], you: "warrior", stage: 6, level: 5 },
     "you a warrior beside the boss": { classes: ["wizard", "archer"], you: "warrior", youAt: { x: 640, y: 120 }, stage: 6, level: 8 },
     // where the town's campfire is: drawn in front of it in town, never moved there
     "you an archer in the campfire's place": { classes: ["warrior", "wizard"], you: "archer", youAt: { x: 640, y: 100 }, stage: 5, level: 6 },
   };
+  // you are in the fight only in the raid view: town and board are the same
+  // fight whatever you are, and you never in it
   for (const [name, o] of Object.entries(SETUPS))
-    test(`${name}: the same kills, gold, experience, stage and party after ${minutes} minutes, in town, on the board and switching`, async () => {
-      for (const seed of THOROUGH ? [1, 7, 42] : [3]) {
+    test(`${name}: town, board and switching between them the same fight after ${minutes} minutes, you never in it`, async () => {
+      for (const seed of seeds) {
+        const town = await mountRaid({ ...o, view: "town" }, { seed });
+        const board = await mountRaid({ ...o, view: "board" }, { seed });
+        const switching = await mountRaid({ ...o, view: "town" }, { seed });
+        for (let s = 1; s <= minutes * 60; s++) {
+          // at odd moments: between ticks and on them
+          for (const v of [town, board]) v.advance(1000);
+          switching.advance(s % 3 ? 1000 : 375);
+          if (s % 5 === 0 || s % 7 === 0) switching.click("idle-rpg-board-chip");
+          if (!(s % 3)) switching.advance(625);
+          for (const v of [town, board, switching]) {
+            assert.ok(!v.view.fighters().includes("you") && !v.view.standby().includes("you"), `you in the fight at ${s}s`);
+            assert.ok(!("you" in v.view.party.members) && !("you" in v.view.party.away) && !("you" in v.view.rhythm), `you in the party at ${s}s`);
+          }
+          if (s % 10 === 0) {
+            const want = snapshot(town.view);
+            for (const [label, v] of [["board", board], ["switching", switching]]) assert.deepEqual(snapshot(v.view), want, `${label} parts from the town at ${s}s (seed ${seed})`);
+          }
+        }
+        assert.ok(town.view.progress.slain >= 1, `a kill to compare (seed ${seed})`);
+        assert.ok(town.view.progress.gold > 0 && town.view.progress.xp[o.classes[0]] > 0, "town earns gold and experience");
+      }
+    });
+
+  // with you out of the raid's fight too, every view is the same fight,
+  // switching among all three at any moment included
+  const OUT = {
+    "you a warrior out of reach": SETUPS["you a warrior out of reach"],
+    "you a warrior out of reach, a healer standing by": { classes: ["warrior", "archer", "wizard", "healer"], statuses: ["working", "working", "working", "idle"], you: "warrior", stage: 9, level: 4 },
+    "you a warrior out of reach, the agents knocked out": { classes: ["warrior", "archer", "wizard"], you: "warrior", stage: 6, level: 2 },
+  };
+  for (const [name, o] of Object.entries(OUT))
+    test(`${name}: the same kills, gold, experience, stage and party after ${minutes} minutes, in the raid, in town, on the board and switching`, async () => {
+      for (const seed of seeds) {
         const raidView = await mountRaid({ ...o, view: "raid" }, { seed });
         const town = await mountRaid({ ...o, view: "town" }, { seed });
         const board = await mountRaid({ ...o, view: "board" }, { seed });
         const switching = await mountRaid({ ...o, view: "raid" }, { seed });
+        const odd = await mountRaid({ ...o, view: "town" }, { seed });
         const order = ["idle-rpg-view-toggle", "idle-rpg-board-chip", "idle-rpg-board-chip", "idle-rpg-view-toggle", "idle-rpg-board-chip", "idle-rpg-view-toggle"];
-        let kills = 0;
+        let downs = 0;
         for (let s = 1; s <= minutes * 60; s++) {
           for (const v of [raidView, town, board, switching]) v.advance(1000);
           if (s % 7 === 0) switching.click(order[(s / 7) % order.length]);
+          // and one switching between ticks, several times a second at times
+          for (const [ms, id] of s % 4 ? [[1000, null]] : [[130, "idle-rpg-view-toggle"], [250, "idle-rpg-board-chip"], [620, "idle-rpg-board-chip"]]) {
+            odd.advance(ms);
+            if (id) odd.click(id);
+          }
+          downs += Object.values(raidView.view.party.members).filter((m) => m.down !== null).length > 0;
           if (s % 10 === 0) {
             const want = snapshot(raidView.view);
-            for (const [label, v] of [["town", town], ["board", board], ["switching", switching]]) assert.deepEqual(snapshot(v.view), want, `${label} parts from the raid at ${s}s (seed ${seed})`);
+            for (const [label, v] of [["town", town], ["board", board], ["switching", switching], ["odd", odd]]) assert.deepEqual(snapshot(v.view), want, `${label} parts from the raid at ${s}s (seed ${seed})`);
           }
-          kills = raidView.view.progress.slain;
         }
-        assert.ok(kills >= 1, `a kill to compare (seed ${seed}): ${kills}`);
+        assert.ok(raidView.view.progress.slain >= 1, `a kill to compare (seed ${seed})`);
+        if (name.includes("knocked out")) assert.ok(downs > 0, "knockouts to compare");
         assert.equal(town.view.view, "town");
         assert.equal(board.view.view, "board");
-        assert.ok(town.view.progress.gold > 0 && town.view.progress.xp.you > 0, "town earns gold and experience");
       }
     });
 
-  test("you join by your one spot, the same in every view: a warrior in town within reach of the boss's spot fights, out of it not", async () => {
-    for (const [youAt, joins] of [[{ x: 640, y: 120 }, true], [{ x: 154, y: 16 }, false]]) {
-      const v = await mountRaid({ classes: ["archer"], you: "warrior", youAt, view: "town", stage: 3 });
-      v.advance(2000);
-      assert.equal("you" in v.view.party.members, joins, JSON.stringify(youAt));
-      assert.ok(!v.has("idle-rpg-plate"), "the fight is not drawn in town");
-      assert.ok(v.has("idle-rpg-stage"), "but the stage section shows it");
+  test("you join only in the raid view: a warrior within reach of the boss and an archer anywhere fight there, never in town or on the board", async () => {
+    for (const [you, youAt] of [["warrior", { x: 640, y: 120 }], ["archer", { x: 154, y: 16 }]]) {
+      for (const view of VIEWS) {
+        const v = await mountRaid({ classes: ["archer"], you, youAt, view, stage: 3 });
+        v.advance(4000);
+        const joined = view === "raid";
+        assert.equal("you" in v.view.party.members, joined, `${you} in the ${view}`);
+        assert.equal(v.view.fighters().includes("you"), joined);
+        assert.equal(v.view.joins(1280), joined);
+        assert.equal(v.has("idle-rpg-plate"), joined, "the fight is drawn only in the raid");
+        assert.ok(v.has("idle-rpg-stage"), "the stage section shows it everywhere");
+      }
     }
   });
 
-  test("knocked out in town: drawn standing at your spot, your card's Health row counts the rest; you may walk off, your rest waits", async () => {
-    const v = await mountRaid({ classes: ["wizard", "archer"], you: "archer", stage: 30, view: "town" });
+  test("leaving the raid on your feet takes you out of the fight (your HP kept for the attempt), back in it you return so", async () => {
+    const v = await mountRaid({ classes: ["wizard", "archer"], you: "archer", stage: 12, level: 3 });
+    v.until((h) => h.view.party.members.you?.hp < h.view.party.members.you?.maxHp && h.view.party.members.you.down === null, 120000);
+    v.click("idle-rpg-view-toggle");
+    assert.ok(!v.view.fighters().includes("you"), "out of the fight at once");
+    v.advance(250);
+    const away = { ...v.view.party.away.you, monster: v.view.monster.id };
+    assert.ok(!("you" in v.view.party.members) && away && away.rest === null && away.hp < away.maxHp, "gone, its HP kept");
+    assert.ok(!("you" in v.view.rhythm));
+    v.advance(10000);
+    assert.ok(!("you" in v.view.party.members), "never back in it in town");
+    v.click("idle-rpg-view-toggle");
+    v.advance(250);
+    assert.ok("you" in v.view.party.members, "back in the fight in the raid");
+    if (v.view.monster.id === away.monster) assert.equal(v.view.party.members.you.hp, away.hp, "with the HP you left with");
+  });
+
+  test("knocked out in the raid, then in town: lying down with stars and the rest counting down, still in the fight (never hit), no walking until you get up", async () => {
+    const v = await mountRaid({ classes: ["wizard", "archer"], you: "archer", stage: 30 });
     v.until((h) => h.view.knocked("you"), 120000);
-    assert.ok(v.images("idle-rpg-you").some((p) => p.endsWith("/stand.png")), "standing in town");
+    const up = v.view.party.members.you.down;
+    const hit = v.view.party.members.you.hitAt;
+    v.click("idle-rpg-view-toggle");
+    assert.equal(v.view.view, "town");
+    v.advance(1000);
+    assert.ok(v.view.knocked("you") && v.view.fighters().includes("you"), "still in the fight, down");
+    assert.equal(v.view.party.members.you.down, up, "the rest neither frozen nor cut");
+    assert.ok(v.images("idle-rpg-you").some((p) => p.includes("/down/")), "lying down in town");
+    assert.ok(v.has("idle-rpg-rest-ring-you"), "the rest's ring over you");
+    const shown = Number(v.text("idle-rpg-rest-count-you").join(""));
+    assert.ok(shown > 0 && shown <= 30, String(shown));
+    assert.equal(fightDrawn(v, true), null, "nothing else of the fight");
     v.click("idle-rpg-you");
     assert.match(v.text("idle-rpg-card-health").join(" "), /Knocked out · \d+s/);
     v.click("idle-rpg-card-x");
-    const was = { ...v.view.you };
+    const there = { ...v.view.you };
     v.clickFloor(300, 100);
-    assert.notDeepEqual(v.view.you, was, "you walk");
-    v.advance(250);
-    const rest = v.view.party.away.you?.rest ?? null;
-    assert.ok(rest !== null, "out of the fight while walking, the rest kept");
-    v.advance(3000); // arrived: back in the fight, still down
+    assert.deepEqual([v.view.you, v.view.walking], [there, false], "no walking while knocked out in town");
+    v.advance(4000);
+    assert.ok(Number(v.text("idle-rpg-rest-count-you").join("")) < shown, "the countdown runs on in town");
+    assert.equal(v.view.party.members.you.hitAt, hit, "never hit while down");
+    // the board: still down, the rest running
+    v.click("idle-rpg-board-chip");
+    v.advance(1000);
     assert.ok(v.view.knocked("you"));
-    // in the raid view you lie there and cannot walk
+    v.click("idle-rpg-board-chip");
+    // up: out of the fight at once in town, on your feet, free to walk
+    v.until((h) => !h.view.knocked("you"), 60000);
+    assert.ok(v.view.clock >= up, "got up when the rest was over");
+    v.advance(250);
+    assert.ok(!("you" in v.view.party.members), "out of the fight once up");
+    assert.ok(v.images("idle-rpg-you").some((p) => p.endsWith("/stand.png")));
+    assert.ok(!v.has("idle-rpg-rest-ring-you"));
+    v.clickFloor(300, 100);
+    assert.notDeepEqual(v.view.you, there, "you walk");
+  });
+
+  test("knocked out in town while every agent stops: your rest freezes, and runs on when they work again (never stuck down in town)", async () => {
+    const v = await mountRaid({ classes: ["wizard", "archer"], you: "archer", stage: 30 });
+    v.until((h) => h.view.knocked("you"), 120000);
     v.click("idle-rpg-view-toggle");
+    v.advance(1000);
+    const agents = v.world.agents;
+    v.setAgents(agents.map((a) => ({ ...a, status: "idle" })));
+    v.advance(1000);
+    assert.ok(!("you" in v.view.party.members) && v.view.party.away.you.rest > 0, "out of the fight, the rest frozen");
+    v.setAgents(agents.map((a) => ({ ...a, status: "working" })));
+    v.advance(1000);
+    assert.ok(v.view.knocked("you"), "back in the fight, still down, in town");
+    v.until((h) => !h.view.knocked("you"), 60000);
+    v.advance(250);
+    assert.ok(!("you" in v.view.party.members) && v.view.party.away.you?.rest == null, "up, and out of the fight in town");
+    v.click("idle-rpg-you");
+    assert.doesNotMatch(v.text("idle-rpg-card-health").join(" "), /Knocked out/);
+  });
+
+  test("knocked out in the raid view: no walking either (in every view)", async () => {
+    const v = await mountRaid({ classes: ["wizard", "archer"], you: "archer", stage: 30 });
+    v.until((h) => h.view.knocked("you"), 120000);
     const there = { ...v.view.you };
     v.clickFloor(500, 100);
     assert.deepEqual(v.view.you, there);
+    assert.ok(v.images("idle-rpg-you").some((p) => p.includes("/down/")));
   });
 
-  test("in the campfire's place: drawn in front of it in town, your spot (and the fight's) unchanged; a walk there likewise", async () => {
+  test("nothing of the fight drawn in town or on the board, for anyone, through kills and knockouts; in town a knocked-out agent lies down with its stars and rest", async () => {
+    const o = { classes: ["warrior", "archer", "wizard"], you: "archer", stage: 6, level: 2, settings: { damageNumbers: true } };
+    for (const view of ["town", "board"]) {
+      const v = await mountRaid({ ...o, view });
+      let downs = 0;
+      for (let s = 0; s < (THOROUGH ? 600 : 240) * 4; s++) {
+        v.advance(250);
+        const drawn = fightDrawn(v, view === "town");
+        assert.equal(drawn, null, `${view} at ${s / 4}s`);
+        const out = Object.keys(v.view.party.members).filter((k) => v.view.knocked(k));
+        downs += out.length > 0;
+        if (view === "town")
+          for (const k of out) {
+            assert.ok(v.has(`idle-rpg-rest-ring-${k}`), `${k}'s ring in town`);
+            assert.ok(v.images(`critter-${k}`).some((p) => p.includes("/down/")), `${k} lying down`);
+          }
+        if (view === "board") assert.ok(!v.has("idle-rpg-you") && !v.ids("critter-").length, "nobody drawn on the board");
+      }
+      assert.ok(downs > 0 && v.view.progress.slain > 0, `${view}: knockouts and kills happened (${downs}, ${v.view.progress.slain})`);
+    }
+  });
+
+  test("in the campfire's place: drawn in front of it in town, your spot unchanged (the raid's fight reads it); a walk there likewise", async () => {
     const v = await mountRaid({ classes: ["warrior"], you: "archer", youAt: { x: 640, y: 100 }, view: "town" });
     v.advance(2000);
     assert.deepEqual(v.view.you, { x: 640, y: 100 });
-    assert.equal(v.view.party.members.you.y, 100, "your spot in the fight");
     assert.equal(v.box("idle-rpg-you").y, v.size.height - 152 + 112 - 66, "drawn at the stones' front");
+    v.click("idle-rpg-view-toggle");
+    v.advance(2000);
+    assert.equal(v.view.party.members.you.y, 100, "your spot in the raid's fight");
+    v.click("idle-rpg-view-toggle");
     v.clickFloor(200, 40);
     v.advance(3000);
     v.clickFloor(650, 30);
@@ -123,8 +274,8 @@ describe("the fight runs in every view as in the raid", () => {
   });
 
   test("carrying a healer standing by in town changes nothing in the fight", async () => {
-    const o = { classes: ["warrior", "archer", "healer"], statuses: ["working", "working", "idle"], you: "wizard", stage: 9, level: 4 };
-    const town = await mountRaid({ ...o, view: "town" });
+    const o = { classes: ["warrior", "archer", "healer"], statuses: ["working", "working", "idle"], you: "wizard", stage: 9, level: 4, view: "town" };
+    const town = await mountRaid(o);
     const twin = await mountRaid(o);
     town.advance(5000);
     twin.advance(5000);
@@ -228,6 +379,30 @@ describe("the saved view", () => {
     v.click("idle-rpg-board-chip");
     v.click("idle-rpg-view-toggle");
     assert.equal(v.stored.view, "town");
+  });
+
+  test("the board's way back saved as `back` and loaded: a reload on the board still goes back where it came from", async () => {
+    for (const from of ["town", "raid"]) {
+      const v = await mountRaid({ view: from });
+      v.click("idle-rpg-board-chip");
+      assert.deepEqual([v.stored.view, v.stored.back], ["board", from]);
+      const again = await mountView({ saved: v.stored, agents: v.world.agents });
+      assert.deepEqual([again.view.view, again.view.back], ["board", from]);
+      assert.equal(again.text("idle-rpg-view-toggle")[0], up(from === "raid" ? LABELS.toTown : LABELS.toRaid), "the sign's button to the other");
+      again.click("idle-rpg-board-chip");
+      assert.equal(again.view.view, from, "back where it came from");
+      assert.equal(again.stored.back, from, "kept while it does not change");
+    }
+  });
+
+  test("a `back` that is not the town or the raid (the board, anything else, none) goes back to the raid", async () => {
+    for (const back of ["board", "lobby", "Town", 7, null, ["town"], undefined]) {
+      const v = await mountRaid({ view: "board", back });
+      assert.equal(v.view.back, "raid", JSON.stringify(back));
+      v.click("idle-rpg-board-chip");
+      assert.equal(v.view.view, "raid", JSON.stringify(back));
+      assert.equal(v.stored.back, "raid");
+    }
   });
 
   test("an older save's `battle` becomes the view: true the raid, false the town", async () => {

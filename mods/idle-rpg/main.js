@@ -32,9 +32,12 @@
 // BIOMES in rules.js), each with its own backdrop and monsters; the town is
 // the rampart. A press on the monster or its plate opens its card (monsterCard:
 // what it is weak to and resists, how many of its kind have fallen).
-// In town everyone stands at their own spots and the fight is not drawn, but
-// it runs on: the stage section shows it. The board (see board) is a panel
-// over the scene, for the work the agents are doing.
+// In town everyone stands at their own spots and the fight is not drawn (no
+// monster, so nothing that reads as fighting; only a knockout's lying pose,
+// stars and rest, which are real there), but it runs on for the agents: the
+// stage section shows it. You fight only in the raid view (see fighters).
+// The board (see board) is a panel over the scene, for the work the agents
+// are doing.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
 // in it. At 0 HP a character is knocked out (lying down, stars circling, a
@@ -160,7 +163,7 @@ const ART = "mods/idle-rpg/art";
 // attackArt, monsterArt, biomeArt, seasonArt, glyphArt, letterArt), and the rest are named where they are drawn.
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
-//   seen, view, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
+//   seen, view, back, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
 //   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack, health } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
 //   hats: [<id>], decor: { owned: [<id>], equipped: <id> }, settings: { damageNumbers, advance, seasonal, seasonFirst } }
@@ -976,9 +979,10 @@ export default class RaidParty extends View {
     this.seen = saved.seen; // <address>: when it was last here
     // which view shows (VIEWS, saved): the town, the raid or the board; the
     // fight runs in each alike (see fightRuns). `back` is the view the board
-    // chip goes back to (in memory: the raid after a load)
+    // chip goes back to, the town or the raid (saved too, so a reload on the
+    // board still goes back where it came from)
     this.view = saved.view;
-    this.back = "raid";
+    this.back = saved.back;
     // the board's cards (see board), [] until a later version fills them
     this.cards = [];
     this.progress = {
@@ -1147,6 +1151,7 @@ export default class RaidParty extends View {
       sprites: this.sprites,
       seen: this.seen,
       view: this.view,
+      back: this.back,
       ...this.progress,
       settings: this.settings,
     });
@@ -1317,21 +1322,27 @@ export default class RaidParty extends View {
     return W >= 640 && Boolean(MONSTERS[this.monster?.kind]);
   }
 
-  // Whether you join in when the party attacks: the ranged classes from
-  // wherever you stand, a warrior only from beside the monster, in every view
-  // (your spot is the same one in each: in town a warrior stands within reach
-  // of the boss's spot or not, as in the raid). `alive`: only
-  // while the monster stands (between a kill and the next boss you are still
-  // in the fight, see fighters).
+  // Whether you join in when the party attacks: only in the raid view (the
+  // town has no monster: there you are simply in town, never dealing damage
+  // nor a target), the ranged classes from wherever you stand, a warrior only
+  // from beside the monster. `alive`: only while the monster stands (between
+  // a kill and the next boss you are still in the fight, see fighters).
   joins(W, alive = true) {
     const kind = MONSTERS[this.monster?.kind];
-    if (!this.fightRuns(W) || (alive && !(this.monster.hp > 0))) return false;
+    if (this.view !== "raid" || !this.fightRuns(W) || (alive && !(this.monster.hp > 0))) return false;
     return this.sprites[YOU] !== "warrior" || Math.abs(this.you.x - (W / 2 + kind.core.x)) - kind.core.half <= MELEE;
   }
 
   // Who is in the fight: every working agent, and you alongside them if you
   // can reach (see joins), knocked out or not, between a kill and the next
   // boss too, whichever view shows. Nobody while the scene is too narrow.
+  // Leaving the raid view takes you out of the fight on the next muster, as
+  // walking off does (party.js keeps your HP for the attempt in `away`),
+  // except while you are knocked out: then you stay in it, down, wherever
+  // you look, until your rest is over (so a switch never freezes nor cuts a
+  // rest, and the fight goes on for the agents just as if you had stayed in
+  // the raid), and leave as you get up. The agents' fight never depends on
+  // the view; yours is the raid's alone.
   fighters() {
     const W = Math.max(320, this.size.width);
     if (!this.fightRuns(W)) return [];
@@ -1339,8 +1350,12 @@ export default class RaidParty extends View {
       .filter((a) => a.status === "working")
       .map((a) => a.address);
     // you fight alongside them, once you have arrived: `you` is already the
-    // spot you are walking to
-    if (keys.length && !this.walking && this.joins(W, false)) keys.push(YOU);
+    // spot you are walking to (knocked out, you cannot walk: see walkTo)
+    // (and knocked out you stay, or, out of it while nobody worked with your
+    // rest frozen in `away`, come back to it, down, in any view, so a rest
+    // never stays frozen in town)
+    const resting = this.knocked(YOU) || (Object.hasOwn(this.party.away, YOU) && this.party.away[YOU].rest !== null);
+    if (keys.length && !this.walking && (this.joins(W, false) || resting)) keys.push(YOU);
     return keys;
   }
 
@@ -2356,9 +2371,10 @@ export default class RaidParty extends View {
   }
 
   walkTo(p, W, cx) {
-    // knocked out in the raid view: you lie there until your rest is over (in
-    // town or on the board, where nobody is drawn down, you may walk off; your rest waits, see health)
-    if (this.fighting && this.knocked(YOU)) return;
+    // knocked out: you lie there until your rest is over, in every view (you
+    // are knocked out only in the raid, and stay in the fight, down, after
+    // leaving it until you get up: see fighters)
+    if (this.knocked(YOU)) return;
     const to = { x: Math.round(clamp(p.x, 30, W - 30)), y: Math.round(clamp(p.y, YOU_Y[0], YOU_Y[1])) }; // whole pixels keep the sprite sharp
     // (a spot in town's campfire is drawn in front of its stones: see render, youAt)
     const dist = Math.hypot(to.x - this.you.x, to.y - this.you.y);
@@ -2570,8 +2586,10 @@ export default class RaidParty extends View {
     const phase = this.phaseOf(a.address);
     const acts = fighting || Boolean(this.rhythm[a.address]);
     const frame = !acts || !(this.monster?.hp > 0) ? "stance" : phase === 1 ? "windup" : phase === 2 || phase === 3 ? "strike" : "stance";
-    // knocked out (still working): lying on its back, its head away from the monster
-    const out = fighting && this.knocked(a.address);
+    // knocked out (still working): lying on its back, its head away from the
+    // monster; in town too, with its stars and rest (the knockout is real
+    // there: the fight runs on), though nothing else of the fight shows
+    const out = a.status === "working" && this.knocked(a.address);
     const pose = out
       ? this.sprite(c, `down/${dir > 0 ? "l" : "r"}`, 72, 72)
       : this.fighting
@@ -2624,13 +2642,14 @@ export default class RaidParty extends View {
         .child(
           div()
             .relative()
-            .when(a.status === "working" && !fighting, (el) => el.loop("top", { from: 0, to: -7, period: 520 }))
+            .when(a.status === "working" && !fighting && !out, (el) => el.loop("top", { from: 0, to: -7, period: 520 }))
             .child(pose),
         ),
       // in a fight a working agent attacks instead of showing the swords
       // overhead, and has its HP bar there (or, knocked out, its stars and rest)
       // (in a crowd, only the bubbles crowdMarks keeps)
-      ...(fighting ? (!this.barred || this.barred.has(a.address) ? this.vitals(a.address, x, y) : []) : !this.bubbled || this.bubbled.has(a.address) ? [this.bubble(a, x, y)] : []),
+      // (in town, knocked out: its stars and rest in place of the bubble)
+      ...(fighting || out ? (!this.barred || this.barred.has(a.address) ? this.vitals(a.address, x, y) : []) : !this.bubbled || this.bubbled.has(a.address) ? [this.bubble(a, x, y)] : []),
       // its name tag; a crowd's are drawn over everyone instead (see render)
       ...(this.tagged ? [] : [this.nameTag(a, W)]),
     ];
@@ -2773,9 +2792,12 @@ export default class RaidParty extends View {
   // when healed, each popping in on the tick it happened and fading on the next.
   // Freshness is by the attack clock's ticks. Nothing for anyone not in it.
   // One box at the feet holds it all, gliding with `move` as the sprite does.
+  // Out of the raid view (town: no monster, so nothing that reads as
+  // fighting) only a knockout's stars and rest show: no HP bar, aura, hit
+  // flash nor heal.
   vitals(key, x, y, move = MOVE) {
     const m = this.party.members[key];
-    if (!m) return [];
+    if (!m || (!this.fighting && m.down === null)) return [];
     const t = this.clock;
     const out = [];
     // all of it in one box at the feet, gliding with the sprite (`move`) to a new spot
@@ -2829,7 +2851,7 @@ export default class RaidParty extends View {
       if (AURAS.includes(potion) && this.monster?.hp > 0)
         out.push(div().id(`idle-rpg-aura-${key}`).absolute().left(HP_W / 2 + 3).top(-84).child(image(src(effectIconArt(potion))).w(18).h(18)));
     }
-    if (m.hitAt !== null && t - m.hitAt <= 2) {
+    if (this.fighting && m.hitAt !== null && t - m.hitAt <= 2) {
       const fresh = t === m.hitAt;
       out.push(
         div()
@@ -2842,7 +2864,7 @@ export default class RaidParty extends View {
           .child(image(src("foe/hit.png")).w(44).h(44)),
       );
     }
-    if (m.healedAt !== null && t - m.healedAt <= 2) {
+    if (this.fighting && m.healedAt !== null && t - m.healedAt <= 2) {
       const fresh = t === m.healedAt;
       out.push(
         div()
@@ -3251,8 +3273,9 @@ export default class RaidParty extends View {
         // 72 so every pixel is a crisp 4x4. They are PNGs at twice that size:
         // SVGs came out soft on retina screens.
         // In a fight, standing still, you face the monster in the same stance
-        // and attack frames as the agents (see critter).
-        this.fighting && this.knocked(YOU)
+        // and attack frames as the agents (see critter). Knocked out you lie
+        // down in town too (a knockout is real there: you cannot walk).
+        this.knocked(YOU)
           ? this.sprite(c, `down/${this.youDir > 0 ? "l" : "r"}`, 72, 72)
           : this.fighting && !this.walking
           ? div()
@@ -3549,7 +3572,7 @@ export default class RaidParty extends View {
     const onBoard = this.view === "board";
     if (this.card && this.card !== YOU && !list.some((a) => a.address === this.card)) this.card = null;
     if (onBoard) this.card = null; // nobody is drawn on the board, so no card
-    // your spot, inside the scene (the same in every view: the fight reads it, see muster)
+    // your spot, inside the scene (the same in every view: the raid's fight reads it, see muster)
     this.you = { x: Math.round(clamp(this.you.x, 30, W - 30)), y: Math.round(clamp(this.you.y, YOU_Y[0], YOU_Y[1])) };
     const fire = this.fireX(W);
     // where you are drawn: your spot, or in town, if it is in the campfire, out in front of it
@@ -3580,9 +3603,10 @@ export default class RaidParty extends View {
     // the boss's own attack: what lies on the floor under everyone, and what flies or lands over them
     const foeAttack = this.foeAttack(W, foeKind);
     if (foeAttack.over.length) actors.push({ y: FLOOR_H, draw: () => foeAttack.over });
-    // your HP bar, or stars and rest, while you are in the fight
+    // your HP bar, or stars and rest, while you are in the fight; in town only
+    // the stars and rest, once knocked out (see vitals)
     // (not while you walk: `you` is already where you are going, and walking takes you out of the fight)
-    if (foeKind && YOU in this.party.members && !this.walking) actors.push({ y: FLOOR_H, draw: () => this.vitals(YOU, you.x, you.y, { duration: this.walkMs ?? 300, easing: "linear" }) });
+    if (!onBoard && YOU in this.party.members && !this.walking) actors.push({ y: FLOOR_H, draw: () => this.vitals(YOU, you.x, you.y, { duration: this.walkMs ?? 300, easing: "linear" }) });
     // the campfire stands among them, so whoever is in front of it is drawn over it (first, so a tie goes to them)
     if (fire !== null) actors.unshift({ y: FIRE_Y, draw: () => this.campfire(fire) });
     if (this.youFights) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: YOU, cls: this.sprites[YOU], x: you.x, y: you.y, dir: youDir }, W, foeKind) });
@@ -3801,7 +3825,9 @@ export default class RaidParty extends View {
   // Shows view `v` (VIEWS: the sign's button, the board chip), saved. Only
   // where you look changes: the fight runs on as it was (no fresh attempt,
   // no status cleared, the attack clock and the watch untouched, nobody
-  // moved), so its balance is the same whatever is shown. The panels open
+  // moved), so its balance for the agents is the same whatever is shown;
+  // only you join or leave it with the raid view (see fighters). `back`,
+  // where the board chip goes back to, is saved with the view. The panels open
   // from different places in town and out of it, so an open one closes;
   // a card closes on the board (nobody is drawn there, see render).
   setView(v) {

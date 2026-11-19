@@ -1414,6 +1414,10 @@ export function loadState(saved) {
     seen: entries(s.seen, (t) => (finite(t) ? t : undefined)),
     // which view shows (VIEWS); before the board, a boolean `battle` saved the raid (true) or the town
     view: VIEWS.includes(s.view) ? s.view : s.battle === false ? "town" : "raid",
+    // where the board's chip goes back to: the town or the raid (anything else,
+    // or a save from before it was kept, the raid; no new version for it: a
+    // missing key is its default, as for a setting)
+    back: s.back !== "board" && VIEWS.includes(s.back) ? s.back : "raid",
     // the stage being fought is one reached, else the highest reached
     stage: staged && stageOf(s.stage) === s.stage && s.stage <= best ? s.stage : best,
     best,

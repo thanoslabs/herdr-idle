@@ -9,7 +9,7 @@ import { savedState } from "./harness/fixtures.mjs";
 
 const NOW = 1_800_000_000_000;
 const load = (v, extra) => R.loadState(savedState(v, { now: NOW, extra }));
-const KEYS = ["version", "you", "spots", "sprites", "seen", "view", "stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats", "decor", "settings"];
+const KEYS = ["version", "you", "spots", "sprites", "seen", "view", "back", "stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats", "decor", "settings"];
 
 describe("every version", () => {
   test("a fresh start (nothing saved) is a new party", () => {
@@ -18,7 +18,7 @@ describe("every version", () => {
     const p = R.newProgress();
     for (const k of ["stage", "best", "farming", "slain", "gold", "kills", "xp", "skills", "training", "looks", "hats", "decor"]) assert.deepEqual(s[k], p[k], k);
     assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true, seasonFirst: true });
-    assert.deepEqual([s.version, s.view, s.you], [R.STATE_VERSION, "raid", { x: 154, y: 16 }]);
+    assert.deepEqual([s.version, s.view, s.back, s.you], [R.STATE_VERSION, "raid", "raid", { x: 154, y: 16 }]);
   });
   test("the view: saved as one of VIEWS; a save from before the board has `battle` instead (true the raid, false the town); anything else the raid", () => {
     for (const view of R.VIEWS) assert.equal(R.loadState({ version: 9, view }).view, view);
@@ -26,6 +26,12 @@ describe("every version", () => {
     for (const [battle, view] of [[true, "raid"], [false, "town"], [undefined, "raid"], ["no", "raid"], [0, "raid"]])
       for (const v of [0, 1, 8, 9]) assert.equal(R.loadState(savedState(v, { now: NOW, extra: { battle } })).view, view, `v${v} battle ${battle}`);
     for (const view of ["lobby", "", 3, null, ["town"], "Town"]) assert.equal(R.loadState({ version: 9, view, battle: false }).view, "town", `${JSON.stringify(view)} falls back to battle`);
+  });
+  test("the board's way back: the town or the raid as saved; the board, anything else or nothing the raid (no new version)", () => {
+    for (const back of ["town", "raid"]) assert.equal(R.loadState({ version: 9, view: "board", back }).back, back);
+    for (const back of ["board", "lobby", "", "Town", 3, null, ["town"], { town: 1 }, true, undefined]) assert.equal(R.loadState({ version: 9, view: "board", back }).back, "raid", JSON.stringify(back));
+    for (const v of [0, 1, 8, 9]) assert.equal(R.loadState(savedState(v, { now: NOW })).back, "raid", `v${v}`);
+    assert.equal(R.STATE_VERSION, 9, "an optional key needs no new version");
   });
   test("before versions (an older key's state): positions and classes kept", () => {
     const s = R.loadState(savedState(0, { now: NOW }));
@@ -156,13 +162,13 @@ describe("garbage", () => {
   });
   test("every field of the wrong type falls back, nothing throws", () => {
     const g = {
-      version: "7", you: { x: "1", y: 2 }, spots: [1], sprites: "x", seen: 5, view: "lobby", battle: "yes", stage: "4", best: {}, farming: "true",
+      version: "7", you: { x: "1", y: 2 }, spots: [1], sprites: "x", seen: 5, view: "lobby", back: 7, battle: "yes", stage: "4", best: {}, farming: "true",
       slain: -4, gold: "100", kills: [], xp: null, skills: 7, training: [], looks: "x", hats: {}, settings: [],
     };
     for (const decor of ["x", 5, null, [], ["winter"], { owned: "winter", equipped: "winter" }, { owned: { 0: "winter" } }, { equipped: "winter" }])
       assert.deepEqual(R.loadState({ version: 8, decor }).decor, { owned: ["default"], equipped: "default" }, JSON.stringify(decor));
     const s = R.loadState(g);
-    assert.deepEqual([s.version, s.you, s.spots, s.sprites, s.seen, s.view], [R.STATE_VERSION, { x: 154, y: 16 }, {}, {}, {}, "raid"]);
+    assert.deepEqual([s.version, s.you, s.spots, s.sprites, s.seen, s.view, s.back], [R.STATE_VERSION, { x: 154, y: 16 }, {}, {}, {}, "raid", "raid"]);
     assert.deepEqual([s.stage, s.best, s.farming, s.slain, s.gold], [1, 1, false, 0, 0]);
     assert.deepEqual(s.hats, []);
     assert.deepEqual(s.settings, { damageNumbers: true, advance: true, seasonal: true, seasonFirst: true });
