@@ -1164,6 +1164,9 @@ function revive(raw, ticketHosts = DEFAULT_TICKET_HOSTS) {
     gitCheckedAt: -Infinity,
   };
   if (r.remote) r.remote = { host: r.remote.host, slug: r.remote.slug, name: null };
+  // a pull request only of the card's own repo, as when it was read (prsForRepo):
+  // shared state any mod can write must not hand the browser another address
+  if (pr && !prsForRepo([pr], r.remote).length) r.pr = null;
   r.column = columnOf(r);
   if (r.column === "completed") r.completedAt ??= r.lastSeenAt;
   return r;
