@@ -498,7 +498,7 @@ const MAP_GAP = 4; // between the map and the gear in the strip
 // the next, `cardPad` inside its plate: its agents' pictures `pic` square and
 // `picGap` apart, lines of the lettering `row` apart, and chips (tickets,
 // pull requests) `chipH` high, `chipGap` apart.
-const BOARD = { pad: 6, gap: 8, inset: 4, cardGap: 4, cardPad: 6, pic: 22, picGap: 2, row: 16, chipH: 18, chipGap: 4 };
+const BOARD = { pad: 6, gap: 8, inset: 4, cardGap: 4, cardPad: 6, pic: 22, picGap: 2, pip: 6, pastOpacity: 0.55, row: 16, chipH: 18, chipGap: 4 };
 // Its columns, left to right: a card's `column` is one of the ids; each
 // title is the longest of its wordings that fits the column.
 const BOARD_COLUMNS = [
@@ -950,6 +950,17 @@ function crowded(spots) {
 // (a drop never lands on one: see drop in render).
 const DEFAULT_ROWS = [64, 104];
 const onDefault = (s) => DEFAULT_ROWS.includes(s.y) && s.x >= 250 && (s.x - 250) % CELL_W === 0;
+
+// When a remembered agent was last on a card, for its tooltip: "just now",
+// "12m ago", "3h ago", "2d ago" ("a while ago" with no time).
+function lastHere(ms) {
+  if (!Number.isFinite(ms)) return "a while ago";
+  const m = Math.floor(Math.max(0, Date.now() - ms) / 60_000);
+  if (m < 1) return "just now";
+  if (m < 60) return `${m}m ago`;
+  if (m < 48 * 60) return `${Math.floor(m / 60)}h ago`;
+  return `${Math.floor(m / 1440)}d ago`;
+}
 
 function ago(ms) {
   if (!ms) return "";
@@ -4434,7 +4445,7 @@ export default class RaidParty extends View {
   // and only a card's links do anything (they open in the browser).
   // `cards`: board.js's cards(), [{ id, column, repo, branch, project,
   // tickets: [], ticketUrls: { <key>: url }, prs: [{ url, number }], agents:
-  // [{ address, status }] }], `this.cards` (see refreshBoard).
+  // [{ address, status, app, present, lastSeenAt }] }], `this.cards` (see refreshBoard).
   board(hud, W, cards = this.cards) {
     const b = this.boardBox(hud, W);
     const x0 = FRAME + BOARD.pad;
@@ -4486,9 +4497,13 @@ export default class RaidParty extends View {
   // One card on the board, `w` wide, as { el, h }: the element (for the
   // caller to place) and how tall it is. On a plate like a name tag's, from
   // the top, each line left out when it has nothing to say:
-  // - the agents on it, each a small picture of its class as drawn elsewhere
-  //   (its colourway, weapon and hat), dimmed while it rests (idle or done),
-  //   its name and status in its tooltip; as many as fit, then "+N"; then,
+  // - every agent that has worked on it (board.js remembers them), each a
+  //   small picture of its class as drawn elsewhere (its colourway, weapon
+  //   and hat; a "?" on a dark tile for one with no class, forgotten after a
+  //   week away): those on the branch now first, at full brightness with a
+  //   pip of their status's colour in the bottom-right corner ("name: status"
+  //   tooltip); then those gone from it, dimmed to 55% with no pip ("name:
+  //   last here 3h ago"); as many as fit, then "+N"; then,
   //   beside them where there is room (else on a line of its own), the
   //   project (the agents' Herdr space) in gold;
   // - the repo in white, and the branch in grey;
@@ -4507,7 +4522,7 @@ export default class RaidParty extends View {
     const parts = [];
     let y = P;
     // the agents, and the project beside them
-    const who = (Array.isArray(card.agents) ? card.agents : []).filter((a) => a && CLASSES.includes(this.sprites[a.address]));
+    const who = (Array.isArray(card.agents) ? card.agents : []).filter((a) => a && typeof a.address === "string" && a.address);
     const fits = Math.max(0, Math.floor((iw + BOARD.picGap) / (BOARD.pic + BOARD.picGap)));
     let shown = who.length > fits ? Math.max(0, fits - 1) : who.length;
     let more = who.length - shown ? `+${who.length - shown}` : "";
@@ -4518,20 +4533,50 @@ export default class RaidParty extends View {
     }
     let x = P;
     who.slice(0, shown).forEach((a) => {
-      const resting = a.status === "idle" || a.status === "done";
+      const here = a.present !== false; // on the branch now (board.js), else remembered
       const named = live.get(a.address);
       const name = named ? tagName(named) : a.address;
+      const status = STATUS[a.status] ?? STATUS.idle;
+      const cls = this.sprites[a.address];
+      const id = `idle-rpg-board-agent-${card.id}-${a.address}`;
+      // an agent with no class here (forgotten after a week away): a "?" on a dark tile
+      const pic = CLASSES.includes(cls)
+        ? this.sprite(cls, "stand", BOARD.pic, BOARD.pic)
+        : div()
+            .id(`idle-rpg-board-unknown-${card.id}-${a.address}`)
+            .absolute()
+            .left(0)
+            .top(0)
+            .w(BOARD.pic)
+            .h(BOARD.pic)
+            .bg(FRAME_COLOURS.dark)
+            .child(letterText("?", "grey", { left: Math.round((BOARD.pic - letterW("?")) / 2), top: Math.round((BOARD.pic - LETTER_H) / 2) }));
+      // here now: full brightness, its status a pip in the corner; gone: dimmed, no pip
+      const pip = here
+        ? [
+            div()
+              .id(`idle-rpg-board-pip-${card.id}-${a.address}`)
+              .absolute()
+              .left(BOARD.pic - BOARD.pip)
+              .top(BOARD.pic - BOARD.pip)
+              .w(BOARD.pip)
+              .h(BOARD.pip)
+              .bg(FRAME_COLOURS.outline)
+              .child(div().absolute().left(1).top(1).w(BOARD.pip - 2).h(BOARD.pip - 2).bg(status[1])),
+          ]
+        : [];
       parts.push(
         div()
-          .id(`idle-rpg-board-agent-${card.id}-${a.address}`)
+          .id(id)
           .absolute()
           .left(x)
           .top(y)
           .w(BOARD.pic)
           .h(BOARD.pic)
-          .opacity(resting ? 0.45 : 1)
-          .tooltip(`${name}: ${(STATUS[a.status] ?? STATUS.idle)[0]}`)
-          .child(this.sprite(this.sprites[a.address], "stand", BOARD.pic, BOARD.pic)),
+          .opacity(here ? 1 : BOARD.pastOpacity)
+          .tooltip(here ? `${name}: ${status[0]}` : `${name}: last here ${lastHere(a.lastSeenAt)}`)
+          .child(pic)
+          .children(pip),
       );
       x += BOARD.pic + BOARD.picGap;
     });

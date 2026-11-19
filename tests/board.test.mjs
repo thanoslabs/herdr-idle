@@ -256,7 +256,7 @@ describe("the collector", () => {
     assert.equal(c.project, "Widgets");
     assert.deepEqual(c.tickets, ["PROJ-7"]);
     assert.equal(c.column, "progress");
-    assert.deepEqual(c.agents, [{ address: "t1", status: "working", app: "claude-code" }]);
+    assert.deepEqual(c.agents, [{ address: "t1", status: "working", app: "claude-code", present: true, lastSeenAt: null }]);
     assert.match(c.id, /^card-[0-9a-z]+$/);
     assert.deepEqual(h.calls.hc, [["read", "t1", "--json", "--lines", "3000"]]);
   });
@@ -491,7 +491,7 @@ describe("the collector", () => {
     assert.deepEqual(b.cards()[0].tickets, ["PROJ-7", "OPS-9"]);
     h.agents = [];
     await b.refresh(122_000);
-    assert.deepEqual(b.cards()[0].agents, []);
+    assert.deepEqual(b.cards()[0].agents, [{ address: "t1", status: "working", app: "claude-code", present: false, lastSeenAt: 61_000 }], "remembered, not present");
     assert.equal(b.cards()[0].column, "review");
   });
 
@@ -742,6 +742,143 @@ describe("the collector", () => {
     assert.equal(b.cards().length, 1);
     assert.ok(!h.calls.reads.some((r) => r.path.includes("etc")));
     assert.equal(h.calls.exec.length, 0);
+  });
+});
+
+describe("remembered agents: who worked on what", () => {
+  // t1 on widgets' feat/PROJ-7-x, whose repo also has feat/next.
+  function twoBranches() {
+    const files = {};
+    repo(files, "/w/widgets");
+    files["/w/widgets/.git/refs/heads/feat/next"] = TIP;
+    return fakeHost({ files, agents: [agent(1)], panes: [pane(1, "/w/widgets")], spaces: [{ id: "s1", machine: null }], terminals: { t1: "", t2: "" } });
+  }
+  const on = (b, branch) => b.cards().find((c) => c.branch === branch);
+  const who = (c) => c.agents.map((a) => [a.address, a.present, a.status, a.lastSeenAt]);
+
+  test("an agent that moves branch stays on the old card, remembered, and is present on the new one; back again, present again", async () => {
+    const h = twoBranches();
+    const b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/w/widgets", "feat/next")];
+    h.agents = [agent(1, { status: "idle" })];
+    await b.refresh(HOUR);
+    assert.deepEqual(who(on(b, "feat/PROJ-7-x")), [["t1", false, "working", 0]], "its last status, and when it was last here");
+    assert.deepEqual(who(on(b, "feat/next")), [["t1", true, "idle", null]]);
+    h.panes = [pane(1, "/w/widgets")];
+    h.agents = [agent(1)];
+    await b.refresh(2 * HOUR);
+    assert.deepEqual(who(on(b, "feat/PROJ-7-x")), [["t1", true, "working", null]]);
+    assert.deepEqual(who(on(b, "feat/next")), [["t1", false, "idle", HOUR]]);
+  });
+
+  test("an agent on two cards: present on the one it is on, remembered on the other; each card's agents ordered", async () => {
+    const h = twoBranches();
+    h.agents = [agent(1), agent(2, { status: "idle" }), agent(3, { status: "done" })];
+    h.panes = [pane(1, "/w/widgets"), pane(2, "/w/widgets"), pane(3, "/w/widgets", "feat/next")];
+    h.terminals.t3 = "";
+    const b = board(h);
+    await b.refresh(0);
+    // t2 goes to feat/next at 1h, t1 at 2h; t3 works there
+    h.agents = [agent(1), agent(2, { status: "idle" }), agent(3, { status: "working" })];
+    h.panes = [pane(1, "/w/widgets"), pane(2, "/w/widgets", "feat/next"), pane(3, "/w/widgets", "feat/next")];
+    await b.refresh(HOUR);
+    h.panes = [pane(1, "/w/widgets", "feat/next"), pane(2, "/w/widgets", "feat/next"), pane(3, "/w/widgets", "feat/next")];
+    h.agents = [agent(1, { status: "done" }), agent(2), agent(3, { status: "blocked" })];
+    await b.refresh(2 * HOUR);
+    // present: working and blocked first (as given), then resting
+    assert.deepEqual(who(on(b, "feat/next")), [["t2", true, "working", null], ["t3", true, "blocked", null], ["t1", true, "done", null]]);
+    // nobody here now: most recently here first
+    assert.deepEqual(who(on(b, "feat/PROJ-7-x")), [["t1", false, "working", HOUR], ["t2", false, "idle", 0]]);
+  });
+
+  test("mergeAgents: present first (busy before resting), then past by most recent; capped, every present agent kept", () => {
+    const past = Array.from({ length: 20 }, (_, i) => ({ address: `p${i}`, status: "done", app: null, lastSeenAt: i * 1000, present: false }));
+    const here = [{ address: "a", status: "idle" }, { address: "b", status: "working" }, { address: "p3", status: "blocked" }];
+    const out = B.mergeAgents(past, here, 50_000, 12);
+    assert.equal(out.length, 12);
+    assert.deepEqual(out.slice(0, 3).map((a) => [a.address, a.present]), [["b", true], ["p3", true], ["a", true]]);
+    assert.deepEqual(out.slice(3).map((a) => a.address), ["p19", "p18", "p17", "p16", "p15", "p14", "p13", "p12", "p11"]);
+    assert.ok(!out.slice(3).some((a) => a.address === "p3"), "once each");
+    const crowd = Array.from({ length: 15 }, (_, i) => ({ address: `c${i}`, status: "working" }));
+    assert.equal(B.mergeAgents(past, crowd, 0, 12).length, 15, "agents on the branch now are never dropped");
+    assert.equal(B.BOARD_LIMITS.agentsPerCard, 12);
+  });
+
+  test("a card remembers at most agentsPerCard agents, the longest gone dropped first", async () => {
+    const h = twoBranches();
+    const b = board(h, { limits: { agentsPerCard: 3 } });
+    for (let i = 1; i <= 5; i++) {
+      h.agents = [agent(i)];
+      h.panes = [pane(i, "/w/widgets")];
+      h.terminals[`t${i}`] = "";
+      await b.refresh(i * HOUR);
+    }
+    assert.deepEqual(who(b.cards()[0]), [["t5", true, "working", null], ["t4", false, "working", 4 * HOUR], ["t3", false, "working", 3 * HOUR]]);
+    assert.equal(b.toJSON().cards[0].agents.length, 3);
+  });
+
+  test("the revision does not move every refresh for remembered agents or the present ones' last-seen times", async () => {
+    const h = twoBranches();
+    h.agents = [agent(1, { status: "idle" })];
+    const b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/w/widgets", "feat/next")];
+    await b.refresh(1000);
+    const rev = b.revision;
+    const updated = on(b, "feat/PROJ-7-x").updatedAt;
+    for (let i = 2; i < 6; i++) await b.refresh(i * 60_000);
+    assert.equal(b.revision, rev);
+    assert.equal(on(b, "feat/PROJ-7-x").updatedAt, updated, "a card nobody is on does not look active");
+  });
+
+  test("saved and restored: only address, app, status and last seen; all remembered until a refresh finds them; junk dropped", async () => {
+    const h = twoBranches();
+    const b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/w/widgets", "feat/next")];
+    await b.refresh(HOUR);
+    const saved = JSON.parse(JSON.stringify(b.toJSON()));
+    for (const c of saved.cards) for (const a of c.agents) assert.deepEqual(Object.keys(a).sort(), ["address", "app", "lastSeenAt", "status"]);
+    const again = new B.Board(h.deps);
+    again.restore(saved, HOUR + 1);
+    assert.deepEqual(who(on(again, "feat/PROJ-7-x")), [["t1", false, "working", 0]]);
+    assert.deepEqual(who(on(again, "feat/next")), [["t1", false, "working", HOUR]], "not present until a refresh sees it");
+    await again.refresh(HOUR + 2);
+    assert.deepEqual(who(on(again, "feat/next")), [["t1", true, "working", null]]);
+    assert.deepEqual(who(on(again, "feat/PROJ-7-x")), [["t1", false, "working", 0]]);
+    // junk: bad addresses, repeats, unknown statuses, odd apps and times
+    const junk = new B.Board(fakeHost().deps);
+    const agents = [null, 5, { address: "-rf" }, { address: "a/b/c" }, { address: "a b" }, { address: "t\n1" }, { address: "x".repeat(65) }, { address: "t9", status: "evil", app: 5, lastSeenAt: "x" }, { address: "t9", status: "working" }, { address: "s/t2", status: "done", app: "codex\u202e", lastSeenAt: 7, present: true, secret: "no" }];
+    junk.restore({ version: 1, cards: [{ id: "card-1", repo: "r", branch: "b", tickets: [], lastSeenAt: 100, agents }] }, 100);
+    assert.deepEqual(junk.cards(100)[0].agents, [
+      { address: "t9", status: "idle", app: null, present: false, lastSeenAt: 100 },
+      { address: "s/t2", status: "done", app: "codex", present: false, lastSeenAt: 7 },
+    ]);
+    assert.deepEqual(Object.keys(junk.toJSON().cards[0].agents[1]).sort(), ["address", "app", "lastSeenAt", "status"]);
+    const many = new B.Board(fakeHost().deps);
+    many.restore({ version: 1, cards: [{ id: "card-2", repo: "r", branch: "b", lastSeenAt: 0, agents: Array.from({ length: 500 }, (_, i) => ({ address: `t${i}`, lastSeenAt: i })) }] }, 0);
+    assert.equal(many.cards(0)[0].agents.length, B.BOARD_LIMITS.agentsPerCard);
+    for (const notList of [null, "t1", { address: "t1" }]) {
+      const n = new B.Board(fakeHost().deps);
+      n.restore({ version: 1, cards: [{ id: "card-3", repo: "r", branch: "b", lastSeenAt: 0, agents: notList }] }, 0);
+      assert.deepEqual(n.cards(0)[0].agents, []);
+    }
+  });
+
+  test("expiry unchanged: remembered agents keep no card; a day after the last agent on it left, it goes", async () => {
+    const h = twoBranches();
+    const b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/w/widgets", "feat/next")];
+    await b.refresh(HOUR);
+    assert.equal(b.cards().length, 2);
+    await b.refresh(24 * HOUR);
+    assert.ok(on(b, "feat/PROJ-7-x"), "a day after its last agent was seen on it (at 0)");
+    await b.refresh(24 * HOUR + 1);
+    assert.equal(on(b, "feat/PROJ-7-x"), undefined, "gone though it still remembers t1");
+    assert.deepEqual(b.toJSON().cards.map((c) => c.branch), ["feat/next"], "and forgotten");
+    assert.deepEqual(who(on(b, "feat/next")), [["t1", true, "working", null]]);
   });
 });
 

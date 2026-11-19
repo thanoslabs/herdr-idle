@@ -9,6 +9,9 @@
 // information be pulled from agent sessions?" So:
 //
 // - Which repo and branch: the agent's pane (`panes()`: `cwd`, `branch`).
+// - Who: every agent seen on the card, remembered after it moves to another
+//   branch (mergeAgents): those on it now are `present`, with their live
+//   status; the rest keep their last status and when they were last here.
 // - The project: the agent's Herdr space name.
 // - The repo's name: owner/name from the repo's git remote URL, read from its
 //   git config with `readTextFile` (credentials in the URL are never kept);
@@ -73,6 +76,7 @@ export const BOARD_LIMITS = {
   agentsPerRefresh: 500,
   maxCards: 60,
   maxTickets: 4,
+  agentsPerCard: 12, // agents a card remembers: all those on it now, then the most recently gone
   completedKeepMs: 24 * 3600_000, // completed cards stay a day after first seen completed
   orphanKeepMs: 24 * 3600_000, // unfinished cards with no agent left stay a day
 };
@@ -541,11 +545,38 @@ export function columnOf(card) {
   return card.pr ? "review" : "progress";
 }
 
-// Whether a card is still shown at `now`.
+// Whether any agent is on the card's branch now (not only remembered).
+export const hasPresent = (card) => Array.isArray(card.agents) && card.agents.some((a) => a && a.present);
+
+// Whether a card is still shown at `now`. "No agent left" means none on the
+// branch now: the agents it only remembers do not keep it.
 export function cardAlive(card, now, limits = BOARD_LIMITS) {
   if (card.column === "completed" && card.completedAt != null && now - card.completedAt > limits.completedKeepMs) return false;
-  if (card.column !== "completed" && !(card.agents && card.agents.length) && now - (card.lastSeenAt ?? 0) > limits.orphanKeepMs) return false;
+  if (card.column !== "completed" && !hasPresent(card) && now - (card.lastSeenAt ?? 0) > limits.orphanKeepMs) return false;
   return true;
+}
+
+// Every agent a card has seen, merged with those on its branch now (`here`:
+// [{ address, status, app }]). The owner: "sometimes an agent has worked on
+// a few things at once - so i would remember who worked on what. just because
+// they arent currently working or focused on it doesnt mean they never worked
+// on it." Those here are `present`, with their live status and `lastSeenAt`
+// now; the others keep their last status and when they were last here. Order:
+// present first (working and blocked before idle and done, otherwise as
+// given), then the rest by most recently here (then by address). At most
+// `max`: every present agent is kept, then as many of the rest as fit.
+export function mergeAgents(previous, here, now, max = BOARD_LIMITS.agentsPerCard) {
+  const live = new Map();
+  for (const a of here || []) if (a && !live.has(a.address)) live.set(a.address, { address: a.address, app: a.app ?? null, status: a.status, lastSeenAt: now, present: true });
+  const past = new Map();
+  for (const a of previous || []) {
+    if (!a || live.has(a.address) || past.has(a.address)) continue;
+    past.set(a.address, { address: a.address, app: a.app ?? null, status: a.status, lastSeenAt: a.lastSeenAt ?? 0, present: false });
+  }
+  const resting = (a) => (a.status === "working" || a.status === "blocked" ? 0 : 1);
+  const present = [...live.values()].sort((x, y) => resting(x) - resting(y));
+  const gone = [...past.values()].sort((x, y) => y.lastSeenAt - x.lastSeenAt || (x.address < y.address ? -1 : x.address > y.address ? 1 : 0));
+  return [...present, ...gone.slice(0, Math.max(0, max - present.length))];
 }
 
 // Most recently active first, then by id (stable).
@@ -645,13 +676,13 @@ export class Board {
   }
 
   toJSON() {
-    return { version: 1, cards: orderCards([...this.records.values()]).slice(0, this.limits.maxCards).map(persisted) };
+    return { version: 1, cards: orderCards([...this.records.values()]).slice(0, this.limits.maxCards).map((r) => persisted(r, this.limits)) };
   }
 
   restore(data, now = 0) {
     if (!data || data.version !== 1 || !Array.isArray(data.cards)) return;
     for (const raw of data.cards.slice(0, this.limits.maxCards)) {
-      const r = revive(raw, this.ticketHosts);
+      const r = revive(raw, this.ticketHosts, this.limits);
       if (r && !this.records.has(r.id) && cardAlive(r, now, this.limits)) this.records.set(r.id, r);
     }
   }
@@ -732,13 +763,14 @@ export class Board {
       r.git = p.repo;
       const agentsBySeq = [...p.agents].sort((x, y) => y.seq - x.seq);
       r.project = agentsBySeq.find((x) => x.project)?.project ?? r.project ?? "";
-      r.agents = p.agents.map(({ address, status, app }) => ({ address, status, app }));
+      r.agents = mergeAgents(r.agents, p.agents, now, this.limits.agentsPerCard);
       r.lastSeenAt = now;
       r.branchKeys = branchTickets(p.branch, this.findTickets);
       r.tickets = mergeTickets(r.branchKeys, [], r.tickets, this.limits.maxTickets);
-      if (isNew || signature(r) !== before || r.agents.some((x) => x.status === "working" || x.status === "blocked")) r.updatedAt = now;
+      if (isNew || signature(r) !== before || r.agents.some((x) => x.present && (x.status === "working" || x.status === "blocked"))) r.updatedAt = now;
     }
-    for (const r of this.records.values()) if (!present.has(r.id)) r.agents = [];
+    // Cards nobody is on now keep their agents, remembered (not present).
+    for (const r of this.records.values()) if (!present.has(r.id)) r.agents = mergeAgents(r.agents, [], now, this.limits.agentsPerCard);
 
     // 3. Terminals, a few per refresh: never read first, then the longest unread.
     const candidates = [];
@@ -782,7 +814,7 @@ export class Board {
     // 4. Merged, for a few cards per refresh (those with agents first).
     const due = [...this.records.values()]
           .filter((r) => r.git && !r.isDefault && !this.oldGit.has(r.git.machine ?? "") && now - r.gitCheckedAt >= this.limits.gitCheckMs)
-          .sort((x, y) => (y.agents.length > 0) - (x.agents.length > 0) || x.gitCheckedAt - y.gitCheckedAt);
+          .sort((x, y) => hasPresent(y) - hasPresent(x) || x.gitCheckedAt - y.gitCheckedAt);
     for (const r of due.slice(0, this.limits.gitChecksPerRefresh)) {
       r.gitCheckedAt = now;
       await this.#checkMerged(r, call, now);
@@ -797,7 +829,7 @@ export class Board {
       }
       if (column === "completed") r.completedAt ??= now;
       else r.completedAt = null;
-      if (!cardAlive(r, now, this.limits) && r.agents.length === 0) this.records.delete(r.id);
+      if (!cardAlive(r, now, this.limits) && !hasPresent(r)) this.records.delete(r.id);
     }
     if (this.records.size > this.limits.maxCards) {
       const keep = new Set(orderCards([...this.records.values()]).slice(0, this.limits.maxCards).map((r) => r.id));
@@ -1076,8 +1108,11 @@ export function networkPath(p) {
   return typeof p !== "string" || p.startsWith("\\\\") || p.startsWith("//") || /^\/(?:net|Network)(?:\/|$)/.test(p);
 }
 
+// What a card's activity is judged by (updatedAt): the agents on it now and
+// their statuses; remembered agents, and when present ones were last seen
+// (every refresh), are left out so they never make a card look active.
 function signature(r) {
-  return JSON.stringify([r.repo, r.branch, r.project, r.pr && r.pr.url, r.tickets, (r.agents || []).map((a) => a.address + a.status)]);
+  return JSON.stringify([r.repo, r.branch, r.project, r.pr && r.pr.url, r.tickets, (r.agents || []).filter((a) => a.present).map((a) => a.address + a.status)]);
 }
 
 // What the view gets: copies, every string capped.
@@ -1091,7 +1126,9 @@ function view(r) {
     tickets: [...r.tickets],
     ticketUrls: { ...r.ticketUrls },
     prs: r.pr ? [{ url: r.pr.url, number: r.pr.number }] : [],
-    agents: (r.agents || []).map((a) => ({ ...a })),
+    // when a present agent was last seen moves every refresh: left out, so
+    // the revision moves only when what is drawn does
+    agents: (r.agents || []).map((a) => ({ address: a.address, status: a.status, app: a.app ?? null, present: !!a.present, lastSeenAt: a.present ? null : a.lastSeenAt })),
     updatedAt: r.updatedAt,
     completedAt: r.completedAt,
   };
@@ -1101,7 +1138,7 @@ function view(r) {
 // internals beyond the flags, and of the tickets only those the branch names
 // or that came with a ticket link: other keys read from a terminal stay in
 // memory, in case one is a secret that happens to look like a key.
-function persisted(r) {
+function persisted(r, limits = BOARD_LIMITS) {
   const tickets = r.tickets.filter((k) => (r.branchKeys || []).includes(k) || r.ticketUrls[k]);
   return {
     id: r.id,
@@ -1115,6 +1152,10 @@ function persisted(r) {
     branchKeys: tickets.filter((k) => (r.branchKeys || []).includes(k)),
     ticketUrls: Object.fromEntries(tickets.filter((k) => r.ticketUrls[k]).map((k) => [k, r.ticketUrls[k]])),
     pr: r.pr,
+    // who worked on it: address, app, last status and when last seen (whether
+    // one is here now is not kept: after a reload every agent is remembered
+    // until the first refresh finds it on the branch again)
+    agents: (r.agents || []).slice(0, limits.agentsPerCard).map((a) => ({ address: a.address, app: a.app ?? null, status: a.status, lastSeenAt: a.lastSeenAt })),
     merged: r.merged,
     hadOwnCommits: r.hadOwnCommits,
     unmergedHead: r.unmergedHead ?? null,
@@ -1126,7 +1167,28 @@ function persisted(r) {
   };
 }
 
-function revive(raw, ticketHosts = DEFAULT_TICKET_HOSTS) {
+// Saved agents back, all remembered (not present): only well-formed
+// addresses (ADDRESS, no leading dash), once each; an unknown status is
+// idle, an app is cleaned text or null, a time not a finite number is the
+// card's last-seen time. At most `max`, most recently seen first.
+function reviveAgents(list, cardSeenAt, max) {
+  if (!Array.isArray(list)) return [];
+  const out = [];
+  for (const a of list.slice(0, 4 * max)) {
+    if (!a || typeof a !== "object" || typeof a.address !== "string" || !ADDRESS.test(a.address) || a.address.startsWith("-")) continue;
+    if (out.some((x) => x.address === a.address)) continue;
+    out.push({
+      address: a.address,
+      app: typeof a.app === "string" && clean(a.app, 32) ? clean(a.app, 32) : null,
+      status: STATUSES.has(a.status) ? a.status : "idle",
+      // never before 0 nor after the card itself was last seen (a garbage time would sort first or read "1e300d ago")
+      lastSeenAt: Number.isFinite(a.lastSeenAt) ? Math.min(Math.max(0, a.lastSeenAt), cardSeenAt) : cardSeenAt,
+    });
+  }
+  return mergeAgents(out, [], 0, max);
+}
+
+function revive(raw, ticketHosts = DEFAULT_TICKET_HOSTS, limits = BOARD_LIMITS) {
   if (!raw || typeof raw !== "object" || typeof raw.id !== "string" || !/^card-[0-9a-z]{1,8}$/.test(raw.id)) return null;
   const num = (v) => (Number.isFinite(v) ? v : null);
   const pr = raw.pr && typeof raw.pr.url === "string" ? parsePrUrl(raw.pr.url) : null;
@@ -1164,6 +1226,7 @@ function revive(raw, ticketHosts = DEFAULT_TICKET_HOSTS) {
     gitCheckedAt: -Infinity,
   };
   if (r.remote) r.remote = { host: r.remote.host, slug: r.remote.slug, name: null };
+  r.agents = reviveAgents(raw.agents, r.lastSeenAt, limits.agentsPerCard);
   // a pull request only of the card's own repo, as when it was read (prsForRepo):
   // shared state any mod can write must not hand the browser another address
   if (pr && !prsForRepo([pr], r.remote).length) r.pr = null;
