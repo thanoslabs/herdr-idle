@@ -76,8 +76,28 @@ class Cx {
   propagate() {
     this.stopped = false;
   }
-  spawn() {
-    throw new Error("cx.spawn is not stubbed in the harness");
+  // gpui-kit.d.ts (Context.spawn): "Calls `body(cx)` and adopts the promise it returns". Here the
+  // body starts on the next microtask with a context of its own (an AsyncContext, valid across
+  // await); a test lets it run with `await v.settle()`. What it notifies renders on the next flush.
+  // A rejection is kept in `h.taskErrors` (the app reports it).
+  spawn(body) {
+    const h = this.h;
+    const task = { done: false, cancel() {}, is_done: () => task.done };
+    const p = Promise.resolve()
+      .then(() => body(new Cx(h)))
+      .catch((e) => h.taskErrors.push(e))
+      .finally(() => {
+        task.done = true;
+        h.tasks.delete(p);
+      });
+    h.tasks.add(p);
+    return task;
+  }
+  // gpui-kit.d.ts (Context.open_url): takes an absolute http/https URL with a host and refuses
+  // everything else. Recorded in `world.opened`.
+  open_url(url) {
+    if (!/^https?:\/\/[^/\s]+/i.test(String(url))) throw new Error(`open_url refuses ${url}`);
+    world.opened.push(url);
   }
 }
 
@@ -108,7 +128,7 @@ export async function mountRaid(options = {}, view = {}) {
 }
 
 export class Handle {
-  constructor({ saved, key = STATE, agents = [], spaces = [], width = 1280, height = 360, inset, seed = 1, phase = 0.25, at, checkShapes = true, origin = { x: 0, y: 0 } } = {}) {
+  constructor({ saved, key = STATE, agents = [], spaces = [], panes = [], host = {}, width = 1280, height = 360, inset, seed = 1, phase = 0.25, at, checkShapes = true, origin = { x: 0, y: 0 } } = {}) {
     this.size = { width, height };
     // where the view sits in the window: pointer events carry window positions
     // and bounds, so a test's view-relative points are moved by it
@@ -124,9 +144,11 @@ export class Handle {
     // picture main.js really letterboxes goes in LETTERBOXED, with why
     this.checkShapes = checkShapes;
     this.notified = 0; // cx.notify() calls
+    this.tasks = new Set(); // cx.spawn bodies still running (see settle)
+    this.taskErrors = []; // what they rejected with
     this.dirty = false;
     this.tree = null;
-    resetWorld({ agents, spaces, props: inset === undefined ? {} : { inset }, shared: saved === undefined ? {} : { [key]: saved } });
+    resetWorld({ agents, spaces, panes, host, props: inset === undefined ? {} : { inset }, shared: saved === undefined ? {} : { [key]: saved } });
     this.install();
   }
 
@@ -161,6 +183,10 @@ export class Handle {
   }
   get world() {
     return world;
+  }
+  // every URL the view handed to the browser (cx.open_url)
+  get opened() {
+    return world.opened;
   }
   // The state last saved (setShared), or undefined.
   get stored() {
@@ -218,6 +244,17 @@ export class Handle {
       if (!this.timers.queue.some((q) => q.live && q.at === this.timers.now)) this.flush();
     }
     this.timers.now = until;
+    this.flush();
+    return this;
+  }
+
+  // Lets what cx.spawn started run (the board's refresh: its fake host calls answer on later
+  // turns of Node's event loop), then renders what it notified. Tasks waiting on something that
+  // never answers, or on a timer not yet due (the fake clock moves only with advance), are left
+  // waiting: it gives up on them after `turns` turns of the event loop.
+  async settle(turns = 2000) {
+    for (let i = 0; i < turns && this.tasks.size; i++) await new Promise((r) => setImmediate(r));
+    this.install();
     this.flush();
     return this;
   }

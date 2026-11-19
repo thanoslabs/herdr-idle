@@ -33,17 +33,30 @@ const unstubbed = (name) =>
   function () {
     throw new Error(`herdr.${name}() is not stubbed in tests/harness/stubs/herdr.mjs`);
   };
-export const exec = unstubbed("exec");
-export const hc = unstubbed("hc");
+export const panes = () => world.panes;
+// The quest board's calls: recorded, then answered by the test's fake (world.host), else rejected
+// (as the app rejects a call it cannot make). Never a real hc, git or file.
+const hosted = (fn) =>
+  function (...args) {
+    world.calls.push({ fn, args });
+    const f = world.host[fn];
+    if (typeof f !== "function") return Promise.reject(new Error(`herdr.${fn}() has no fake in this test (mountView's host)`));
+    try {
+      return Promise.resolve(f(...args));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  };
+export const exec = hosted("exec");
+export const hc = hosted("hc");
+export const readTextFile = hosted("readTextFile");
 export const home = unstubbed("home");
 export const appHome = unstubbed("appHome");
-export const readTextFile = unstubbed("readTextFile");
 export const writeTextFile = unstubbed("writeTextFile");
 export const knownAgents = unstubbed("knownAgents");
 export const pickFolder = unstubbed("pickFolder");
 export const playSound = unstubbed("playSound");
 export const machines = unstubbed("machines");
-export const panes = unstubbed("panes");
 export const setAgentOrder = unstubbed("setAgentOrder");
 export const terminals = unstubbed("terminals");
 export const focused = unstubbed("focused");

@@ -37,7 +37,9 @@
 // stars and rest, which are real there), but it runs on for the agents: the
 // stage section shows it. You fight only in the raid view (see fighters).
 // The board (see board) is a panel over the scene, for the work the agents
-// are doing.
+// are doing: a read-only kanban of cards (board.js gathers them from the
+// agents' panes, terminals and git files; refreshed only while it shows),
+// whose pull requests and ticket links open in the browser.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
 // in it. At 0 HP a character is knocked out (lying down, stars circling, a
@@ -74,7 +76,7 @@
 
 import { View, div, image } from "gpui-kit";
 import { h_flex, v_flex } from "gpui-base";
-import { agents, props, run, setShared, shared, spaces } from "herdr";
+import { agents, exec, hc, panes, props, readTextFile, run, setShared, shared, spaces } from "herdr";
 import {
   ATTACK_PHASES,
   BIOMES,
@@ -154,6 +156,7 @@ import {
 } from "./rules.js";
 import { KO_TICKS, down, firstHeal, healGap, healParty, healTarget, healTicks, monsterTick, newParty, resetParty, restSeconds, rise, standing, syncParty } from "./party.js";
 import { AURAS, ELEMENT_STATUS, cadence, effectIconArt, markArt, newStatuses, nextGap, overlayArt, partyAuras, plateIcons, shopLines, statsOf, strike, tickStatuses } from "./effects.js";
+import { BOARD_LIMITS, BOARD_REFRESH_CLOSED_MS, BOARD_REFRESH_OPEN_MS, Board } from "./board.js";
 
 const ART = "mods/idle-rpg/art";
 // The path image() takes for a picture in art/, given its path in there with
@@ -166,8 +169,10 @@ const src = (file) => `${ART}/${file}`;
 //   seen, view, back, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
 //   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack, health } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
-//   hats: [<id>], decor: { owned: [<id>], equipped: <id> }, settings: { damageNumbers, advance, seasonal, seasonFirst } }
-//   (hats are owned by every class, decor by the town; the boss is not saved, see loadState)
+//   hats: [<id>], decor: { owned: [<id>], equipped: <id> }, settings: { damageNumbers, advance, seasonal, seasonFirst },
+//   board: the quest board's cards, Board's toJSON() (board.js: what the cards show, the repo's host/slug, commits; no paths) }
+//   (hats are owned by every class, decor by the town; the boss is not saved, see loadState;
+//   `board` is read by Board's restore(), which checks it, not by loadState)
 const STATE = "idle-rpg.state";
 const randomClass = () => CLASSES[Math.floor(Math.random() * CLASSES.length)];
 const STATUS = {
@@ -489,9 +494,11 @@ const MAP_GAP = 4; // between the map and the gear in the strip
 // under a stage section in the second row (to 96) with 4px to spare.
 // The board (see board): inside its frame `pad` round three columns `gap`
 // apart, each a title in the lettering over a well `inset` from the cards
-// in it; a card is `card` high, `cardGap` from the next, with its agent's
-// picture `pic` square.
-const BOARD = { pad: 6, gap: 8, inset: 4, card: 32, cardGap: 4, pic: 24 };
+// in it; a card (see boardCard) is as tall as what it holds, `cardGap` from
+// the next, `cardPad` inside its plate: its agents' pictures `pic` square and
+// `picGap` apart, lines of the lettering `row` apart, and chips (tickets,
+// pull requests) `chipH` high, `chipGap` apart.
+const BOARD = { pad: 6, gap: 8, inset: 4, cardGap: 4, cardPad: 6, pic: 22, picGap: 2, row: 16, chipH: 18, chipGap: 4 };
 // Its columns, left to right: a card's `column` is one of the ids; each
 // title is the longest of its wordings that fits the column.
 const BOARD_COLUMNS = [
@@ -983,8 +990,23 @@ export default class RaidParty extends View {
     // board still goes back where it came from)
     this.view = saved.view;
     this.back = saved.back;
-    // the board's cards (see board), [] until a later version fills them
-    this.cards = [];
+    // The quest board's cards (see board), gathered by board.js from the
+    // agents' panes, terminals (`hc read`) and git files, and local read-only
+    // git; never the network. Refreshed only while the board shows (see
+    // boardPace); the cards last saved come back at once (they are in the
+    // save: Board's toJSON: what they show, no paths). `wait` times out each
+    // call: Herdr's setTimeout throws, and init's cx may be kept for timers.
+    this.boardFeed = new Board({ agents, panes, spaces, hc, exec, readTextFile, wait: (ms) => new Promise((r) => cx.timer.after(ms, () => r())) });
+    try {
+      this.boardFeed.restore(shared(STATE)?.board, Date.now()); // (only this layout's own key has cards)
+    } catch {
+      // not what toJSON wrote: no cards until the first refresh
+    }
+    this.cards = this.boardFeed.cards(Date.now());
+    this.boardSeen = this.boardFeed.revision; // the revision this.cards was taken at
+    this.boardRun = null; // { since } while a refresh runs (never two at once)
+    this.boardTimer = null; // { open, task }: the refresh timer for the board shown or not (see boardPace)
+    this.boardPace(cx); // a reload on the board refreshes at once
     this.progress = {
       stage: saved.stage,
       best: saved.best,
@@ -1154,6 +1176,11 @@ export default class RaidParty extends View {
       back: this.back,
       ...this.progress,
       settings: this.settings,
+      // the quest board's cards, as Board keeps them for shared state: no
+      // paths or remote URLs, and of the tickets only those the branch names
+      // or that came with a link (board.js, toJSON). Saved with everything
+      // else, never on a refresh of its own (saving re-renders every mod).
+      board: this.boardFeed.toJSON(),
     });
   }
 
@@ -3829,14 +3856,58 @@ export default class RaidParty extends View {
   // only you join or leave it with the raid view (see fighters). `back`,
   // where the board chip goes back to, is saved with the view. The panels open
   // from different places in town and out of it, so an open one closes;
-  // a card closes on the board (nobody is drawn there, see render).
-  setView(v) {
+  // a card closes on the board (nobody is drawn there, see render). With `cx`
+  // (a click's), the board's refresh follows (boardPace).
+  setView(v, cx = null) {
     if (!VIEWS.includes(v) || v === this.view) return;
     if (v === "board") this.back = this.view;
     this.view = v;
     this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
     this.skillsOpen = this.shopOpen = null;
     this.save();
+    if (cx) this.boardPace(cx);
+  }
+
+  // The quest board's refresh (board.js gathers the cards): at once when the
+  // board opens, then every BOARD_REFRESH_OPEN_MS while it shows; while it
+  // does not, every BOARD_REFRESH_CLOSED_MS, which is 0: never (the cards
+  // keep). One timer at a time, set again only when the board opens or closes.
+  boardPace(cx) {
+    const open = this.view === "board";
+    if (this.boardTimer && this.boardTimer.open === open) return;
+    this.boardTimer?.task?.cancel();
+    this.boardTimer = { open, task: null };
+    if (open) this.refreshBoard(cx);
+    const ms = open ? BOARD_REFRESH_OPEN_MS : BOARD_REFRESH_CLOSED_MS;
+    if (ms > 0) this.boardTimer.task = cx.timer.every(ms, (cx) => this.refreshBoard(cx));
+  }
+
+  // One refresh of the board's cards, in a task: never two at once (one
+  // still running is left to finish, unless it has run past board.js's
+  // refreshStallMs: then Board abandons it and starts afresh). When it is
+  // done the view renders only if what the cards show changed (`revision`).
+  // A refresh that fails or is abandoned changes nothing and says nothing.
+  refreshBoard(cx) {
+    const now = Date.now();
+    if (this.boardRun && now - this.boardRun.since <= BOARD_LIMITS.refreshStallMs) return;
+    const run = (this.boardRun = { since: now });
+    cx.spawn(async (cx) => {
+      try {
+        await this.boardFeed.refresh(now);
+      } catch {
+        // a host call failed in a way board.js did not catch: the cards stay as they were
+      } finally {
+        if (this.boardRun === run) this.boardRun = null;
+      }
+      if (this.boardFeed.revision === this.boardSeen) return;
+      this.boardSeen = this.boardFeed.revision;
+      this.cards = this.boardFeed.cards();
+      try {
+        cx.notify();
+      } catch {
+        // the view closed or reloaded while it ran
+      }
+    });
   }
 
   // A press on a HUD frame's empty part (its chips and buttons stop their own):
@@ -4108,7 +4179,7 @@ export default class RaidParty extends View {
       .active((st) => st.bg(tone.down))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => {
-        this.setView(this.base() === "raid" ? "town" : "raid");
+        this.setView(this.base() === "raid" ? "town" : "raid", cx);
         cx.notify();
       })
       // a lighter top edge and a darker bottom one over the face, so they follow it under the pointer
@@ -4329,7 +4400,7 @@ export default class RaidParty extends View {
       .top(FRAME)
       .tooltip(onBoard ? "Back" : "Board")
       .on_click((_e, cx) => {
-        this.setView(onBoard ? this.back : "board");
+        this.setView(onBoard ? this.back : "board", cx);
         cx.notify();
       });
     return div()
@@ -4355,13 +4426,15 @@ export default class RaidParty extends View {
   // The board, while it shows (see setView): a HUD frame filling the scene
   // under the HUD (boardBox) with three columns side by side (BOARD_COLUMNS),
   // each titled in gold in the lettering over a darker well holding the
-  // cards whose `column` it is (boardCard), in the order given, stacked from
-  // the top and scrolling once they overflow it. With no card at all, "No
+  // cards whose `column` it is (boardCard), in the order given (board.js:
+  // the most recently active first), stacked from the top, each as tall as
+  // it needs, and scrolling once they overflow it. With no card at all, "No
   // work found yet" in grey under the titles. It draws nothing it has no
-  // data for and is read-only: a press on it is one on a frame (no walk).
-  // `cards`: [{ id, column, repo, branch, project, tickets: [], prs: [{ url,
-  // number }], agents: [{ address, status }] }], `this.cards`, which nothing
-  // fills yet.
+  // data for and is read-only: a press on it is one on a frame (no walk),
+  // and only a card's links do anything (they open in the browser).
+  // `cards`: board.js's cards(), [{ id, column, repo, branch, project,
+  // tickets: [], ticketUrls: { <key>: url }, prs: [{ url, number }], agents:
+  // [{ address, status }] }], `this.cards` (see refreshBoard).
   board(hud, W, cards = this.cards) {
     const b = this.boardBox(hud, W);
     const x0 = FRAME + BOARD.pad;
@@ -4370,12 +4443,19 @@ export default class RaidParty extends View {
     const wellH = Math.max(0, b.h - wellTop - x0);
     const cardW = Math.max(0, colW - 2 * BOARD.inset);
     const list = Array.isArray(cards) ? cards.filter((c) => c && typeof c === "object") : [];
+    const live = new Map(agents().map((a) => [a.address, a])); // for the agents' names in their tooltips
     const kids = [];
     BOARD_COLUMNS.forEach((col, i) => {
       const left = x0 + i * (colW + BOARD.gap);
       const title = col.titles.find((t) => letterW(t) <= colW - 2 * BOARD.inset) ?? col.titles[col.titles.length - 1];
       const mine = list.filter((c) => c.column === col.id);
-      const fullH = BOARD.inset + mine.length * (BOARD.card + BOARD.cardGap);
+      let y = BOARD.inset;
+      const placed = mine.map((c) => {
+        const { el, h } = this.boardCard(c, cardW, live);
+        const at = el.absolute().left(BOARD.inset).top(y);
+        y += h + BOARD.cardGap;
+        return at;
+      });
       kids.push(
         letterText(title, "gold", { left: left + BOARD.inset, top: x0 }).id(`idle-rpg-board-title-${col.id}`),
         div()
@@ -4387,13 +4467,7 @@ export default class RaidParty extends View {
           .h(wellH)
           .bg(FRAME_COLOURS.dark)
           .overflow_y_scroll()
-          .child(
-            div()
-              .relative()
-              .w(colW)
-              .h(Math.max(wellH, fullH))
-              .children(mine.map((c, k) => this.boardCard(c, cardW).absolute().left(BOARD.inset).top(BOARD.inset + k * (BOARD.card + BOARD.cardGap)))),
-          ),
+          .child(div().relative().w(colW).h(Math.max(wellH, y)).children(placed)),
       );
     });
     if (!list.some((c) => BOARD_COLUMNS.some((col) => col.id === c.column)))
@@ -4409,27 +4483,136 @@ export default class RaidParty extends View {
       .children([...framePieces(b.w, b.h), ...kids]);
   }
 
-  // One card on the board, `w` wide and BOARD.card high, for the caller to
-  // place: on a plate like a name tag's, the picture of the first of its
-  // agents with a class (none without one), then its repo and branch
-  // ("REPO/BRANCH") in the lettering, cut to the room (letterFit: they are
-  // text from outside). Its project, tickets, pull requests and the rest of
-  // its agents are for a later version.
-  boardCard(card, w) {
-    const who = (Array.isArray(card.agents) ? card.agents : []).find((a) => CLASSES.includes(this.sprites[a?.address]));
-    const cls = who ? this.sprites[who.address] : null;
-    const h = BOARD.card;
-    const textX = cls ? 4 + BOARD.pic + 4 : 6;
-    const line = [card.repo, card.branch].filter((t) => typeof t === "string" && t.trim()).join("/");
-    const fit = letterFit(line, Math.max(0, Math.floor((w - textX - 4) / 2)));
-    return div()
+  // One card on the board, `w` wide, as { el, h }: the element (for the
+  // caller to place) and how tall it is. On a plate like a name tag's, from
+  // the top, each line left out when it has nothing to say:
+  // - the agents on it, each a small picture of its class as drawn elsewhere
+  //   (its colourway, weapon and hat), dimmed while it rests (idle or done),
+  //   its name and status in its tooltip; as many as fit, then "+N"; then,
+  //   beside them where there is room (else on a line of its own), the
+  //   project (the agents' Herdr space) in gold;
+  // - the repo in white, and the branch in grey;
+  // - the ticket keys, then the pull requests ("#57" in green), each a small
+  //   chip, laid in rows. A pull request, and a ticket with a link on a ticket
+  //   host (board.js keeps only those), opens in the browser on a click
+  //   (cx.open_url, which takes only http and https); a ticket without one is
+  //   only text.
+  // Every text is from outside the mod (names, branches, terminals), so it is
+  // drawn through letterFit, cut to the room: what the lettering lacks is a box.
+  // `live`: the live agents by address, for the names.
+  boardCard(card, w, live = new Map()) {
+    const P = BOARD.cardPad;
+    const iw = Math.max(0, w - 2 * P); // the room inside
+    const fit = (text, room) => letterFit(typeof text === "string" ? text : "", Math.max(0, Math.floor(room / 2)));
+    const parts = [];
+    let y = P;
+    // the agents, and the project beside them
+    const who = (Array.isArray(card.agents) ? card.agents : []).filter((a) => a && CLASSES.includes(this.sprites[a.address]));
+    const fits = Math.max(0, Math.floor((iw + BOARD.picGap) / (BOARD.pic + BOARD.picGap)));
+    let shown = who.length > fits ? Math.max(0, fits - 1) : who.length;
+    let more = who.length - shown ? `+${who.length - shown}` : "";
+    // "+N" needs its own room: one picture fewer until it fits
+    while (more && shown > 0 && shown * (BOARD.pic + BOARD.picGap) + letterW(more) > iw) {
+      shown -= 1;
+      more = `+${who.length - shown}`;
+    }
+    let x = P;
+    who.slice(0, shown).forEach((a) => {
+      const resting = a.status === "idle" || a.status === "done";
+      const named = live.get(a.address);
+      const name = named ? tagName(named) : a.address;
+      parts.push(
+        div()
+          .id(`idle-rpg-board-agent-${card.id}-${a.address}`)
+          .absolute()
+          .left(x)
+          .top(y)
+          .w(BOARD.pic)
+          .h(BOARD.pic)
+          .opacity(resting ? 0.45 : 1)
+          .tooltip(`${name}: ${(STATUS[a.status] ?? STATUS.idle)[0]}`)
+          .child(this.sprite(this.sprites[a.address], "stand", BOARD.pic, BOARD.pic)),
+      );
+      x += BOARD.pic + BOARD.picGap;
+    });
+    if (more) {
+      parts.push(letterText(more, "grey", { left: x, top: y + (BOARD.pic - LETTER_H) / 2 }));
+      x += letterW(more) + BOARD.picGap;
+    }
+    const project = fit(card.project, iw);
+    const pics = x > P;
+    const beside = pics && project && P + iw - (x + 4) >= 40; // room for about five letters
+    if (beside) parts.push(letterText(fit(card.project, P + iw - (x + 4)), "gold", { left: x + 4, top: y + (BOARD.pic - LETTER_H) / 2 }));
+    if (pics) y += BOARD.pic + 2;
+    const line = (text, colour) => {
+      if (!text) return;
+      parts.push(letterText(text, colour, { left: P, top: y }));
+      y += BOARD.row;
+    };
+    if (!beside) line(project, "gold");
+    line(fit(card.repo, iw), "white");
+    line(fit(card.branch, iw), "grey");
+    // the tickets and pull requests, as chips in rows
+    const https = (u) => typeof u === "string" && /^https?:\/\/[^\s/]+\//i.test(u);
+    const urls = card.ticketUrls && typeof card.ticketUrls === "object" ? card.ticketUrls : {};
+    const chips = [
+      ...(Array.isArray(card.tickets) ? card.tickets : []).filter((k) => typeof k === "string" && k).map((k) => ({ id: `ticket-${card.id}-${k}`, text: k, colour: "white", url: Object.prototype.hasOwnProperty.call(urls, k) && https(urls[k]) ? urls[k] : null })),
+      ...(Array.isArray(card.prs) ? card.prs : []).filter((p) => p && https(p.url) && Number.isInteger(p.number)).map((p) => ({ id: `pr-${card.id}-${p.number}`, text: `#${p.number}`, colour: "green", url: p.url })),
+    ];
+    let cx0 = P;
+    let rowUsed = false;
+    if (chips.length) y += 2;
+    for (const c of chips) {
+      const text = fit(c.text, iw - 8);
+      if (!text) continue;
+      const cw = letterW(text) + 8;
+      if (rowUsed && cx0 + cw > P + iw) {
+        cx0 = P;
+        y += BOARD.chipH + BOARD.chipGap;
+      }
+      parts.push(this.boardChip(c, text, cw, cx0, y));
+      cx0 += cw + BOARD.chipGap;
+      rowUsed = true;
+    }
+    if (rowUsed) y += BOARD.chipH;
+    else if (y > P) y -= BOARD.row - LETTER_H; // no gap under the last line
+    const h = Math.max(y + P, 2 * P + LETTER_H);
+    const el = div()
       .id(`idle-rpg-board-card-${card.id}`)
       .w(w)
       .h(h)
       .bg(FRAME_COLOURS.outline)
       .child(div().absolute().left(2).top(2).w(Math.max(0, w - 4)).h(h - 4).bg(FRAME_COLOURS.fill))
-      .when(Boolean(cls), (el) => el.child(div().absolute().left(4).top((h - BOARD.pic) / 2).child(this.sprite(cls, "stand", BOARD.pic, BOARD.pic))))
-      .child(letterText(fit, "white", { left: textX, top: (h - LETTER_H) / 2 }));
+      .children(parts);
+    return { el, h };
+  }
+
+  // A ticket's or pull request's chip on a card (see boardCard): `text` in
+  // the lettering inside a 2px outline, `w` wide, at `left`, `top`. With a
+  // `url` it is a link: lighter under the pointer, its address in the
+  // tooltip, and a click hands it to the system's browser (cx.open_url: http
+  // and https only). The board stays read-only: nothing else happens.
+  boardChip(c, text, w, left, top) {
+    const fill = div().absolute().left(2).top(2).w(Math.max(0, w - 4)).h(BOARD.chipH - 4).bg(FRAME_COLOURS.dark);
+    return div()
+      .id(`idle-rpg-board-${c.id}`)
+      .absolute()
+      .left(left)
+      .top(top)
+      .w(w)
+      .h(BOARD.chipH)
+      .bg(FRAME_COLOURS.outline)
+      .child(c.url ? fill.hover((st) => st.bg(FRAME_COLOURS.light)) : fill)
+      .child(letterText(text, c.colour, { left: 4, top: 2 }))
+      .when(Boolean(c.url), (el) =>
+        el
+          .cursor_pointer()
+          .tooltip(c.url)
+          .on_mouse_down("left", (_e, cx) => this.framePress(cx))
+          .on_click((_e, cx) => {
+            cx.open_url(c.url);
+          }),
+      );
   }
 
   // Opens or closes the stage picker, closing the other panels and any card;

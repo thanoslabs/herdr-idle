@@ -33,6 +33,12 @@ export const artExists = (src) => typeof src === "string" && src.startsWith(ART_
 export const world = {
   agents: [],
   spaces: [],
+  panes: [],
+  // the quest board's host calls (board.js through main.js): `hc`, `exec`, `readTextFile`, each a
+  // fake a test passes (mountView's `host`); by default they reject, and every call is recorded
+  host: {},
+  calls: [], // { fn: "hc" | "exec" | "readTextFile", args }
+  opened: [], // every cx.open_url(url)
   props: {},
   shared: new Map(),
   saves: [], // every setShared call: { key, value (a deep copy), at }
@@ -45,9 +51,13 @@ export const world = {
   now: () => Date.now(),
 };
 
-export function resetWorld({ agents = [], spaces = [], props = {}, shared = {} } = {}) {
+export function resetWorld({ agents = [], spaces = [], panes = [], host = {}, props = {}, shared = {} } = {}) {
   world.agents = agents;
   world.spaces = spaces;
+  world.panes = panes;
+  world.host = host;
+  world.calls = [];
+  world.opened = [];
   world.props = props;
   world.shared = new Map(Object.entries(shared));
   world.saves = [];

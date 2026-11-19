@@ -6,13 +6,13 @@
 // fight is drawn out of the raid but a knockout; the sign's button goes
 // between the town and the raid, the board chip opens the board and goes
 // back; the view and the board's way back are saved (the view also read from
-// an older save's `battle`); the board's placeholder lays out at every size,
+// an older save's `battle`); the board lays out at every size,
 // cards and all, under the HUD; the strip keeps its chips at narrow widths;
 // and no view renders more often than the raid.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { LABELS, VIEWS } from "../../mods/idle-rpg/rules.js";
-import { agent, mountRaid, mountView, raid, savedState } from "../harness/view.mjs";
+import { agent, all, mountRaid, mountView, raid, savedState } from "../harness/view.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
 const up = (t) => t.toUpperCase();
@@ -415,17 +415,28 @@ describe("the saved view", () => {
   });
 });
 
-// Fixture cards for the board's placeholder (main.js boardCard).
+// Fixture cards for the board (main.js boardCard), as board.js's cards() gives them: some
+// with tickets (one linked) and a pull request, some with several agents.
 function cards(n = { progress: 12, review: 3, completed: 1 }) {
   const out = [];
   for (const [column, count] of Object.entries(n))
     for (let i = 0; i < count; i++)
-      out.push({ id: `${column}-${i}`, column, repo: i % 2 ? "herdr-idle" : "a-very-long-repository-name-that-goes-on-and-on-and-on-and-on-and-on", branch: `feat/card-${i}`, project: "Idle", tickets: [], prs: [], agents: i % 3 ? [{ address: "t1", status: "working" }] : [{ address: "nobody", status: "idle" }] });
+      out.push({
+        id: `${column}-${i}`,
+        column,
+        repo: i % 2 ? "thanoslabs/herdr-idle" : "a-very-long-repository-name-that-goes-on-and-on-and-on-and-on-and-on",
+        branch: `feat/card-${i}`,
+        project: "Idle",
+        tickets: i % 4 === 1 ? ["PROJ-12", "OPS-1234567"] : [],
+        ticketUrls: i % 4 === 1 ? { "PROJ-12": "https://example.atlassian.net/browse/PROJ-12" } : {},
+        prs: column === "progress" ? [] : [{ url: `https://github.com/thanoslabs/herdr-idle/pull/${100 + i}`, number: 100 + i }],
+        agents: i % 3 === 0 ? [{ address: "nobody", status: "idle" }] : i % 3 === 1 ? [{ address: "t1", status: "working" }] : ["t1", "t2", "t1", "t2", "t1", "t2", "t1"].map((address) => ({ address, status: "idle" })),
+      });
   out.push({ id: "elsewhere", column: "backlog", repo: "x", branch: "y", project: "", tickets: [], prs: [], agents: [] }); // a column the board has not: not drawn
   return out;
 }
 
-describe("the board's placeholder", () => {
+describe("the board's layout", () => {
   const range = (a, b, step) => Array.from({ length: Math.floor((b - a) / step) + 1 }, (_, i) => a + i * step);
   const widths = THOROUGH ? [...range(320, 2918, 13), 2918] : [320, 321, 400, 479, 560, 639, 640, 700, 1024, 1280, 1920, 2918];
   const heights = THOROUGH ? range(230, 560, 10) : [230, 296, 360, 560];
@@ -476,7 +487,10 @@ describe("the board's placeholder", () => {
               if (k.x < wells[i].x || k.x + k.w > wells[i].x + wells[i].w || k.y < wells[i].y) problems.push(`${tag}: ${ids[j]} off its well`);
               if (j && k.y < boxes[j - 1].y + boxes[j - 1].h) problems.push(`${tag}: ${ids[j]} over the one before`);
               const text = v.runs(ids[j]);
-              if (text.length !== 1 || !inside(v.box(text[0].el), k)) problems.push(`${tag}: ${ids[j]}'s line ${JSON.stringify(text.map((r) => r.text))} not inside it`);
+              if (!text.length) problems.push(`${tag}: ${ids[j]} says nothing`);
+              for (const r of text) if (!inside(v.box(r.el), k)) problems.push(`${tag}: ${ids[j]}'s ${JSON.stringify(r.text)} not inside it`);
+              // its agents' pictures and its chips too
+              for (const p of all(v.get(ids[j]), (n) => n.key && n.key !== ids[j])) if (!inside(v.box(p), k)) problems.push(`${tag}: ${p.key} not inside ${ids[j]}`);
             });
             // the cards past the well's bottom are there to scroll to: the content is as tall as they are
             const content = v.get(`idle-rpg-board-${col}`).kids[0];
@@ -488,19 +502,14 @@ describe("the board's placeholder", () => {
     assert.deepEqual(problems.slice(0, 8), [], `${problems.length} problems`);
   });
 
-  test("a card: its first agent with a class drawn, its repo and branch cut to fit; twelve overflow a well and scroll", async () => {
+  test("twelve cards overflow a well and scroll; the shorter titles where a column is narrow", async () => {
     const v = await mountRaid({ view: "board", classes: ["archer"] }, { width: 1280, height: 360 });
     v.view.cards = cards();
     v.render();
-    assert.ok(v.images("idle-rpg-board-card-progress-1").some((p) => p.includes("classes/archer/")), "t1, an archer");
-    assert.ok(!v.images("idle-rpg-board-card-progress-0").some((p) => p.includes("classes/")), "an agent with no class: no picture");
-    assert.deepEqual(v.text("idle-rpg-board-card-progress-1"), ["HERDR-IDLE/FEAT/CARD-1"]);
-    assert.match(v.text("idle-rpg-board-card-progress-0")[0], /^A-VERY-LONG.*…$/);
     const well = v.box("idle-rpg-board-progress");
     const last = v.box("idle-rpg-board-card-progress-11");
     assert.ok(last.y + last.h > well.y + well.h, "past the well's bottom");
     assert.equal(v.get("idle-rpg-board-progress").style.overflow_y_scroll, true);
-    // the shorter titles where a column is narrow
     v.resize(320, 360);
     assert.deepEqual(["progress", "review", "completed"].map((c) => v.text(`idle-rpg-board-title-${c}`)[0]), [up(LABELS.doing), up(LABELS.inReview), up(LABELS.completed)]);
   });
@@ -574,7 +583,7 @@ describe("the strip's chips", () => {
 });
 
 describe("renders and timers per view", () => {
-  test("town and board render no more often than the raid, the same fight; no timer the raid does not have", async () => {
+  test("town and board render no more often than the raid, the same fight; no timer the raid does not have but the board's refresh", async () => {
     const o = { classes: ["warrior", "archer", "wizard", "healer"], statuses: ["working", "working", "working", "idle"], you: "archer", stage: 8, level: 4 };
     const counts = {};
     const timers = {};
@@ -588,7 +597,8 @@ describe("renders and timers per view", () => {
     assert.ok(counts.town <= counts.raid && counts.board <= counts.raid, JSON.stringify(counts));
     assert.ok(counts.board <= counts.town + 1, `the board no more than town: ${JSON.stringify(counts)}`);
     assert.deepEqual(timers.town, timers.raid);
-    assert.deepEqual(timers.board, timers.raid);
+    // the board refreshes its cards every 30s while it shows (board.js BOARD_REFRESH_OPEN_MS), never otherwise
+    assert.deepEqual(timers.board, [...timers.raid, 30000].sort((a, b) => a - b));
   });
 
   test("in town with nobody working the fight is idle: only the sky renders", async () => {

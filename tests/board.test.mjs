@@ -726,6 +726,11 @@ describe("the collector", () => {
     assert.deepEqual(c.tickets, ["OK-1"]);
     assert.deepEqual(c.ticketUrls, {});
     assert.deepEqual(c.prs, []);
+    // a pull request of another host or repo than the card's (shared state any mod can write): dropped
+    const other = new B.Board(fakeHost().deps);
+    const card = (id, url, host = "github.com") => ({ id, repo: "gears", host, slug: "acme/gears", branch: "b", tickets: [], pr: { url, number: 1 }, lastSeenAt: 0 });
+    other.restore({ version: 1, cards: [card("card-2", "https://github.com/acme/gears/pull/1"), card("card-3", "https://evil.example/acme/gears/pull/1"), card("card-4", "https://github.com/other/gears/pull/1"), card("card-5", "https://github.com/acme/gears/pull/1", null)] }, 0);
+    assert.deepEqual(Object.fromEntries(other.cards(0).map((k) => [k.id, k.prs.map((p) => p.url)])), { "card-2": ["https://github.com/acme/gears/pull/1"], "card-3": [], "card-4": [], "card-5": [] });
     junk.restore({ version: 2, cards: [] });
     junk.restore(null);
   });
