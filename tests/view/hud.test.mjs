@@ -2,7 +2,8 @@
 // the stage section apart from the boss's plate, what it says in the time's
 // place (a boss slain, the countdown to the next stage, time's up) at every
 // width, and hudLayout swept across widths, insets, status counts and big
-// numbers: no two frames overlap and none leaves the scene.
+// numbers: no two frames overlap and none leaves the scene; the sign and the
+// strip the same in every view, so a switch is undone by a click on the same spot.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
 import { LABELS, VIEWS, letterFit, lettersWidth } from "../../mods/idle-rpg/rules.js";
@@ -18,10 +19,10 @@ describe("what the frames say", () => {
     assert.deepEqual(v.runs("idle-rpg-sign").map((r) => r.colours[0]), ["gold", "white", "white", "gold", "white"]);
     assert.ok(v.images("idle-rpg-points").some((p) => p.endsWith("icons/star.png")));
   });
-  test("with no agents it says nobody is in; in town the button goes to the raid and the kill and gold chips go (the stations have them)", async () => {
+  test("with no agents it says nobody is in; in town the button goes to the raid and the kill and gold chips stay (as in every view)", async () => {
     const { saved } = raid({ gold: 5, view: "town" });
     const v = await mountView({ saved, agents: [] });
-    assert.deepEqual(v.text("idle-rpg-sign"), ["RAID PARTY", "NOBODY IN YET", "0", "TO THE RAID"]);
+    assert.deepEqual(v.text("idle-rpg-sign"), ["RAID PARTY", "NOBODY IN YET", "0", "5", "0", "TO THE RAID"]);
     assert.deepEqual(v.runs("idle-rpg-sign")[1].colours, ["grey"]);
   });
   test("the star is dimmed with no points to spend", async () => {
@@ -163,8 +164,9 @@ describe("hudLayout", () => {
       const h = (await mountView({ saved, agents: list, width: W })).view.hudBox;
       rows.push([W, h.titled, h.stage.y, h.strip.y]);
     }
-    // the section never shrinks below its fullest line, so it stays in the second row up to about 900px
-    assert.deepEqual(rows, [[640, false, 54, 8], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
+    // the section never shrinks below its fullest line, so it stays in the second row up to about 900px;
+    // at 640 the view button, as wide as "TO THE RAID" in every view, takes the strip to the second row too
+    assert.deepEqual(rows, [[640, false, 54, 54], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
   });
 });
 
@@ -277,5 +279,143 @@ describe("what the stage section says when something happens", () => {
     STATES["time's up"](farm, "orc", 12);
     farm.render();
     assert.deepEqual(farm.text("idle-rpg-stage-timesup-7"), ["TIME'S UP!"]);
+  });
+});
+
+// The owner: "we should not be changing what icons are in the top bars, or
+// their widths, it makes clicking back and forth harder/more confusing. for
+// example clicking "To Town" shrinks the bar as it drops the gold/killcount
+// info, and so when i expect to click back instantly i miss the "To the raid"
+// button. similar thing i noticed with the new board button". So the sign
+// (its button and its counts) and the strip (its status icons and chips) are
+// drawn the same, in the same places, in town, in the raid and on the board,
+// at every size and in every state; and a click on the sign's button or the
+// board chip is undone by a click on the same spot.
+describe("the top bars the same in every view", () => {
+  const range = (a, b, step) => Array.from({ length: Math.floor((b - a) / step) + 1 }, (_, i) => a + i * step);
+  const widths = THOROUGH ? range(320, 2400, 2) : [...range(320, 1400, 24), 1920, 2400];
+  const heights = THOROUGH ? [230, 260, 296, 360, 480, 560] : [230, 296, 560];
+  const shown = [
+    ["town", { view: "town" }],
+    ["raid", { view: "raid" }],
+    ["board from town", { view: "board", back: "town" }],
+    ["board from raid", { view: "board", back: "raid" }],
+  ];
+  const states = {
+    "nobody in, nothing earned": { agents: 0 },
+    "nobody in, gold": { agents: 0, gold: 5 },
+    "one working, kills and gold": { gold: 1234, slain: 56 },
+    "every status, points to spend": { statuses: ["blocked", "working", "done", "idle"], gold: 50, slain: 3, level: 4 },
+    "a crowd, big numbers": { crowd: true, gold: 9.9e15, slain: 9.9e15, level: 9, stage: 999, best: 1000 },
+  };
+  // the sign, its button, its counts, the strip and everything in it: id -> box
+  const bars = (v) => {
+    const ids = ["idle-rpg-sign", "idle-rpg-view-toggle", "idle-rpg-slain", "idle-rpg-gold", "idle-rpg-points", "idle-rpg-hud", "idle-rpg-board-chip", "idle-rpg-map", "idle-rpg-gear", ...v.ids("idle-rpg-status-")];
+    return Object.fromEntries(ids.map((id) => [id, v.has(id) ? v.box(id) : null]));
+  };
+  const show = (v, { view, back }) => {
+    Object.assign(v.view, { view, back: back ?? v.view.back });
+    v.render();
+  };
+
+  for (const [name, o] of Object.entries(states))
+    test(`${name}: the sign, its button, its counts and the strip's chips identical in town, the raid and on the board (${widths.length} widths x ${heights.length} heights)`, async () => {
+      const crowd = o.crowd ? ["blocked", "working", "done", "idle"].flatMap((st) => Array.from({ length: 120 }, (_, i) => agent(`${st}${i}`, st))) : null;
+      const { saved, agents } = raid({ classes: ["warrior", "archer", "wizard", "healer"], status: "working", ...o });
+      const v = await mountView({ saved, agents: o.agents === 0 ? [] : (crowd ?? agents) });
+      const problems = [];
+      for (const h of heights)
+        for (const w of widths) {
+          v.resize(w, h);
+          const seen = shown.map(([label, s]) => {
+            show(v, s);
+            return [label, bars(v), v.has("idle-rpg-stage") ? v.box("idle-rpg-stage") : null];
+          });
+          const [, first] = seen[0];
+          for (const [label, b] of seen.slice(1)) {
+            for (const id of new Set([...Object.keys(first), ...Object.keys(b)]))
+              if (JSON.stringify(first[id] ?? null) !== JSON.stringify(b[id] ?? null)) problems.push(`${w}x${h}: ${id} in town ${JSON.stringify(first[id])}, ${label} ${JSON.stringify(b[id])}`);
+          }
+          // the stage section may keep clear of the stations in town only; elsewhere the same
+          for (const [label, , st] of seen.slice(2)) if (JSON.stringify(st) !== JSON.stringify(seen[1][2])) problems.push(`${w}x${h}: the stage section in the raid ${JSON.stringify(seen[1][2])}, ${label} ${JSON.stringify(st)}`);
+          // and the chips there are, wherever the view: the board chip and the gear always, the map from 640
+          const b = seen[0][1];
+          for (const id of ["idle-rpg-sign", "idle-rpg-view-toggle", "idle-rpg-hud", "idle-rpg-board-chip", "idle-rpg-gear"]) if (!b[id]) problems.push(`${w}x${h}: no ${id}`);
+          if (Boolean(b["idle-rpg-map"]) !== w >= 640) problems.push(`${w}x${h}: the map ${b["idle-rpg-map"] ? "shown" : "missing"}`);
+          if ((o.gold || o.slain) && !(b["idle-rpg-gold"] && b["idle-rpg-slain"])) problems.push(`${w}x${h}: no kill or gold chip`);
+        }
+      assert.deepEqual(problems.slice(0, 8), [], `${problems.length} problems`);
+    });
+
+  test("the view button is as wide as its wider wording, whichever it says", async () => {
+    const want = Math.max(lettersWidth(LABELS.toTown.toUpperCase()), lettersWidth(LABELS.toRaid.toUpperCase())) * 2 + 12;
+    const v = await mountRaid({ gold: 5, slain: 1 });
+    for (const [, s] of shown) {
+      show(v, s);
+      assert.equal(v.box("idle-rpg-view-toggle").w, want, s.view);
+    }
+  });
+
+  // The element a click at a point lands on: of those with a click handler
+  // under it, the one drawn last.
+  const under = (v, p) => {
+    const hits = v.all((n) => n.key && n.handlers?.click).filter((n) => {
+      const b = v.box(n);
+      return p.x >= b.x && p.x < b.x + b.w && p.y >= b.y && p.y < b.y + b.h;
+    });
+    return hits.at(-1)?.key ?? null;
+  };
+  const centre = (b) => ({ x: Math.floor(b.x + b.w / 2), y: Math.floor(b.y + b.h / 2) });
+
+  test("a click on the view button's centre, then another on the same spot, goes there and back, at every size and state", async () => {
+    const problems = [];
+    for (const [name, o] of Object.entries(states))
+      for (const from of ["town", "raid"]) {
+        const { saved, agents } = raid({ classes: ["warrior", "archer"], ...o, view: from });
+        const v = await mountView({ saved, agents: o.agents === 0 ? [] : agents });
+        for (const h of [230, 360])
+          for (const w of range(320, 1400, 40)) {
+            v.resize(w, h);
+            const p = centre(v.box("idle-rpg-view-toggle"));
+            const tag = `${name}, from ${from} at ${w}x${h}`;
+            for (const want of [from === "town" ? "raid" : "town", from]) {
+              const id = under(v, p);
+              if (id !== "idle-rpg-view-toggle") problems.push(`${tag}: the click lands on ${id}`);
+              else v.click(id);
+              if (v.view.view !== want) problems.push(`${tag}: in ${v.view.view}, not ${want}`);
+            }
+          }
+      }
+    assert.deepEqual(problems.slice(0, 8), [], `${problems.length} problems`);
+  });
+
+  test("a click on the board chip's centre opens the board, another on the same spot goes back, at every size and state", async () => {
+    const problems = [];
+    for (const [name, o] of Object.entries(states))
+      for (const from of ["town", "raid"]) {
+        const { saved, agents } = raid({ classes: ["warrior", "archer"], ...o, view: from });
+        const v = await mountView({ saved, agents: o.agents === 0 ? [] : agents });
+        for (const h of [230, 360])
+          for (const w of range(320, 1400, 40)) {
+            v.resize(w, h);
+            const p = centre(v.box("idle-rpg-board-chip"));
+            const tag = `${name}, from ${from} at ${w}x${h}`;
+            for (const want of ["board", from]) {
+              const id = under(v, p);
+              if (id !== "idle-rpg-board-chip") problems.push(`${tag}: the click lands on ${id}`);
+              else v.click(id);
+              if (v.view.view !== want) problems.push(`${tag}: in ${v.view.view}, not ${want}`);
+            }
+          }
+      }
+    assert.deepEqual(problems.slice(0, 8), [], `${problems.length} problems`);
+  });
+
+  test("the map on the board opens the stage picker over it, as in town and the raid", async () => {
+    const v = await mountRaid({ view: "board", back: "town", stage: 4, best: 6 }, { width: 900 });
+    v.click("idle-rpg-map");
+    assert.ok(v.has("idle-rpg-map-card") && v.has("idle-rpg-board"));
+    v.click("idle-rpg-map-stage-2");
+    assert.deepEqual([v.view.view, v.view.progress.stage, v.has("idle-rpg-map-card")], ["board", 2, false]);
   });
 });
