@@ -36,9 +36,9 @@ const STATION_X = 436;
 
 // Mounts `n` agents arriving at once (classes known, so no save in the
 // middle): `classes` and `statuses` in turn, at width W.
-async function arrive(n, { battle = false, status = null, width = 1280, classes = CLASSES, spots = null, stage = 1 } = {}) {
+async function arrive(n, { view = "town", status = null, width = 1280, classes = CLASSES, spots = null, stage = 1 } = {}) {
   const list = Array.from({ length: n }, (_, i) => agent(`a${i}`, status ?? STATUSES[i % 4], { space_name: `s${i}`, tab_name: "t" }));
-  const { saved } = raid({ battle, classes: [], stage });
+  const { saved } = raid({ view, classes: [], stage });
   saved.sprites = { you: "archer", ...Object.fromEntries(list.map((a, i) => [a.address, classes[i % classes.length]])) };
   saved.seen = Object.fromEntries(list.map((a) => [a.address, 1_800_000_000_000]));
   if (spots) saved.spots = spots;
@@ -96,7 +96,7 @@ function oldFormation(classes, W, kind) {
 describe("a crowd's cost", () => {
   test("ms per render, and 400 agents render well inside a generous bound", async (t) => {
     for (const [n, battle] of [[10, false], [100, false], [400, false], [10, true], [100, true], [400, true]]) {
-      const { v, ms } = await arrive(n, { battle, status: battle ? "working" : null, width: 1459 });
+      const { v, ms } = await arrive(n, { view: battle ? "raid" : "town", status: battle ? "working" : null, width: 1459 });
       v.advance(1000);
       const view = v.view;
       const cx = { notify() {} };
@@ -188,7 +188,7 @@ describe("a small party stands as it always has", () => {
     assert.ok(pinned >= 20, `only ${pinned} parties pinned`);
   });
   test("in a fight a party of 6 shows every tag where it always did", async () => {
-    const { v } = await arrive(6, { battle: true, status: "working", width: 1280 });
+    const { v } = await arrive(6, { view: "raid", status: "working", width: 1280 });
     v.advance(1000);
     assert.equal(v.view.tagged, null);
     for (const a of v.world.agents) assert.ok(v.has(`idle-rpg-label-${a.address}`), a.address);
@@ -378,7 +378,7 @@ describe("a spot chosen by a drag", () => {
 describe("a crowd in a raid", () => {
   test("100 and 400 working agents render, the whole party in the fight", async () => {
     for (const n of [100, 400]) {
-      const { v } = await arrive(n, { battle: true, status: "working" });
+      const { v } = await arrive(n, { view: "raid", status: "working" });
       v.advance(3000);
       assert.equal(Object.keys(v.view.party.members).length, n + 1);
       assert.equal(v.text("idle-rpg-hud")[0], "99+");
@@ -556,7 +556,7 @@ describe("name tags in a crowd", () => {
   test("400 in a raid, the same name each, 60% working, 20% idle, 10% done, 10% blocked: no tag over another, as drawn", async (t) => {
     const statuses = (i) => (i % 10 < 6 ? "working" : i % 10 < 8 ? "idle" : i % 10 === 8 ? "done" : "blocked");
     const list = Array.from({ length: 400 }, (_, i) => agent(`k${i}`, statuses(i), { space_name: "Keep", tab_name: "Hall" }));
-    const { saved } = raid({ battle: true, classes: [], stage: 30 }); // the dragon
+    const { saved } = raid({ view: "raid", classes: [], stage: 30 }); // the dragon
     saved.best = 30;
     saved.sprites = { you: "archer", ...Object.fromEntries(list.map((a, i) => [a.address, ["warrior", "wizard", "archer", "healer"][i % 4]])) };
     saved.seen = Object.fromEntries(list.map((a) => [a.address, 1_800_000_000_000]));
@@ -578,7 +578,7 @@ describe("name tags in a crowd", () => {
   test("YOU is never covered: no agent's tag or bubble over your tag, and you are drawn over every agent", async () => {
     for (const youAt of [{ x: 600, y: 70 }, { x: 1000, y: 110 }]) {
       const list = Array.from({ length: 100 }, (_, i) => agent(`a${i}`, STATUSES[i % 4], { space_name: `s${i}`, tab_name: "t" }));
-      const { saved } = raid({ battle: false, classes: [], youAt });
+      const { saved } = raid({ view: "town", classes: [], youAt });
       saved.sprites = { you: "archer", ...Object.fromEntries(list.map((a, i) => [a.address, CLASSES[i % 4]])) };
       saved.seen = Object.fromEntries(list.map((a) => [a.address, 1_800_000_000_000]));
       const v = await mountView({ saved, agents: list, width: 1459 });
@@ -659,7 +659,7 @@ describe("name tags in a crowd", () => {
   test("tighter than a tag is wide: bubbles and HP bars are laid the same way, none over another", async () => {
     const { v } = await arrive(400, { width: 1459 });
     assert.ok(v.view.bubbled.size > 0 && v.view.bubbled.size < 400);
-    const { v: r } = await arrive(400, { battle: true, status: "working", width: 1459 });
+    const { v: r } = await arrive(400, { view: "raid", status: "working", width: 1459 });
     r.advance(3000);
     r.render();
     const bars = r.ids("idle-rpg-hp-").filter((id) => id !== "idle-rpg-hp-you").map((id) => r.box(id));

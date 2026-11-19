@@ -191,9 +191,9 @@ describe("the monster's card", () => {
     assert.ok(!v.has(CARD), "another kind");
     v.click(HIT);
     assert.ok(v.has(CARD));
-    v.click("idle-rpg-battle-toggle");
+    v.click("idle-rpg-view-toggle");
     assert.ok(!v.has(CARD), "the raid ended");
-    v.click("idle-rpg-battle-toggle");
+    v.click("idle-rpg-view-toggle");
     assert.ok(!v.has(CARD), "and stays closed");
     v.click(HIT);
     v.resize(639, 360);

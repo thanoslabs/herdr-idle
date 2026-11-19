@@ -5,23 +5,23 @@
 // numbers: no two frames overlap and none leaves the scene.
 import assert from "node:assert/strict";
 import { describe, test } from "node:test";
-import { LABELS, letterFit, lettersWidth } from "../../mods/idle-rpg/rules.js";
+import { LABELS, VIEWS, letterFit, lettersWidth } from "../../mods/idle-rpg/rules.js";
 import { agent, mountRaid, mountView, raid } from "../harness/view.mjs";
 import { stageTexts } from "./expect.mjs";
 
 const THOROUGH = Boolean(process.env.HERDR_TESTS_THOROUGH);
 
 describe("what the frames say", () => {
-  test("the sign: its title, the counts and the raid button", async () => {
+  test("the sign: its title, the counts and the button to town", async () => {
     const v = await mountRaid({ gold: 1234, slain: 56, level: 3 });
-    assert.deepEqual(v.text("idle-rpg-sign"), ["RAID PARTY", "56", "1.2K", "8", "RETURN TO TOWN"]);
+    assert.deepEqual(v.text("idle-rpg-sign"), ["RAID PARTY", "56", "1.2K", "8", "TO TOWN"]);
     assert.deepEqual(v.runs("idle-rpg-sign").map((r) => r.colours[0]), ["gold", "white", "white", "gold", "white"]);
     assert.ok(v.images("idle-rpg-points").some((p) => p.endsWith("icons/star.png")));
   });
-  test("with no agents it says nobody is in; out of a raid the button starts one and the kill and gold chips go", async () => {
-    const { saved } = raid({ gold: 5, battle: false });
+  test("with no agents it says nobody is in; in town the button goes to the raid and the kill and gold chips go (the stations have them)", async () => {
+    const { saved } = raid({ gold: 5, view: "town" });
     const v = await mountView({ saved, agents: [] });
-    assert.deepEqual(v.text("idle-rpg-sign"), ["RAID PARTY", "NOBODY IN YET", "0", "START RAID"]);
+    assert.deepEqual(v.text("idle-rpg-sign"), ["RAID PARTY", "NOBODY IN YET", "0", "TO THE RAID"]);
     assert.deepEqual(v.runs("idle-rpg-sign")[1].colours, ["grey"]);
   });
   test("the star is dimmed with no points to spend", async () => {
@@ -108,10 +108,11 @@ describe("hudLayout", () => {
   const insets = THOROUGH ? [0, 8, 16, 40, 84, 100, 120] : [0, 16, 84, 120];
   const statuses = { none: [], one: ["working"], all: ["blocked", "working", "done", "idle"] };
 
-  test(`no frame overlaps another or leaves the scene (${widths.length} widths x ${insets.length} insets x agents, counts, numbers)`, async () => {
+  test(`no frame overlaps another or leaves the scene (3 views x ${widths.length} widths x ${insets.length} insets x agents, counts, numbers)`, async () => {
     const v = await mountRaid({});
     const view = v.view;
     const problems = [];
+    for (const shown of VIEWS)
     for (const [name, sts] of Object.entries(statuses))
       for (const big of [false, true])
         for (const farming of [false, true]) {
@@ -124,10 +125,11 @@ describe("hudLayout", () => {
               v.world.props = { inset };
               for (const W of widths) {
                 view.size = { width: W, height: 230 };
-                const fight = view.battle && W >= 640;
+                view.view = shown;
+                const fight = W >= 640; // the fight runs in every view: the stage section shows in each
                 const h = view.hudLayout(W, list, fight);
                 const boxes = { sign: h.sign, strip: h.strip, stage: h.stage };
-                const tag = `${W}px inset ${inset}, ${name}${big ? " big" : ""}${farming ? " farming" : ""}`;
+                const tag = `${shown} ${W}px inset ${inset}, ${name}${big ? " big" : ""}${farming ? " farming" : ""}`;
                 for (const [k, b] of Object.entries(boxes)) {
                   if (!b) continue;
                   if (b.x < 0 || b.x + b.w > W || b.y < 0) problems.push(`${k} outside at ${tag}: ${JSON.stringify(b)}`);
@@ -161,9 +163,8 @@ describe("hudLayout", () => {
       const h = (await mountView({ saved, agents: list, width: W })).view.hudBox;
       rows.push([W, h.titled, h.stage.y, h.strip.y]);
     }
-    // the section never shrinks below its fullest line, so it stays in the second row up to about 900px;
-    // at 640 the strip, the map's chip wider in a raid, joins it there (beside it)
-    assert.deepEqual(rows, [[640, false, 54, 54], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
+    // the section never shrinks below its fullest line, so it stays in the second row up to about 900px
+    assert.deepEqual(rows, [[640, false, 54, 8], [700, false, 54, 8], [800, true, 54, 8], [1000, false, 8, 8]]);
   });
 });
 

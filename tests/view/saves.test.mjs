@@ -71,12 +71,13 @@ describe("saving on the documented events", () => {
       ["a setting", (h) => (h.click("idle-rpg-gear"), h.click("idle-rpg-setting-damageNumbers"))],
       ["moving yourself", (h) => h.clickFloor(400, 100)],
       ["changing a class", (h) => (h.click("idle-rpg-you"), h.release("idle-rpg-you"), h.click("idle-rpg-card-wrench"), h.click("idle-rpg-pick-wizard"))],
-      ["the raid toggle", (h) => h.click("idle-rpg-battle-toggle")],
+      ["the view toggle (town and raid)", (h) => h.click("idle-rpg-view-toggle")],
+      ["the board chip", (h) => h.click("idle-rpg-board-chip")],
     ];
     for (const [what, act] of once) assert.equal(saving(v, act), 1, what);
   });
   test("dragging an agent saves where it is dropped", async () => {
-    const { saved } = raid({ battle: false, classes: ["archer"] });
+    const { saved } = raid({ view: "town", classes: ["archer"] });
     const v = await mountView({ saved, agents: [agent("t1", "idle")] });
     const n = v.saves.length;
     v.press("critter-t1");
@@ -99,7 +100,8 @@ describe("saving on the documented events", () => {
 
 describe("not saving", () => {
   test("opening and closing panels, hovering, the codex, the shop's tabs, a card: nothing", async () => {
-    const v = await mountRaid({ gold: 50, slain: 2, level: 3, battle: false });
+    // (nobody working: the fight, which runs in town too, saves on a kill)
+    const v = await mountRaid({ gold: 50, slain: 2, level: 3, view: "town", status: "idle" });
     const none = [
       (h) => h.click("idle-rpg-station-shop"),
       (h) => h.click("idle-rpg-shop-kind-hat"),

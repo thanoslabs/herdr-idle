@@ -22,7 +22,7 @@ const STANDING = [1000, 5200, 10000, 14000, 19000].sort((a, b) => a - b); // the
 
 describe("nothing changing", () => {
   test("in town with nobody working: only the sky's move every 10s", async () => {
-    const { saved } = raid({ battle: false });
+    const { saved } = raid({ view: "town" });
     const v = await mountView({ saved, agents: [agent("t1", "idle"), agent("t2", "done")] });
     const log = count(v);
     v.advance(60000);

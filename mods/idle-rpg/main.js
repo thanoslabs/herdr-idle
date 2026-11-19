@@ -12,7 +12,11 @@
 // and drag an agent: it dangles from the
 // pointer; let go to drop it where it is (it falls to the floor). Spots and
 // classes are remembered.
-// Battle mode (the Start Raid / Return to town button by the sign): the boss
+// The fight always runs, in whichever of the three views shows (VIEWS: the
+// town, the raid and the board; see setView), the moment anyone works: the
+// sign's button goes between the town ("To the raid") and the raid ("To town"),
+// and the board chip in the top-right strip opens the board and back. In the
+// raid view the boss
 // of a stage stands in the middle (a monster of its biome, kindOf in rules.js,
 // its HP growing with the stage) and the party forms up around it, warriors up close
 // and everyone else at range. Every working agent attacks in its own way (a
@@ -28,7 +32,12 @@
 // BIOMES in rules.js), each with its own backdrop and monsters; the town is
 // the rampart. A press on the monster or its plate opens its card (monsterCard:
 // what it is weak to and resists, how many of its kind have fallen).
-// Turning battle mode off sends everyone back to their spots.
+// In town everyone stands at their own spots and the fight is not drawn (no
+// monster, so nothing that reads as fighting; only a knockout's lying pose,
+// stars and rest, which are real there), but it runs on for the agents: the
+// stage section shows it. You fight only in the raid view (see fighters).
+// The board (see board) is a panel over the scene, for the work the agents
+// are doing.
 // The boss fights back (party.js): every character attacking it has an HP bar,
 // and it strikes one of them, or a marked spot on the floor that hurts everyone
 // in it. At 0 HP a character is knocked out (lying down, stars circling, a
@@ -58,7 +67,7 @@
 // in October, string lights and a tree in December, unless that setting is off.
 // Each set is also town decor the shop sells, up all year while equipped
 // (decorOf in rules.js says which shows when both could).
-// The sign (top left), the stage section (top centre, in a raid), that corner
+// The sign (top left), the stage section (top centre, while the fight runs), that corner
 // and the boss's plate are pixel frames with their words in a pixel lettering
 // (see hudLayout); the name tags under everyone are in it too (see tag).
 // Layout props: { inset } = left edge of the sign (84 leaves room for macOS buttons).
@@ -83,6 +92,7 @@ import {
   STATE_VERSION,
   TICK_STEP,
   TRAINING,
+  VIEWS,
   YOU,
   attackArt,
   attackPart,
@@ -153,7 +163,7 @@ const ART = "mods/idle-rpg/art";
 // attackArt, monsterArt, biomeArt, seasonArt, glyphArt, letterArt), and the rest are named where they are drawn.
 const src = (file) => `${ART}/${file}`;
 // shared: { version, you: {x, y}, spots: { <address>: {x, y} }, sprites: { you | <address>: <class> },
-//   seen, battle, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
+//   seen, view, back, stage, best, farming, slain, gold, kills: { <kind>: n }, xp: { you | <class>: n },
 //   skills: { <class>: { power, haste, crit } }, training: { <class>: { attack, health } },
 //   looks: { <class>: { armour | weapon: { owned: [<id>], equipped: <id> }, hat: { equipped: <id> } } },
 //   hats: [<id>], decor: { owned: [<id>], equipped: <id> }, settings: { damageNumbers, advance, seasonal, seasonFirst } }
@@ -205,7 +215,7 @@ const CLOUDS = [
 const CELL_W = 88;
 const YOU_Y = [12, FLOOR_H - 24];
 const CRITTER_Y = [16, FLOOR_H - 42];
-// The campfire between raids (see fireX): where its feet are on the floor (a
+// The campfire in town (see fireX): where its feet are on the floor (a
 // third of the way up from its front edge), and its picture's size (52x43 art
 // px plus the outline's margin), and the width of its stretch of the night's
 // gloom (see gloom).
@@ -255,7 +265,7 @@ const CODEX = { pad: 8, gap: 3, title: 18, head: 13, row: 24 };
 CODEX.list = PANEL_MAX_H - 2 * (1 + CODEX.pad) - CODEX.title - CODEX.gap;
 const SHOP_ICONS = { armour: "icons/armour.png", weapon: "status/sword-l.png", hat: "icons/hat.png", decor: "icons/decor.png" };
 const DECOR_ICON = { w: 54, h: 36 }; // a set of town decor's preview in the shop (seasonArt's "icon", 18x12 art px at 3px each)
-// Battle mode. Sizes are on-screen px (art px x 4, plus the outline). A new
+// The raid view's monsters. Sizes are on-screen px (art px x 4, plus the outline). A new
 // kind also needs to be in a biome's kinds in rules.js (BIOMES: its name,
 // stages and weaknesses), and its pictures in MONSTER_ART there.
 // How each moves (see foe): `still`, the picture under the moving piece;
@@ -423,10 +433,10 @@ const DAMAGE_MS = 800;
 const DAMAGE_RISE = 36;
 const MAX_DAMAGE = 12;
 // The HUD, three pixel frames along the top of the scene (see hudLayout): the
-// sign top left (the title, the counts as chips, the raid button), the stage
-// section top centre while the fight shows (the stage with its arrows, the
+// sign top left (the title, the counts as chips, the view button), the stage
+// section top centre while the fight runs, in every view (the stage with its arrows, the
 // time left, or what just happened, and its bar), and the strip top right
-// (the status icons, then the gear). Each is a dark slate panel with a bevel
+// (the status icons, then the board chip, the map and the gear). Each is a dark slate panel with a bevel
 // (framePieces: frame/ corners over bands of FRAME_COLOURS), its words and
 // numbers in the lettering (letterText), everything at 2 screen px an art px.
 // They sit in one row HUD_H high from HUD_TOP, HUD_GAP apart; when they do not
@@ -443,9 +453,9 @@ const STAGE_SHARE = 0.3; // the stage section's width as a share of the scene's
 const STAGE_MAX_W = 520; // and the most it grows to on a wide scene
 const STAGE_GAP = 6; // between an arrow at one end and what is written beside it
 const FRAME_COLOURS = { outline: "#141a26", light: "#56657e", dark: "#1d2534", fill: "#2b3649" }; // as FRAME in the generator
-const CHIP_H = 22; // a chip (a count on the sign, the gear, a stage arrow) and the raid button: a 2px edge round 18px
+const CHIP_H = 22; // a chip (a count on the sign, a stage arrow) and the view button: a 2px edge round 18px
 const SIGN_PAD = 6; // inside the sign's frame, left and right of what it holds
-// The raid button's faces: red to go back to town, slate to start; lighter
+// The view button's faces: red to go to town (from the raid), slate to go to the raid; lighter
 // under the pointer, darker while pressed.
 const RAID_BUTTON = {
   on: { face: "#c94040", hover: "#e05555", down: "#9e2f2f", text: "white" },
@@ -477,6 +487,18 @@ const MAP_GAP = 4; // between the map and the gear in the strip
 // resistance (18px rows, 20 apart), 2px under them the kills, in lines of the
 // lettering: FOE_CARD_H in all (below), 124px, so in the lowest scene it fits
 // under a stage section in the second row (to 96) with 4px to spare.
+// The board (see board): inside its frame `pad` round three columns `gap`
+// apart, each a title in the lettering over a well `inset` from the cards
+// in it; a card is `card` high, `cardGap` from the next, with its agent's
+// picture `pic` square.
+const BOARD = { pad: 6, gap: 8, inset: 4, card: 32, cardGap: 4, pic: 24 };
+// Its columns, left to right: a card's `column` is one of the ids; each
+// title is the longest of its wordings that fits the column.
+const BOARD_COLUMNS = [
+  { id: "progress", titles: [LABELS.inProgress, LABELS.doing] },
+  { id: "review", titles: [LABELS.inReview, LABELS.review] },
+  { id: "completed", titles: [LABELS.completed, LABELS.done] },
+];
 const FOE_PAD = 4;
 const FOE_PIC = 30;
 const FOE_CLEAR = 4; // and it keeps this far from the HUD's frames and the plate (see cardSpot)
@@ -650,7 +672,7 @@ function chip(id, w, open, kids, { h = CHIP_H, px = 2, live = true } = {}) {
 // A count's chip on the sign: its icon (18px) and its number in the lettering.
 const countW = (n) => 2 * 2 + 2 + 18 + 2 + letterW(shortNumber(n)) + 2;
 
-// The stations between raids (see stations): left, top, width and height of
+// The stations in town (see stations): left, top, width and height of
 // each on the floor, and its tag's text; and the box its tag takes.
 const STATIONS = {
   codex: [12, -34, 112, 56, LABELS.codex],
@@ -797,7 +819,7 @@ function freeSpot(cells, taken) {
   return best;
 }
 
-// Where a crowd stands in a raid on a scene W wide against a boss of `kind`
+// Where a crowd stands in the raid's formation on a scene W wide against a boss of `kind`
 // (MONSTERS), its middle at `mid`: `sides` is { -1: left, 1: right }, each
 // { melee: [<key>], ranged: [<key>] } in order. Each side is laid out on its
 // own, in two blocks on brick lattices with the same rows:
@@ -955,7 +977,14 @@ export default class RaidParty extends View {
     this.spots = saved.spots;
     this.sprites = saved.sprites;
     this.seen = saved.seen; // <address>: when it was last here
-    this.battle = saved.battle;
+    // which view shows (VIEWS, saved): the town, the raid or the board; the
+    // fight runs in each alike (see fightRuns). `back` is the view the board
+    // chip goes back to, the town or the raid (saved too, so a reload on the
+    // board still goes back where it came from)
+    this.view = saved.view;
+    this.back = saved.back;
+    // the board's cards (see board), [] until a later version fills them
+    this.cards = [];
     this.progress = {
       stage: saved.stage,
       best: saved.best,
@@ -1038,8 +1067,8 @@ export default class RaidParty extends View {
     cx.timer.every(WATCH_MS, (cx) => {
       // whoever stopped fighting while the clock was stopped leaves the party (no render)
       this.muster();
-      // nothing happens while the scene is too narrow to show the fight
-      if (!this.battle || Math.max(320, this.size.width) < 640) return;
+      // nothing happens while the scene is too narrow to show the fight, in any view
+      if (Math.max(320, this.size.width) < 640) return;
       if (this.fight()) cx.notify(); // a new monster walked in
       else if (this.monster?.advancing && this.monster.hp <= 0) cx.notify(); // the countdown to the next stage, a second at a time
       // "Time's up!" with the attack clock stopped (everyone stopped working
@@ -1082,7 +1111,7 @@ export default class RaidParty extends View {
     this.walking = false;
     this.walkTask = null;
     // a crowd's layout (see place, formation and crowdMarks), worked out on every render
-    this.home = Object.create(null); // <address>: where it stands between raids
+    this.home = Object.create(null); // <address>: where it stands in town
     this.pitch = null; // the town crowd's lattice's pitch, or null for a small party
     this.seats = null; // the town crowd's lattice and each agent's seat on it, in memory only (see place)
     this.formed = null; // the same for the raid's formation
@@ -1121,7 +1150,8 @@ export default class RaidParty extends View {
       spots: this.spots,
       sprites: this.sprites,
       seen: this.seen,
-      battle: this.battle,
+      view: this.view,
+      back: this.back,
       ...this.progress,
       settings: this.settings,
     });
@@ -1138,7 +1168,6 @@ export default class RaidParty extends View {
   // re-renders every mod in the window. What a fight earns since the last kill
   // or failed attempt is lost if the app closes mid-fight.
   fight(blows = []) {
-    if (!this.battle) return false;
     const m = this.monster;
     if (!MONSTERS[m?.kind] || (m.hp <= 0 && Date.now() - (m.slainAt ?? 0) >= (m.advancing ? ADVANCE_MS : RESPAWN_MS))) {
       // the stage's boss: the next one after a kill, unless "Advance after a kill" is off
@@ -1224,7 +1253,7 @@ export default class RaidParty extends View {
   }
 
   // Takes every status off the boss and drops the damage over time not yet
-  // landed: a new boss, a new attempt, a kill, or the raid ended.
+  // landed: a new boss, a new attempt or a kill (never a view switch: the fight runs on).
   clearEffects() {
     this.statuses = newStatuses();
     this.dots = Object.create(null);
@@ -1286,28 +1315,47 @@ export default class RaidParty extends View {
     else this.cheers[key] = { lines: [line], id: (this.cheerSeq += 1), at: Date.now(), tick: this.clock };
   }
 
-  // Whether you join in when the party attacks: the ranged classes from
-  // wherever you stand, a warrior only from beside the monster. `alive`: only
-  // while the monster stands (between a kill and the next boss you are still
-  // in the fight, see fighters).
+  // Whether the fight runs: a boss is there and the scene is wide enough to
+  // show it (640px), whichever view shows. The view is only where you look:
+  // the town and the board leave the fight as it is in the raid.
+  fightRuns(W = Math.max(320, this.size.width)) {
+    return W >= 640 && Boolean(MONSTERS[this.monster?.kind]);
+  }
+
+  // Whether you join in when the party attacks: only in the raid view (the
+  // town has no monster: there you are simply in town, never dealing damage
+  // nor a target), the ranged classes from wherever you stand, a warrior only
+  // from beside the monster. `alive`: only while the monster stands (between
+  // a kill and the next boss you are still in the fight, see fighters).
   joins(W, alive = true) {
     const kind = MONSTERS[this.monster?.kind];
-    if (!this.fighting || !kind || (alive && !(this.monster.hp > 0))) return false;
+    if (this.view !== "raid" || !this.fightRuns(W) || (alive && !(this.monster.hp > 0))) return false;
     return this.sprites[YOU] !== "warrior" || Math.abs(this.you.x - (W / 2 + kind.core.x)) - kind.core.half <= MELEE;
   }
 
   // Who is in the fight: every working agent, and you alongside them if you
   // can reach (see joins), knocked out or not, between a kill and the next
-  // boss too. Nobody while battle mode is off or the scene is too narrow.
+  // boss too, whichever view shows. Nobody while the scene is too narrow.
+  // Leaving the raid view takes you out of the fight on the next muster, as
+  // walking off does (party.js keeps your HP for the attempt in `away`),
+  // except while you are knocked out: then you stay in it, down, wherever
+  // you look, until your rest is over (so a switch never freezes nor cuts a
+  // rest, and the fight goes on for the agents just as if you had stayed in
+  // the raid), and leave as you get up. The agents' fight never depends on
+  // the view; yours is the raid's alone.
   fighters() {
     const W = Math.max(320, this.size.width);
-    if (!this.battle || W < 640 || !MONSTERS[this.monster?.kind]) return [];
+    if (!this.fightRuns(W)) return [];
     const keys = agents()
       .filter((a) => a.status === "working")
       .map((a) => a.address);
     // you fight alongside them, once you have arrived: `you` is already the
-    // spot you are walking to
-    if (keys.length && !this.walking && this.joins(W, false)) keys.push(YOU);
+    // spot you are walking to (knocked out, you cannot walk: see walkTo)
+    // (and knocked out you stay, or, out of it while nobody worked with your
+    // rest frozen in `away`, come back to it, down, in any view, so a rest
+    // never stays frozen in town)
+    const resting = this.knocked(YOU) || (Object.hasOwn(this.party.away, YOU) && this.party.away[YOU].rest !== null);
+    if (keys.length && !this.walking && (this.joins(W, false) || resting)) keys.push(YOU);
     return keys;
   }
 
@@ -1331,16 +1379,16 @@ export default class RaidParty extends View {
   }
 
   // The healers standing by in the fight's scene: every agent with the
-  // healer class on that is not working (idle, done or blocked) and not being
-  // carried, in agents() order, while the fight shows. They throw heals at the
+  // healer class on that is not working (idle, done or blocked), carried in
+  // town or not (carrying changes nothing in the fight), in agents() order,
+  // while the fight runs (in any view). They throw heals at the
   // fighters on their own rhythm (see tick) from their spot in the formation,
   // but do not fight: never a target, no aura, no part of a kill's gold or
   // experience shares, nothing to the clock.
   standby() {
-    const W = Math.max(320, this.size.width);
-    if (!this.battle || W < 640 || !MONSTERS[this.monster?.kind]) return [];
+    if (!this.fightRuns()) return [];
     return agents()
-      .filter((a) => a.status !== "working" && this.sprites[a.address] === "healer" && this.drag?.address !== a.address)
+      .filter((a) => a.status !== "working" && this.sprites[a.address] === "healer")
       .map((a) => a.address);
   }
 
@@ -1462,7 +1510,8 @@ export default class RaidParty extends View {
   // nobody to heal is not thrown; its next is a gap on.
   // It renders as an attack or a throw starts, a tick later (so what flies
   // can glide), as it lands and for two ticks after (impacts fade), and on any
-  // hit, heal or knockout.
+  // hit, heal or knockout; out of the raid view, where no attack is drawn,
+  // only on the rest, so never more often than in it.
   //
   // Weapons (effects.js): each attacker's pace is its class's Haste gap times
   // its weapon's factor (and the haste aura's), carried in fractions of a tick
@@ -1628,7 +1677,8 @@ export default class RaidParty extends View {
       note.fading = true;
       changed = true;
     }
-    if (changed || actors.some((key) => this.rhythm[key]?.start != null)) cx.notify();
+    // (an attack under way is drawn only in the raid view: in town and on the board it asks for no render)
+    if (changed || (this.fighting && actors.some((key) => this.rhythm[key]?.start != null))) cx.notify();
     return running || (inFight.length > 0 && down(this.party).length > 0);
   }
 
@@ -1767,7 +1817,7 @@ export default class RaidParty extends View {
   // on a narrow scene the sign or the strip).
   plateBox(W, icons) {
     const kind = this.monster && MONSTERS[this.monster.kind];
-    if (!this.battle || !kind || W < 640) return null;
+    if (!this.fighting || !kind) return null;
     const h = PLATE_H + (icons.length ? PLATE_ICON_H + 2 : 0);
     const mid = Math.round(W / 2 - kind.w / 2) + Math.round(kind.w / 2);
     const w = plateW(kind);
@@ -1836,7 +1886,7 @@ export default class RaidParty extends View {
   foe(W, hits) {
     const m = this.monster;
     const kind = m && MONSTERS[m.kind];
-    if (!this.battle || !kind || W < 640) return [];
+    if (!this.fighting || !kind) return [];
     const left = Math.round(W / 2 - kind.w / 2);
     const top = MONSTER_Y - kind.h + 4;
     const dead = m.hp <= 0;
@@ -2187,7 +2237,7 @@ export default class RaidParty extends View {
     return { x: e.position.x - b.x, y: e.position.y - b.y - this.wallH };
   }
 
-  // Where everyone stands between raids: `this.home`, a spot for each agent in
+  // Where everyone stands in town: `this.home`, a spot for each agent in
   // `list` by address, and `this.pitch`, the crowd's lattice's pitch (see
   // townLattice), or null when they stand as a small party does.
   // A small party (everyone fits on the default spots, DEFAULT_ROWS: two rows
@@ -2321,10 +2371,12 @@ export default class RaidParty extends View {
   }
 
   walkTo(p, W, cx) {
-    if (this.fighting && this.knocked(YOU)) return; // knocked out: you lie there until your rest is over
+    // knocked out: you lie there until your rest is over, in every view (you
+    // are knocked out only in the raid, and stay in the fight, down, after
+    // leaving it until you get up: see fighters)
+    if (this.knocked(YOU)) return;
     const to = { x: Math.round(clamp(p.x, 30, W - 30)), y: Math.round(clamp(p.y, YOU_Y[0], YOU_Y[1])) }; // whole pixels keep the sprite sharp
-    const fire = this.fireX(W);
-    if (fire !== null && this.inFire(to, fire)) to.y = Math.min(YOU_Y[1], FIRE_Y + 12); // up to the campfire's stones, not into them
+    // (a spot in town's campfire is drawn in front of its stones: see render, youAt)
     const dist = Math.hypot(to.x - this.you.x, to.y - this.you.y);
     this.walkMs = clamp(Math.round(dist * 4), 150, 3000);
     this.you = to;
@@ -2346,10 +2398,10 @@ export default class RaidParty extends View {
     this.save();
   }
 
-  // Where the scene is: the biome of the stage being fought in a raid
-  // (biomeOf: its id in BIOMES), or null for the town's rampart.
+  // Where the scene is: the biome of the stage being fought in the raid view
+  // (biomeOf: its id in BIOMES), or null for the town's rampart (behind the board too).
   backdrop() {
-    return this.battle ? biomeOf(this.monster?.stage ?? this.progress.stage) : null;
+    return this.view === "raid" ? biomeOf(this.monster?.stage ?? this.progress.stage) : null;
   }
 
   // Everything behind the floor, back to front: stars, daylight, sunset glow,
@@ -2534,8 +2586,10 @@ export default class RaidParty extends View {
     const phase = this.phaseOf(a.address);
     const acts = fighting || Boolean(this.rhythm[a.address]);
     const frame = !acts || !(this.monster?.hp > 0) ? "stance" : phase === 1 ? "windup" : phase === 2 || phase === 3 ? "strike" : "stance";
-    // knocked out (still working): lying on its back, its head away from the monster
-    const out = fighting && this.knocked(a.address);
+    // knocked out (still working): lying on its back, its head away from the
+    // monster; in town too, with its stars and rest (the knockout is real
+    // there: the fight runs on), though nothing else of the fight shows
+    const out = a.status === "working" && this.knocked(a.address);
     const pose = out
       ? this.sprite(c, `down/${dir > 0 ? "l" : "r"}`, 72, 72)
       : this.fighting
@@ -2588,13 +2642,14 @@ export default class RaidParty extends View {
         .child(
           div()
             .relative()
-            .when(a.status === "working" && !fighting, (el) => el.loop("top", { from: 0, to: -7, period: 520 }))
+            .when(a.status === "working" && !fighting && !out, (el) => el.loop("top", { from: 0, to: -7, period: 520 }))
             .child(pose),
         ),
       // in a fight a working agent attacks instead of showing the swords
       // overhead, and has its HP bar there (or, knocked out, its stars and rest)
       // (in a crowd, only the bubbles crowdMarks keeps)
-      ...(fighting ? (!this.barred || this.barred.has(a.address) ? this.vitals(a.address, x, y) : []) : !this.bubbled || this.bubbled.has(a.address) ? [this.bubble(a, x, y)] : []),
+      // (in town, knocked out: its stars and rest in place of the bubble)
+      ...(fighting || out ? (!this.barred || this.barred.has(a.address) ? this.vitals(a.address, x, y) : []) : !this.bubbled || this.bubbled.has(a.address) ? [this.bubble(a, x, y)] : []),
       // its name tag; a crowd's are drawn over everyone instead (see render)
       ...(this.tagged ? [] : [this.nameTag(a, W)]),
     ];
@@ -2645,7 +2700,8 @@ export default class RaidParty extends View {
     if (pitch === null) return;
     // yours are in the way of everyone's: your tag (under your sprite, see you_), and in a fight your HP bar
     const ytw = tagW(tagFit(LABELS.you));
-    const yourTag = { x: this.you.x - ytw / 2 - 2, y: this.you.y + 6 - 2, w: ytw + 4, h: TAG_H + 4 };
+    const me = this.youAt ?? this.you; // as drawn
+    const yourTag = { x: me.x - ytw / 2 - 2, y: me.y + 6 - 2, w: ytw + 4, h: TAG_H + 4 };
     const order = (rest, who = list) => {
       const tiers = [[], [], [], [], [], []];
       for (const a of who) {
@@ -2683,7 +2739,7 @@ export default class RaidParty extends View {
     );
     // a fighter (working, in a fight) has its HP bar there instead of a bubble
     const fights = (a) => this.fighting && a.status === "working";
-    const stations = this.battle ? [] : Object.values(STATIONS).map(stationTagBox);
+    const stations = this.view === "town" ? Object.values(STATIONS).map(stationTagBox) : [];
     this.bubbled = lay(order((a) => (fights(a) ? -1 : asked(a) >= 0 ? asked(a) : a.status === "working" ? 4 : 5)), BUBBLE.w, BUBBLE.h, (a, { x, y }) => bubbleBox(a.status, x, y), [...stations, yourTag], this.thin);
     if (!this.thin || !this.fighting) return;
     const members = this.party.members;
@@ -2736,9 +2792,12 @@ export default class RaidParty extends View {
   // when healed, each popping in on the tick it happened and fading on the next.
   // Freshness is by the attack clock's ticks. Nothing for anyone not in it.
   // One box at the feet holds it all, gliding with `move` as the sprite does.
+  // Out of the raid view (town: no monster, so nothing that reads as
+  // fighting) only a knockout's stars and rest show: no HP bar, aura, hit
+  // flash nor heal.
   vitals(key, x, y, move = MOVE) {
     const m = this.party.members[key];
-    if (!m) return [];
+    if (!m || (!this.fighting && m.down === null)) return [];
     const t = this.clock;
     const out = [];
     // all of it in one box at the feet, gliding with the sprite (`move`) to a new spot
@@ -2792,7 +2851,7 @@ export default class RaidParty extends View {
       if (AURAS.includes(potion) && this.monster?.hp > 0)
         out.push(div().id(`idle-rpg-aura-${key}`).absolute().left(HP_W / 2 + 3).top(-84).child(image(src(effectIconArt(potion))).w(18).h(18)));
     }
-    if (m.hitAt !== null && t - m.hitAt <= 2) {
+    if (this.fighting && m.hitAt !== null && t - m.hitAt <= 2) {
       const fresh = t === m.hitAt;
       out.push(
         div()
@@ -2805,7 +2864,7 @@ export default class RaidParty extends View {
           .child(image(src("foe/hit.png")).w(44).h(44)),
       );
     }
-    if (m.healedAt !== null && t - m.healedAt <= 2) {
+    if (this.fighting && m.healedAt !== null && t - m.healedAt <= 2) {
       const fresh = t === m.healedAt;
       out.push(
         div()
@@ -2912,15 +2971,15 @@ export default class RaidParty extends View {
       );
   }
 
-  // Where the campfire stands between raids: the middle of its picture, or
-  // null while it is not drawn (in a raid, or when the scene is narrower than
+  // Where the campfire stands in town: the middle of its picture, or
+  // null while it is not drawn (the raid or the board, or when the scene is narrower than
   // the fight needs, 640px). It is the middle of the scene to the nearest 16px
   // (the steps its light in the gloom is drawn for, see gloom), but never
   // nearer the stations than 528, which keeps its picture 8px clear of the
   // shop's stall (its right edge, outlined under the pointer, is at 412) and,
   // at 640px, 4px inside the scene's right edge.
   fireX(W) {
-    if (this.battle || W < 640) return null;
+    if (this.view !== "town" || W < 640) return null;
     return 272 + 16 * Math.max(16, Math.round((W / 2 - 272) / 16));
   }
 
@@ -2983,7 +3042,7 @@ export default class RaidParty extends View {
   // banners and the scene's edges, with no handlers; they take no spot from
   // anyone (place and townLattice never see them). One that would be cut off
   // by the scene's top or meet a frame of the HUD (the sign, the strip with
-  // the map and gear; HUD_GAP / 2 round it), its glow included, is not
+  // its chips, the stage section; HUD_GAP / 2 round it), its glow included, is not
   // drawn, and nor is its pool of light at night. Fewer fit a narrow or short
   // scene. Returns { season, rampart: [x], lanterns: [{ x, y }], tree: x |
   // null, light(art, left) }:
@@ -3003,7 +3062,7 @@ export default class RaidParty extends View {
     if (!season) return null;
     // a box on the floor (y down from its top) inside the scene's top, clear of the HUD's frames (in the view's coordinates)
     const pad = HUD_GAP / 2;
-    const frames = [hud.sign, hud.strip].filter(Boolean);
+    const frames = [hud.sign, hud.strip, hud.stage].filter(Boolean);
     const clear = (b) =>
       b.y >= -this.wallH && !frames.some((f) => b.x < f.x + f.w + pad && f.x - pad < b.x + b.w && b.y + this.wallH < f.y + f.h + pad && f.y - pad < b.y + this.wallH + b.h);
     const out = { season, rampart: [], lanterns: [], tree: null, light: () => null };
@@ -3192,7 +3251,7 @@ export default class RaidParty extends View {
   }
 
   you_() {
-    const { x, y } = this.you;
+    const { x, y } = this.youAt ?? this.you; // as drawn (see render)
     const ms = this.walkMs ?? 300;
     const c = this.sprites[YOU];
     return v_flex()
@@ -3214,8 +3273,9 @@ export default class RaidParty extends View {
         // 72 so every pixel is a crisp 4x4. They are PNGs at twice that size:
         // SVGs came out soft on retina screens.
         // In a fight, standing still, you face the monster in the same stance
-        // and attack frames as the agents (see critter).
-        this.fighting && this.knocked(YOU)
+        // and attack frames as the agents (see critter). Knocked out you lie
+        // down in town too (a knockout is real there: you cannot walk).
+        this.knocked(YOU)
           ? this.sprite(c, `down/${this.youDir > 0 ? "l" : "r"}`, 72, 72)
           : this.fighting && !this.walking
           ? div()
@@ -3377,7 +3437,7 @@ export default class RaidParty extends View {
   // there is anyway (a hit, a heal, the countdowns' beat).
   infoCard(a, W) {
     const key = a ? a.address : YOU;
-    const s = a ? this.at[a.address] : this.you;
+    const s = a ? this.at[a.address] : (this.youAt ?? this.you);
     const row = (k, v) =>
       h_flex()
         .gap(6)
@@ -3508,27 +3568,32 @@ export default class RaidParty extends View {
   render() {
     const W = Math.max(320, this.size.width);
     const list = agents();
-    this.place(list, W);
+    this.place(list, W); // in every view: it also gives a newcomer its class, which the fight needs
+    const onBoard = this.view === "board";
     if (this.card && this.card !== YOU && !list.some((a) => a.address === this.card)) this.card = null;
-    const you = { x: Math.round(clamp(this.you.x, 30, W - 30)), y: Math.round(clamp(this.you.y, YOU_Y[0], YOU_Y[1])) };
+    if (onBoard) this.card = null; // nobody is drawn on the board, so no card
+    // your spot, inside the scene (the same in every view: the raid's fight reads it, see muster)
+    this.you = { x: Math.round(clamp(this.you.x, 30, W - 30)), y: Math.round(clamp(this.you.y, YOU_Y[0], YOU_Y[1])) };
     const fire = this.fireX(W);
-    if (fire !== null && this.inFire(you, fire)) you.y = Math.min(YOU_Y[1], FIRE_Y + 12); // left in the fire by an older save or a resize: out in front of it
-    this.you = you;
+    // where you are drawn: your spot, or in town, if it is in the campfire, out in front of it
+    // (drawing only, so the town never moves you in the fight)
+    const you = (this.youAt = fire !== null && this.inFire(this.you, fire) ? { x: this.you.x, y: Math.min(YOU_Y[1], FIRE_Y + 12) } : this.you);
 
     // Whoever stands lower on the floor is drawn in front.
     const hits = list.filter((a) => a.status === "working").length;
-    // In a fight everyone stands in formation; otherwise at their own spots.
-    const foeKind = this.battle && W >= 640 ? MONSTERS[this.monster?.kind] : null;
+    // In the raid view everyone stands in formation; otherwise at their own
+    // spots. `fighting`: the fight is drawn (it runs in every view: fightRuns).
+    const foeKind = this.view === "raid" && this.fightRuns(W) ? MONSTERS[this.monster.kind] : null;
     this.fighting = Boolean(foeKind);
-    // the monster's card goes with the fight (the raid ended, the scene too
+    // the monster's card goes with the raid view (a view switch, the scene too
     // narrow) and with its kind (the next boss is another kind)
     if (this.foeCard && (!foeKind || this.cardKind !== this.monster.kind)) this.foeCard = false;
     if (!foeKind) this.foeHot = false;
-    // (between raids, each where place() put them, inside the scene and, by the campfire, beside it: see the loop below)
+    // (in town and behind the board, each where place() put them, inside the scene and, by the campfire, beside it: see the loop below)
     this.at = foeKind ? this.formation(list, W, foeKind) : Object.create(null);
     const pitch = foeKind ? this.formed : this.pitch;
     const youDir = you.x <= W / 2 + (foeKind?.core.x ?? 0) ? 1 : -1; // which way the monster is from you
-    this.youFights = hits > 0 && !this.walking && this.joins(W) && !this.knocked(YOU);
+    this.youFights = this.fighting && hits > 0 && !this.walking && this.joins(W) && !this.knocked(YOU);
     // the monster hops when a blow lands on it (a healing throw is no blow)
     const blowing = (key) => this.phaseOf(key) === 4 && !this.rhythm[key]?.heal;
     this.struck = (this.youFights && blowing(YOU)) || list.some((a) => a.status === "working" && blowing(a.address));
@@ -3538,9 +3603,10 @@ export default class RaidParty extends View {
     // the boss's own attack: what lies on the floor under everyone, and what flies or lands over them
     const foeAttack = this.foeAttack(W, foeKind);
     if (foeAttack.over.length) actors.push({ y: FLOOR_H, draw: () => foeAttack.over });
-    // your HP bar, or stars and rest, while you are in the fight
+    // your HP bar, or stars and rest, while you are in the fight; in town only
+    // the stars and rest, once knocked out (see vitals)
     // (not while you walk: `you` is already where you are going, and walking takes you out of the fight)
-    if (foeKind && YOU in this.party.members && !this.walking) actors.push({ y: FLOOR_H, draw: () => this.vitals(YOU, you.x, you.y, { duration: this.walkMs ?? 300, easing: "linear" }) });
+    if (!onBoard && YOU in this.party.members && !this.walking) actors.push({ y: FLOOR_H, draw: () => this.vitals(YOU, you.x, you.y, { duration: this.walkMs ?? 300, easing: "linear" }) });
     // the campfire stands among them, so whoever is in front of it is drawn over it (first, so a tie goes to them)
     if (fire !== null) actors.unshift({ y: FIRE_Y, draw: () => this.campfire(fire) });
     if (this.youFights) actors.push({ y: FLOOR_H, draw: () => this.attack({ key: YOU, cls: this.sprites[YOU], x: you.x, y: you.y, dir: youDir }, W, foeKind) });
@@ -3555,7 +3621,7 @@ export default class RaidParty extends View {
     // where the sign, the stage section and the strip go: worked
     // out before anything is drawn, since the boss's plate and the knocked out's
     // rings keep clear of them (and the rings of the plate: `ringClear`, in floor px)
-    const hud = (this.hudBox = this.hudLayout(W, list, Boolean(foeKind)));
+    const hud = (this.hudBox = this.hudLayout(W, list, this.fightRuns(W)));
     const plateAt = foeKind ? this.plateBox(W, this.monster.hp > 0 ? plateIcons(this.statuses, this.auras()) : []) : null;
     this.ringClear = [hud.sign, hud.strip, hud.stage].filter(Boolean).map((b) => ({ ...b, y: b.y - this.wallH }));
     if (plateAt) this.ringClear.push(plateAt);
@@ -3584,7 +3650,7 @@ export default class RaidParty extends View {
       else if (foeKind) pops.push(() => this.critNote(key, W, foeKind));
     }
     // Damage numbers go once they have faded, when the fight is not shown
-    // (battle mode off, or too narrow), when their monster has gone, and all
+    // (the town or the board shows, or too narrow), when their monster has gone, and all
     // at once when the setting is turned off.
     this.damage =
       foeKind && this.settings.damageNumbers ? this.damage.filter((d) => d.monster === this.monster.id && Date.now() - d.at <= TICK_STEP + DAMAGE_MS + 250) : [];
@@ -3592,12 +3658,12 @@ export default class RaidParty extends View {
 
     // too narrow for the map: its picker closes (and stays closed once wider again)
     if (!hud.map) this.mapOpen = false;
-    // a raid is in its stage's biome, the town on the rampart
+    // the raid view is in its stage's biome, the town (and the board) on the rampart
     const biome = this.backdrop();
     // in town, the season's decorations (SEASONS: by the view's clock, so they go up and come
     // down on its tick as a month turns) while the setting is on, or the set of town decor
     // equipped (decorOf says which when both could)
-    const decor = this.decor(W, fire, biome ? null : decorOf(this.progress, this.settings, this.now), hud);
+    const decor = this.decor(W, fire, biome || onBoard ? null : decorOf(this.progress, this.settings, this.now), hud);
     const scenery = this.scenery(W, biome, decor); // also works out how dark it is
     const ground = biome ? biomeArt(biome, "ground") : "scene/floor.png";
     const boards = Array.from({ length: Math.ceil(W / 128) }, (_, i) => div().absolute().left(i * 128).top(0).child(image(src(ground)).w(128).h(FLOOR_H)));
@@ -3618,19 +3684,20 @@ export default class RaidParty extends View {
           .h(FLOOR_H)
           .children(boards)
           // on the rampart the table and the barrel stand at the back, clear of the monster's corner
-          .when(!biome, (el) =>
+          // (the board covers the floor: nothing on it is drawn there, see board)
+          .when(!biome && !onBoard, (el) =>
             el
               .child(div().absolute().left(12).top(-34).child(image(src("stations/table/idle.png")).w(112).h(56)))
               .child(div().absolute().left(136).top(-30).child(image(src("scene/barrel.png")).w(48).h(52))),
           )
           // in season, what stands on the floor (see decor): after the barrel, before the stations and everyone
           .when(Boolean(decor), (el) => el.children(this.decorations(decor)))
-          .when(!this.battle, (el) => el.children(this.stations()))
+          .when(this.view === "town", (el) => el.children(this.stations()))
           .children(foeAttack.under)
           .children(this.foeHit(W, foeKind))
-          .children(actors.flatMap((p) => p.draw()))
+          .when(!onBoard, (el) => el.children(actors.flatMap((p) => p.draw())))
           // a crowd's name tags, over everyone (see crowdMarks), nearer ones last
-          .when(Boolean(this.tagged), (el) =>
+          .when(Boolean(this.tagged) && !onBoard, (el) =>
             el.children(
               list
                 .filter((a) => this.tagged.has(a.address))
@@ -3639,7 +3706,7 @@ export default class RaidParty extends View {
             ),
           )
           // the night (under a roof the light is always the same)
-          .when(outdoors(biome), (el) => el.child(this.gloom(W, fire, Boolean(biome), decor)))
+          .when(outdoors(biome) && !onBoard, (el) => el.child(this.gloom(W, fire, Boolean(biome), decor)))
           // the HUD: drawn over the night's dark, so it reads at any hour, and under the cards
           .child(this.hud(hud.counts, hud.strip, hud.map))
           .child(this.sign(list, hud))
@@ -3647,8 +3714,8 @@ export default class RaidParty extends View {
           // over the night's dark and the HUD (in a short scene a number rising off a
           // big boss reaches the stage section), and under the cards; none has a handler
           .when(Boolean(foeKind), (el) => el.children(this.damage.map((d) => this.damageNote(d, W, foeKind))))
-          .children(pops.map((draw) => draw()))
-          .when(list.length === 0, (el) =>
+          .when(!onBoard, (el) => el.children(pops.map((draw) => draw())))
+          .when(list.length === 0 && !onBoard, (el) =>
             el.child(
               v_flex()
                 .absolute()
@@ -3727,7 +3794,8 @@ export default class RaidParty extends View {
           this.card = null;
           this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
           this.skillsOpen = this.shopOpen = null;
-          if (pr.kind !== "frame") this.walkTo(this.point(e), W, cx);
+          // (the board covers the floor: a press beside it walks nobody)
+          if (pr.kind !== "frame" && !onBoard) this.walkTo(this.point(e), W, cx);
         }
         this.press = null;
         cx.notify();
@@ -3737,6 +3805,8 @@ export default class RaidParty extends View {
       })
       .children(scenery)
       .child(floor)
+      // the board, over the scene under the HUD, and under the panels
+      .when(onBoard, (el) => el.child(this.board(hud, W)))
       // last, so they lie over the floor and everyone on it
       .when(this.codex, (el) => el.child(this.codexCard(hud.inset, hud.panelTop)))
       .when(CLASSES.includes(this.skillsOpen), (el) => el.child(this.skillsCard(hud.inset, hud.panelTop)))
@@ -3744,6 +3814,29 @@ export default class RaidParty extends View {
       .when(this.settingsOpen, (el) => el.child(this.settingsCard(hud.strip.y)))
       .when(this.mapOpen, (el) => el.child(this.mapCard(hud.strip)))
       .when(this.foeCard, (el) => el.child(this.monsterCard(hud)));
+  }
+
+  // The town or the raid: the view shown, or on the board the one its chip
+  // goes back to. The sign's button goes to the other one.
+  base() {
+    return this.view === "board" ? this.back : this.view;
+  }
+
+  // Shows view `v` (VIEWS: the sign's button, the board chip), saved. Only
+  // where you look changes: the fight runs on as it was (no fresh attempt,
+  // no status cleared, the attack clock and the watch untouched, nobody
+  // moved), so its balance for the agents is the same whatever is shown;
+  // only you join or leave it with the raid view (see fighters). `back`,
+  // where the board chip goes back to, is saved with the view. The panels open
+  // from different places in town and out of it, so an open one closes;
+  // a card closes on the board (nobody is drawn there, see render).
+  setView(v) {
+    if (!VIEWS.includes(v) || v === this.view) return;
+    if (v === "board") this.back = this.view;
+    this.view = v;
+    this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
+    this.skillsOpen = this.shopOpen = null;
+    this.save();
   }
 
   // A press on a HUD frame's empty part (its chips and buttons stop their own):
@@ -3755,20 +3848,20 @@ export default class RaidParty extends View {
   }
 
   // What the sign holds (see sign): "nobody in yet" while there are no agents;
-  // in a raid, once anything has been slain or earned, the kill count (it
-  // opens the codex) and the gold (the shop); once there is a point or gold to
+  // in the raid and on the board (the town has its stations), once anything
+  // has been slain or earned, the kill count (it opens the codex) and the gold (the shop); once there is a point or gold to
   // spend or anything trained, the star with the skill points left to spend
-  // across all classes (the skills and training); and the raid button. With
-  // how wide each is, for hudLayout.
+  // across all classes (the skills and training); and the button to the
+  // raid or the town (see base). With how wide each is, for hudLayout.
   signSpec(list) {
     const { slain, gold } = this.progress;
     const spare = pointsLeftAll(this.progress);
     const earned = gold > 0 || CLASSES.some((c) => pointsEarned(this.progress.xp[c]) > 0 || TRAINING.some(({ key }) => trainingOf(this.progress, c, key) > 0));
     const counts = [];
-    if (this.battle && (slain > 0 || gold > 0)) counts.push({ id: "slain", art: "icons/skull.png", n: slain }, { id: "gold", art: "icons/coin.png", n: gold });
+    if (this.view !== "town" && (slain > 0 || gold > 0)) counts.push({ id: "slain", art: "icons/skull.png", n: slain }, { id: "gold", art: "icons/coin.png", n: gold });
     if (earned) counts.push({ id: "points", art: "icons/star.png", n: spare });
     const empty = list.length === 0;
-    const label = this.battle ? LABELS.stop : LABELS.start;
+    const label = this.base() === "raid" ? LABELS.toTown : LABELS.toRaid;
     const parts = [...(empty ? [letterW(LABELS.empty)] : []), ...counts.map((c) => countW(c.n))];
     const countsW = parts.reduce((x, w) => x + w, 0) + 4 * Math.max(0, parts.length - 1);
     return { counts, empty, spare, label, countsW, buttonW: letterW(label) + 12, titleW: letterW(LABELS.title) };
@@ -3836,9 +3929,35 @@ export default class RaidParty extends View {
     return Math.max(need, Math.min(Math.round(W * STAGE_SHARE), STAGE_MAX_W));
   }
 
+  // The stage section's compact width, for town when the full one would meet
+  // a station (see hudLayout): an arrow at each end, "STAGE N" and the time,
+  // no farm mark or "(PAUSED)" (the pulsing arrow and the grey time say them).
+  stageCompactWidth() {
+    const digits = "8".repeat(Math.max(3, String(this.progress.best).length));
+    return 2 * FRAME + 2 * 4 + 2 * (18 + STAGE_GAP) + letterW(LABELS.stage(digits)) + 10 + letterW("00:00");
+  }
+
+  // What the stage section must keep clear of in town (see hudLayout), in
+  // scene px: `hard`, each station with its tag and the arrow over it when
+  // hovered; `soft`, everyone's drawn spot (sprite and tag) near the top.
+  townBlocks() {
+    const top = Math.max(FLOOR_H, this.size.height) - FLOOR_H; // the floor's top
+    const hard = Object.values(STATIONS).map((st) => {
+      const [left, y, w, h] = st;
+      const tag = stationTagBox(st);
+      const x0 = Math.min(left, tag.x);
+      return { x: x0, y: top + y - 38, w: Math.max(left + w, tag.x + tag.w) - x0, h: 38 + h + 3 + TAG_H };
+    });
+    const soft = [...Object.values(this.at ?? {}), this.youAt ?? this.you]
+      .filter(Boolean)
+      .map((p) => ({ x: p.x - 36, y: top + p.y - 66, w: 72, h: 66 + 11 + TAG_H }))
+      .filter((b) => b.y < HUD_TOP + 3 * (HUD_H + 4));
+    return { hard, soft };
+  }
+
   // Where the HUD's frames go, in scene px from the top left: { sign, strip,
   // stage } boxes { x, y, w, h } (stage null while the fight does not
-  // show), whether the sign has its title and where its things go
+  // run: `fight`, see fightRuns; it shows in every view), whether the sign has its title and where its things go
   // (signPlan), the panels' top, and what the sign and the strip hold. They never overlap: the
   // sign keeps the layout's inset and the strip HUD_EDGE from the right; the
   // stage section is centred, moved aside as far as it must be. Tried in turn
@@ -3849,14 +3968,22 @@ export default class RaidParty extends View {
   // then wraps into rows as the scene narrows (and as a last resort above it
   // too). The panels open under the sign (raised just enough for the
   // tallest to fit, should a wrapped sign leave too little room).
+  // In town (from HUD_NARROW wide) the stage section keeps clear of the
+  // stations (with their tags and hover arrows: townBlocks), first of
+  // everyone's drawn spot too, taking its compact width (stageCompactWidth)
+  // where the full one does not fit; an arrangement with the strip clear of
+  // the stations too is preferred. Only where nothing fits is it placed as
+  // anywhere else.
   hudLayout(W, list, fight) {
     const inset = props()?.inset ?? 84;
     const right = W - HUD_EDGE;
     const counts = tally(list);
     const spec = this.signSpec(list);
-    // the map (the stage picker), left of the gear, in town or a raid, from HUD_NARROW wide (its card needs the room)
-    const map = W >= HUD_NARROW;
-    const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + (map ? 34 + MAP_GAP : 0) + 34 + 2;
+    // the map (the stage picker), left of the gear, in town or the raid (not
+    // on the board), from HUD_NARROW wide (its card needs the room); the
+    // board chip, left of them, at any width (the board fits any)
+    const map = W >= HUD_NARROW && this.view !== "board";
+    const stripW = 2 * FRAME + 6 + counts.reduce((x, t) => x + t.w + 8, 0) + 34 + MAP_GAP + (map ? 34 + MAP_GAP : 0) + 34 + 2;
     const stageW = fight ? this.stageWidth(W) : 0;
     const box = (x, y, w, h = HUD_H) => ({ x, y, w, h });
     const across = (b, y, h) => b.y < y + h && y < b.y + b.h; // shares rows with y..y+h
@@ -3874,22 +4001,43 @@ export default class RaidParty extends View {
             { titled: false, strip: 2, stage: 2 },
             { titled: false, strip: 2, stage: 2, wrap: true },
           ];
-    const place = (t, force) => {
+    // `blocks`: boxes to keep the stage section (and the strip, `hard`) clear of, 4px round
+    const meets = (b, list) => list.some((o) => o.x < b.x + b.w + 4 && b.x - 4 < o.x + o.w && o.y < b.y + b.h + 4 && b.y - 4 < o.y + o.h);
+    const place = (t, force, blocks = null) => {
       const plan = this.signPlan(spec, t.titled, t.wrap ? wrap : null);
       const sign = box(inset, HUD_TOP, plan.w, plan.h);
       const strip = box(right - stripW, t.strip === 1 ? HUD_TOP : sign.y + sign.h + 4, stripW);
       if (!force && (sign.x + sign.w > right || !apart(sign, strip))) return null;
+      if (blocks?.strip && meets(strip, blocks.hard)) return null;
       let stage = null;
       if (fight) {
         const y = t.stage === 1 ? HUD_TOP : Math.max(sign.y + sign.h, t.strip === 1 ? strip.y + strip.h : 0) + 4;
         const lo = across(sign, y, HUD_H) ? sign.x + sign.w + HUD_GAP : HUD_EDGE;
         const hi = across(strip, y, HUD_H) ? strip.x - HUD_GAP : right;
-        if (!force && hi - lo < stageW) return null;
-        stage = box(Math.round(clamp(W / 2 - stageW / 2, lo, Math.max(lo, hi - stageW))), y, stageW);
+        if (!blocks) {
+          if (!force && hi - lo < stageW) return null;
+          stage = box(Math.round(clamp(W / 2 - stageW / 2, lo, Math.max(lo, hi - stageW))), y, stageW);
+        } else {
+          // the place nearest the middle clear of them, full width first, then compact
+          const all = [...blocks.hard, ...blocks.soft];
+          for (const w of [stageW, this.stageCompactWidth()]) {
+            const mid = W / 2 - w / 2;
+            const xs = [mid, ...all.flatMap((b) => [b.x + b.w + 5, b.x - w - 5])].map((x) => Math.round(clamp(x, lo, Math.max(lo, hi - w))));
+            const x = xs.filter((x) => x + w <= hi && !meets(box(x, y, w), all)).sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid))[0];
+            if (x !== undefined) {
+              stage = box(x, y, w);
+              break;
+            }
+          }
+          if (!stage) return null;
+        }
       }
       return { sign, strip, stage, titled: t.titled, plan };
     };
-    const got = tries.reduce((found, t) => found ?? place(t, false), null) ?? place(tries[tries.length - 1], true);
+    const town = this.view === "town" && W >= HUD_NARROW ? this.townBlocks() : null;
+    // clear of everyone and the strip clear of the stations too; then the stations only; then the section alone so
+    const passes = town ? [true, false].flatMap((strip) => [{ ...town, strip }, { hard: town.hard, soft: [], strip }]).concat([null]) : [null];
+    const got = passes.reduce((found, blocks) => found ?? tries.reduce((f, t) => f ?? place(t, false, blocks), null), null) ?? place(tries[tries.length - 1], true);
     const under = got.sign.y + got.sign.h + 4;
     const panelTop = Math.max(HUD_TOP, Math.min(under, Math.max(FLOOR_H, this.size.height) - PANEL_MAX_H - 2));
     return { ...got, inset, counts, spec, panelTop, map };
@@ -3899,8 +4047,10 @@ export default class RaidParty extends View {
   // title in gold, the counts as chips (an icon and a number in the lettering,
   // each opening its panel and sunk while it is open; the star gold on a faint
   // gold square while there are points to spend, dimmed when there are none)
-  // and the raid button, red "Return to town" in a raid and slate "Start Raid"
-  // out of one. In a row, or wrapped into rows on a narrow scene (signPlan).
+  // and the button between the town and the raid, red "To town" in the raid
+  // and slate "To the raid" in town; on the board, the one of them the board
+  // chip does not go back to (see base). Neither starts nor stops anything
+  // (the fight runs in every view: see setView). In a row, or wrapped into rows on a narrow scene (signPlan).
   // Drawn on the floor, over the night's dark, like the strip.
   sign(list, hud) {
     const { spec, sign: b, plan } = hud;
@@ -3929,9 +4079,9 @@ export default class RaidParty extends View {
           }),
       );
     }
-    const tone = this.battle ? RAID_BUTTON.on : RAID_BUTTON.off;
+    const tone = this.base() === "raid" ? RAID_BUTTON.on : RAID_BUTTON.off;
     const button = div()
-      .id("idle-rpg-battle-toggle")
+      .id("idle-rpg-view-toggle")
       .w(spec.buttonW)
       .h(CHIP_H)
       .border(2)
@@ -3942,14 +4092,7 @@ export default class RaidParty extends View {
       .active((st) => st.bg(tone.down))
       .on_mouse_down("left", (_e, cx) => cx.stop_propagation())
       .on_click((_e, cx) => {
-        this.battle = !this.battle;
-        this.clearEffects(); // statuses stay with the fight they were put on
-        // the panels open from different places in a raid and out of one
-        this.codex = this.settingsOpen = this.mapOpen = this.foeCard = false;
-        this.skillsOpen = this.shopOpen = null;
-        if (this.battle) this.fight(); // someone to fight straight away
-        this.save();
-        this.wake(cx);
+        this.setView(this.base() === "raid" ? "town" : "raid");
         cx.notify();
       })
       // a lighter top edge and a darker bottom one over the face, so they follow it under the pointer
@@ -3988,6 +4131,8 @@ export default class RaidParty extends View {
     const m = this.monster;
     const dead = m.hp <= 0;
     const { stage } = this.progress;
+    // compact (in town, see hudLayout): no farm mark, no "(PAUSED)", news only where it fits
+    const compact = b.w < this.stageWidth(Math.max(320, this.size.width));
     const farming = Boolean(this.progress.farming);
     const limit = stageTime(m.stage);
     const running = !dead && this.clockRuns();
@@ -4016,7 +4161,7 @@ export default class RaidParty extends View {
     const kids = [arrow("prev", stage - 1, x0), div().absolute().left(x).top(y0 + 4).child(letterText(words, "gold"))];
     x += letterW(words) + 2;
     // farming after a failed attempt: kills repeat this stage until the next arrow is pressed
-    if (farming) {
+    if (farming && !compact) {
       kids.push(
         div()
           .id("idle-rpg-stage-farm")
@@ -4031,9 +4176,10 @@ export default class RaidParty extends View {
     const clock = dead ? "" : clockText(this.left);
     const barW = b.w - 2 * x0;
     // what just happened, in the time's place: the first wording that fits
-    const news = this.stageNews();
+    const found = this.stageNews();
+    const room = right - (farming && !compact ? x + 4 + letterW(LABELS.farm) : x - 2) - 8;
+    const news = compact && found && !found.texts.some((t) => letterW(t) <= room) ? null : found;
     if (news) {
-      const room = right - (farming ? x + 4 + letterW(LABELS.farm) : x - 2) - 8;
       const text = news.texts.find((t) => letterW(t) <= room) ?? news.texts[news.texts.length - 1];
       kids.push(
         div()
@@ -4050,7 +4196,7 @@ export default class RaidParty extends View {
     const hide = (el) => (news?.fading === undefined ? el : el.opacity(news.fading ? 1 : 0).when(news.fading, (e) => e.transition("opacity", { duration: 200, delay: TIMES_UP_MS - TIMES_UP_FRESH, easing: "ease-out" })));
     // the time only runs while anyone is in the fight: standing still, it says
     // so (not while "Time's up!" shows: it comes back on the render after)
-    if (!dead && !running && news?.fading === undefined) {
+    if (!dead && !running && !compact && news?.fading === undefined) {
       kids.push(
         div()
           .id("idle-rpg-stage-paused")
@@ -4117,8 +4263,10 @@ export default class RaidParty extends View {
 
   // The strip, top right (see hudLayout), in a frame like the sign's: an icon
   // for each status with agents in it, in the order of tally, with how many on
-  // a badge at its bottom-right corner in the pixel font, then from HUD_NARROW
-  // wide (`map`) the map, a chip that opens the stage picker, and the gear, a
+  // a badge at its bottom-right corner in the pixel font, then the board
+  // chip (sunk while the board shows: it opens it, and again goes back to the
+  // view it was opened from), from HUD_NARROW wide in town or the raid
+  // (`map`) the map, a chip that opens the stage picker, and the gear, a
   // chip that opens the settings menu. Drawn on the floor over the night's dark and
   // under the cards. `b` is its box: beside the sign, or under it below
   // HUD_NARROW wide.
@@ -4157,6 +4305,16 @@ export default class RaidParty extends View {
         this.openMap(!this.mapOpen);
         cx.notify();
       });
+    const onBoard = this.view === "board";
+    const board = chip("idle-rpg-board-chip", 34, onBoard, [image(src("icons/board.png")).w(30).h(30)], { h: 34, px: 0 })
+      .absolute()
+      .left(b.w - FRAME - 2 - 34 - (map ? 2 : 1) * (MAP_GAP + 34))
+      .top(FRAME)
+      .tooltip(onBoard ? "Back" : "Board")
+      .on_click((_e, cx) => {
+        this.setView(onBoard ? this.back : "board");
+        cx.notify();
+      });
     return div()
       .id("idle-rpg-hud")
       .on_mouse_down("left", (_e, cx) => this.framePress(cx))
@@ -4165,7 +4323,96 @@ export default class RaidParty extends View {
       .top(b.y - this.wallH)
       .w(b.w)
       .h(b.h)
-      .children([...framePieces(b.w, b.h), ...icons, ...(map ? [picker] : []), gear]);
+      .children([...framePieces(b.w, b.h), ...icons, board, ...(map ? [picker] : []), gear]);
+  }
+
+  // Where the board goes (see board): { x, y, w, h } in scene px, filling
+  // the scene under the HUD's lowest frame (HUD_GAP under it), HUD_EDGE from
+  // the sides and the bottom, so it never meets the HUD.
+  boardBox(hud, W) {
+    const H = Math.max(FLOOR_H, this.size.height);
+    const y = Math.max(...[hud.sign, hud.strip, hud.stage].filter(Boolean).map((b) => b.y + b.h)) + HUD_GAP;
+    return { x: HUD_EDGE, y, w: W - 2 * HUD_EDGE, h: Math.max(0, H - y - HUD_EDGE) };
+  }
+
+  // The board, while it shows (see setView): a HUD frame filling the scene
+  // under the HUD (boardBox) with three columns side by side (BOARD_COLUMNS),
+  // each titled in gold in the lettering over a darker well holding the
+  // cards whose `column` it is (boardCard), in the order given, stacked from
+  // the top and scrolling once they overflow it. With no card at all, "No
+  // work found yet" in grey under the titles. It draws nothing it has no
+  // data for and is read-only: a press on it is one on a frame (no walk).
+  // `cards`: [{ id, column, repo, branch, project, tickets: [], prs: [{ url,
+  // number }], agents: [{ address, status }] }], `this.cards`, which nothing
+  // fills yet.
+  board(hud, W, cards = this.cards) {
+    const b = this.boardBox(hud, W);
+    const x0 = FRAME + BOARD.pad;
+    const colW = Math.max(0, Math.floor((b.w - 2 * x0 - 2 * BOARD.gap) / 3));
+    const wellTop = x0 + LETTER_H + 4;
+    const wellH = Math.max(0, b.h - wellTop - x0);
+    const cardW = Math.max(0, colW - 2 * BOARD.inset);
+    const list = Array.isArray(cards) ? cards.filter((c) => c && typeof c === "object") : [];
+    const kids = [];
+    BOARD_COLUMNS.forEach((col, i) => {
+      const left = x0 + i * (colW + BOARD.gap);
+      const title = col.titles.find((t) => letterW(t) <= colW - 2 * BOARD.inset) ?? col.titles[col.titles.length - 1];
+      const mine = list.filter((c) => c.column === col.id);
+      const fullH = BOARD.inset + mine.length * (BOARD.card + BOARD.cardGap);
+      kids.push(
+        letterText(title, "gold", { left: left + BOARD.inset, top: x0 }).id(`idle-rpg-board-title-${col.id}`),
+        div()
+          .id(`idle-rpg-board-${col.id}`)
+          .absolute()
+          .left(left)
+          .top(wellTop)
+          .w(colW)
+          .h(wellH)
+          .bg(FRAME_COLOURS.dark)
+          .overflow_y_scroll()
+          .child(
+            div()
+              .relative()
+              .w(colW)
+              .h(Math.max(wellH, fullH))
+              .children(mine.map((c, k) => this.boardCard(c, cardW).absolute().left(BOARD.inset).top(BOARD.inset + k * (BOARD.card + BOARD.cardGap)))),
+          ),
+      );
+    });
+    if (!list.some((c) => BOARD_COLUMNS.some((col) => col.id === c.column)))
+      kids.push(div().id("idle-rpg-board-empty").absolute().left(Math.round((b.w - letterW(LABELS.noWork)) / 2)).top(wellTop + 12).child(letterText(LABELS.noWork, "grey")));
+    return div()
+      .id("idle-rpg-board")
+      .absolute()
+      .left(b.x)
+      .top(b.y)
+      .w(b.w)
+      .h(b.h)
+      .on_mouse_down("left", (_e, cx) => this.framePress(cx))
+      .children([...framePieces(b.w, b.h), ...kids]);
+  }
+
+  // One card on the board, `w` wide and BOARD.card high, for the caller to
+  // place: on a plate like a name tag's, the picture of the first of its
+  // agents with a class (none without one), then its repo and branch
+  // ("REPO/BRANCH") in the lettering, cut to the room (letterFit: they are
+  // text from outside). Its project, tickets, pull requests and the rest of
+  // its agents are for a later version.
+  boardCard(card, w) {
+    const who = (Array.isArray(card.agents) ? card.agents : []).find((a) => CLASSES.includes(this.sprites[a?.address]));
+    const cls = who ? this.sprites[who.address] : null;
+    const h = BOARD.card;
+    const textX = cls ? 4 + BOARD.pic + 4 : 6;
+    const line = [card.repo, card.branch].filter((t) => typeof t === "string" && t.trim()).join("/");
+    const fit = letterFit(line, Math.max(0, Math.floor((w - textX - 4) / 2)));
+    return div()
+      .id(`idle-rpg-board-card-${card.id}`)
+      .w(w)
+      .h(h)
+      .bg(FRAME_COLOURS.outline)
+      .child(div().absolute().left(2).top(2).w(Math.max(0, w - 4)).h(h - 4).bg(FRAME_COLOURS.fill))
+      .when(Boolean(cls), (el) => el.child(div().absolute().left(4).top((h - BOARD.pic) / 2).child(this.sprite(cls, "stand", BOARD.pic, BOARD.pic))))
+      .child(letterText(fit, "white", { left: textX, top: (h - LETTER_H) / 2 }));
   }
 
   // Opens or closes the stage picker, closing the other panels and any card;
@@ -4202,8 +4449,7 @@ export default class RaidParty extends View {
   // ten stages, a grid of numbered chips, the stage being fought in gold and
   // sunk, a stage the arrows could go to white, and one they could not grey
   // and dead (canSelectStage, the arrows' own rule). Picking one does what the
-  // arrows do (toStage) and closes it; in town that sets the stage the next
-  // raid starts at (toStage needs no fight: the boss is fresh, nothing ticks).
+  // arrows do (toStage) and closes it, in town as in the raid (the fight runs in both).
   mapCard(strip) {
     if (this.mapAt !== this.progress.stage) this.mapFollow(); // the stage changed under it: follow it
     // (read as the rules read them, so no odd value in memory makes an odd page)
@@ -4547,8 +4793,8 @@ export default class RaidParty extends View {
     this.picking = false;
   }
 
-  // Between raids the rampart has three stations, each opening one of the
-  // panels the sign's chips open during one: the book on the table is the
+  // In town the rampart has three stations, each opening one of the
+  // panels the sign's chips open in the raid and on the board: the book on the table is the
   // codex, the merchant's stall the shop, and the training dummy the skills
   // and training (the skill points waiting to be spent are on the sign's star). Returns elements for the
   // floor; they stand at the back, between the banners and torches.

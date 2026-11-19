@@ -52,7 +52,7 @@ export function savedState(version, { now = Date.now(), sprites = {}, extra = {}
     spots: { t1: { x: 250, y: 64 } },
     sprites: { you: "wizard", t1: "warrior", ...sprites },
     seen: { t1: now - 1000 },
-    battle: true,
+    battle: true, // the raid shown (every version so far: `view` came in with the board, see loadState)
   };
   if (version === 0) return { ...base, ...extra }; // no version, no progress
   const v = { version, ...base, slain: 42, gold: 120, kills: { slime: 10, ogre: 7, dragon: 3 }, xp: { ...XP } };
@@ -82,10 +82,12 @@ export function savedState(version, { now = Date.now(), sprites = {}, extra = {}
  * `classes` in turn (all `status`); you are `you`. Every class is at `level`
  * with `attack` and `health` training; `weapons`/`armours`/`hats` put items on
  * ({ <class>: id }, owned too), `decor` the town's ({ owned: [id], equipped: id },
- * none by default); `stage`/`best`/`farming`/`gold`/`settings` as saved.
+ * none by default); `stage`/`best`/`farming`/`gold`/`settings` as saved;
+ * `view` the view shown ("town", "raid" or "board"; saves before the board had `battle` instead),
+ * `back` the one the board's chip goes back to (left out unless given: loadState's default, the raid).
  * `statuses` gives agents their own status in turn (t1's first; `status` past its end).
  */
-export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer", status = "working", statuses = [], stage = 1, best = stage, farming = false, gold = 0, slain = 0, level = 1, attack = 0, health = 0, skills = {}, weapons = {}, armours = {}, hats = {}, decor = null, settings = {}, battle = true, youAt = { x: 154, y: 16 }, now = Date.now() } = {}) {
+export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer", status = "working", statuses = [], stage = 1, best = stage, farming = false, gold = 0, slain = 0, level = 1, attack = 0, health = 0, skills = {}, weapons = {}, armours = {}, hats = {}, decor = null, settings = {}, view = "raid", back, youAt = { x: 154, y: 16 }, now = Date.now() } = {}) {
   const keys = classes.map((_, i) => `t${i + 1}`);
   const xp = 100 * ((level - 1) * level) / 2; // classLevel's curve: level n from 100 x n(n-1)/2
   const CLASSES = ["wizard", "healer", "warrior", "archer"];
@@ -105,7 +107,8 @@ export function raid({ classes = ["warrior", "archer", "wizard"], you = "healer"
     spots: {},
     sprites: { you, ...Object.fromEntries(keys.map((k, i) => [k, classes[i]])) },
     seen: Object.fromEntries(keys.map((k) => [k, now])),
-    battle,
+    view,
+    ...(back !== undefined ? { back } : {}),
     stage,
     best,
     farming,

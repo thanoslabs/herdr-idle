@@ -183,27 +183,28 @@ describe("everyone down at once", () => {
   });
 });
 
-describe("no free revive: leaving and coming back within the attempt", () => {
+describe("no free revive: leaving and coming back within the attempt (a view switch leaves nobody)", () => {
   const allDown = (h) => Object.keys(h.view.party.members).length > 0 && up(h.view.party).length === 0;
   // Each knocked-out member's rest left, in ticks.
   const rests = (v) => Object.fromEntries(Object.entries(v.view.party.members).map(([k, m]) => [k, m.down - v.view.clock]));
 
-  test("Return to town and Start Raid again: still down, with the rest they had left, the boss and the clock as they were", async () => {
+  test("to town and back: the fight runs on in town as it would have in the raid, nobody up early", async () => {
     const v = await mountRaid(DOOMED);
+    const twin = await mountRaid(DOOMED); // the same seed, left on the raid
     v.until(allDown, 120000, 250);
+    twin.advance(v.now - twin.now);
     const before = rests(v);
-    const [hp, left] = [v.view.monster.hp, v.view.left];
-    v.click("idle-rpg-battle-toggle");
-    v.advance(5000);
-    assert.deepEqual(Object.keys(v.view.party.members), [], "out of the raid nobody is in the fight");
-    assert.deepEqual([v.view.monster.hp, v.view.left], [hp, left], "the boss and the time as they were");
-    v.click("idle-rpg-battle-toggle");
-    v.advance(1750);
-    assert.ok(allDown(v), "nobody got up");
-    const after = rests(v);
-    for (const [k, r] of Object.entries(before)) assert.ok(after[k] >= r - 8 && after[k] <= r, `${k}: ${after[k]} ticks left against ${r}`);
-    assert.equal(v.view.monster.hp, hp);
-    assert.ok(v.view.left < left && v.view.left >= left - 1750, "the time runs on with them back in the fight");
+    v.click("idle-rpg-view-toggle");
+    assert.equal(v.view.view, "town");
+    for (const ms of [5000, 1750]) {
+      v.advance(ms);
+      twin.advance(ms);
+      assert.deepEqual(rests(v), rests(twin), "the same rests as in the raid");
+      assert.deepEqual([v.view.monster.hp, v.view.left, v.view.clock], [twin.view.monster.hp, twin.view.left, twin.view.clock], "the boss and the time as in the raid");
+      v.click("idle-rpg-view-toggle");
+    }
+    assert.equal(v.view.view, "town");
+    for (const [k, r] of Object.entries(before)) assert.ok(rests(v)[k] < r, `${k}'s rest ran on in town`);
   });
 
   test("a scene too narrow for the fight, then wide again: still down", async () => {
@@ -240,9 +241,9 @@ describe("no free revive: leaving and coming back within the attempt", () => {
   test("a new attempt forgets it: a fresh boss brings everyone back at full HP", async () => {
     const v = await mountRaid({ ...DOOMED, best: 31 });
     v.until(allDown, 120000, 250);
-    v.click("idle-rpg-battle-toggle");
+    v.click("idle-rpg-view-toggle");
     v.advance(1000);
-    v.click("idle-rpg-battle-toggle");
+    v.click("idle-rpg-view-toggle");
     v.click("idle-rpg-stage-next"); // a fresh attempt at stage 31
     v.advance(1000);
     for (const m of Object.values(v.view.party.members)) assert.deepEqual([m.down, m.hp === m.maxHp], [null, true]);

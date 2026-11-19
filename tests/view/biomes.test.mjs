@@ -45,21 +45,21 @@ describe("where a raid takes place", () => {
 
   test("the town is always the rampart: its mountains, wall, planks, banners, torches, table and barrel", async () => {
     for (const stage of [1, 15, 25, 35, 45]) {
-      const town = await mountRaid({ stage, battle: false });
+      const town = await mountRaid({ stage, view: "town" });
       assert.equal(backdrop(town), "rampart", `town at stage ${stage}`);
       for (const art of ["scene/mountains.png", "scene/wall.png", "scene/banner.png", "scene/torch.png", "stations/table/idle.png", "scene/barrel.png"]) assert.ok(drawsArt(town, art), art);
       assert.ok(!town.all((n) => n.type === "image" && /\/scene\/(forest|hills|caves|hell)\//.test(n.src)).length, "nothing of a biome");
       // and ending a raid in a biome goes back to it
       const v = await mountRaid({ stage });
-      v.click("idle-rpg-battle-toggle");
+      v.click("idle-rpg-view-toggle");
       assert.equal(backdrop(v), "rampart");
-      v.click("idle-rpg-battle-toggle");
+      v.click("idle-rpg-view-toggle");
       assert.equal(backdrop(v), biomeOf(stage));
     }
   });
 
   test("with nobody in, the empty scene's line names no rampart in a raid's biome", async () => {
-    const town = await mountView({ saved: raid({ battle: false }).saved, agents: [] });
+    const town = await mountView({ saved: raid({ view: "town" }).saved, agents: [] });
     assert.ok(town.text().includes(LABELS.quietTown));
     for (const stage of [1, 21]) {
       const v = await mountView({ saved: raid({ stage }).saved, agents: [] });
@@ -96,7 +96,7 @@ describe("where a raid takes place", () => {
         const biome = biomeOf(stage);
         assert.ok(drawsArt(v, biomeArt(biome, "ceiling")));
         // one standing where each of the rampart's torches does
-        const town = await mountRaid({ stage, battle: false });
+        const town = await mountRaid({ stage, view: "town" });
         const centres = (h, art) => h.all((n) => n.type === "image" && n.src.endsWith(art)).map((el) => h.box(el).x + h.box(el).w / 2);
         assert.deepEqual(centres(v, biomeArt(biome, light)), centres(town, "scene/torch.png"));
         assert.equal(centres(v, biomeArt(biome, light)).length, 2, "two at 1280px");
@@ -196,7 +196,7 @@ describe("the map in the strip", () => {
   test("left of the gear, the gear's size, 4px apart, in a raid and in town", async () => {
     for (const [W, statuses] of [[640, ["working"]], [800, ["blocked", "working", "done", "idle"]], [1280, ["working", "idle"]], [2400, []]])
       for (const battle of [true, false]) {
-        const { saved } = raid({ battle });
+        const { saved } = raid({ view: battle ? "raid" : "town" });
         const v = await mountView({ saved, agents: statuses.map((s, i) => agent(`a${i}`, s)), width: W });
         const map = v.box("idle-rpg-map");
         const gear = v.box("idle-rpg-gear");
@@ -213,7 +213,7 @@ describe("the map in the strip", () => {
 
   test("not on a scene under 640px wide (its card needs the room), in town or a raid", async () => {
     for (const battle of [true, false]) {
-      const v = await mountRaid({ battle }, { width: 639 });
+      const v = await mountRaid({ view: battle ? "raid" : "town" }, { width: 639 });
       assert.ok(!v.has("idle-rpg-map"));
       assert.equal(v.view.hudBox.map, false);
     }
@@ -221,7 +221,7 @@ describe("the map in the strip", () => {
 
   test("the HUD still fits with the map in town: no frame overlaps or leaves the scene, 640px up, any counts", async () => {
     const widths = THOROUGH ? Array.from({ length: 1441 }, (_, i) => 640 + i) : Array.from({ length: 91 }, (_, i) => 640 + i * 16);
-    const v = await mountRaid({ battle: false });
+    const v = await mountRaid({ view: "town" });
     const view = v.view;
     const problems = [];
     for (const sts of [[], ["working"], ["blocked", "working", "done", "idle"]])
@@ -286,7 +286,7 @@ describe("opening and closing the picker", () => {
     assert.deepEqual(open(v), [CARD]);
     v.click("idle-rpg-map-stage-5");
     assert.deepEqual(open(v), []);
-    for (const close of [() => v.clickFloor(500, 100), () => v.click("idle-rpg-sign"), () => v.click("idle-rpg-battle-toggle"), () => v.click("idle-rpg-battle-toggle")]) {
+    for (const close of [() => v.clickFloor(500, 100), () => v.click("idle-rpg-sign"), () => v.click("idle-rpg-view-toggle"), () => v.click("idle-rpg-view-toggle")]) {
       v.click("idle-rpg-map");
       assert.deepEqual(open(v), [CARD]);
       close();
@@ -294,10 +294,10 @@ describe("opening and closing the picker", () => {
     }
     // ending the raid with it open, then starting one again: still closed
     v.click("idle-rpg-map");
-    v.click("idle-rpg-battle-toggle");
-    assert.equal(v.view.battle, false);
-    v.click("idle-rpg-battle-toggle");
-    assert.equal(v.view.battle, true);
+    v.click("idle-rpg-view-toggle");
+    assert.equal(v.view.view, "town");
+    v.click("idle-rpg-view-toggle");
+    assert.equal(v.view.view, "raid");
     assert.deepEqual(open(v), []);
   });
 
@@ -313,7 +313,7 @@ describe("opening and closing the picker", () => {
 
   test("too narrow a scene closes it, and it stays closed once wider again, with no render loop", async () => {
     for (const battle of [true, false]) {
-      const v = await mountRaid({ stage: 3, best: 7, battle });
+      const v = await mountRaid({ stage: 3, best: 7, view: battle ? "raid" : "town" });
       v.click("idle-rpg-map");
       assert.ok(v.has(CARD));
       const renders = v.renders;
@@ -510,18 +510,20 @@ describe("what the picker shows", () => {
     assert.deepEqual(d.ids("idle-rpg-map-stage-")[0], "idle-rpg-map-stage-41");
   });
 
-  test("in town: picking sets the stage as the arrows would in a raid, without starting one; the raid then starts there", async () => {
-    const v = await mountRaid({ stage: 6, best: 25, farming: true, battle: false });
+  test("in town: picking moves the fight there as the arrows do (it runs in town too); the raid view shows it", async () => {
+    const v = await mountRaid({ stage: 6, best: 25, farming: true, view: "town" });
     const saves = v.saves.length;
     v.click("idle-rpg-map");
     v.click("idle-rpg-map-biome-2");
     v.click("idle-rpg-map-stage-23");
-    assert.deepEqual([v.view.progress.stage, v.view.progress.farming, v.view.battle, v.saves.length - saves], [23, false, false, 1]);
+    assert.deepEqual([v.view.progress.stage, v.view.progress.farming, v.view.view, v.saves.length - saves], [23, false, "town", 1]);
     assert.equal(v.stored.stage, 23);
     assert.equal(backdrop(v), "rampart", "the town stays the rampart");
-    assert.equal(v.view.ticking, false, "nothing fights");
-    v.click("idle-rpg-battle-toggle");
-    assert.deepEqual([v.view.monster.stage, v.view.monster.hp], [23, v.view.monster.maxHp]);
+    assert.deepEqual([v.view.monster.stage, v.view.monster.hp], [23, v.view.monster.maxHp], "a fresh attempt there");
+    v.advance(5000);
+    assert.ok(v.view.monster.hp < v.view.monster.maxHp, "fought in town");
+    v.click("idle-rpg-view-toggle");
+    assert.equal(v.view.monster.stage, 23);
     assert.equal(backdrop(v), "caves");
   });
 
@@ -529,10 +531,10 @@ describe("what the picker shows", () => {
     const widths = THOROUGH ? Array.from({ length: 141 }, (_, i) => 640 + i * 32) : [640, 656, 700, 800, 1024, 1280, 1920, 3456];
     const heights = THOROUGH ? Array.from({ length: 34 }, (_, i) => 230 + i * 10) : [230, 296, 360, 560];
     const problems = [];
-    let lowStrip = 0; // sizes where the strip is in the second row (the 640x230 case)
-    for (const [stage, best, statuses, battle, gold] of [[12, 45, ["working"], true, 0], [999, 1000, ["blocked", "working", "done", "idle"], true, 1234], [999, 1000, ["blocked", "working", "done", "idle"], false, 9.9e15]]) {
-      const { saved } = raid({ stage, best, battle, gold, slain: gold });
-      const v = await mountView({ saved, agents: statuses.map((s, i) => agent(`a${i}`, s)) });
+    let lowStrip = 0; // sizes where the strip is in the second row (from 640 wide, with the sign further in)
+    for (const [stage, best, statuses, battle, gold, inset] of [[12, 45, ["working"], true, 0, 84], [999, 1000, ["blocked", "working", "done", "idle"], true, 1234, 120], [999, 1000, ["blocked", "working", "done", "idle"], false, 9.9e15, 84]]) {
+      const { saved } = raid({ stage, best, view: battle ? "raid" : "town", gold, slain: gold });
+      const v = await mountView({ saved, agents: statuses.map((s, i) => agent(`a${i}`, s)), inset });
       for (const h of heights)
         for (const w of widths) {
           v.resize(w, h);

@@ -89,7 +89,7 @@ describe("the night's darkness", () => {
   for (const battle of [true, false])
     test(`covers the whole width, every pixel once, ${battle ? "in a raid" : "in town (the campfire's pool cut in)"}`, async () => {
       const found = await sweep(
-        () => mountRaid({ battle }),
+        () => mountRaid({ view: battle ? "raid" : "town" }),
         (v, w) => {
           const spans = gloomSpans(v).sort((a, b) => a[0] - b[0]);
           const out = [];
@@ -155,7 +155,7 @@ describe("the night's darkness", () => {
 // layers of colour that span it: the town's rampart, and in a raid each biome
 // (stages 1, 11, 21 and 31).
 const BACKDROPS = {
-  rampart: { mount: { battle: false }, tiles: ["scene/stars.png", "scene/mountains.png", "scene/wall.png", "scene/floor.png"], spans: ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"] },
+  rampart: { mount: { view: "town" }, tiles: ["scene/stars.png", "scene/mountains.png", "scene/wall.png", "scene/floor.png"], spans: ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"] },
   forest: { mount: { stage: 1 }, tiles: ["scene/stars.png", "scene/forest/far.png", "scene/forest/mid.png", "scene/forest/ground.png"], spans: ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"] },
   hills: { mount: { stage: 11 }, tiles: ["scene/stars.png", "scene/hills/far.png", "scene/hills/mid.png", "scene/hills/ground.png"], spans: ["idle-rpg-day", "idle-rpg-night-sky", "idle-rpg-stars"] },
   caves: { mount: { stage: 21 }, tiles: ["scene/caves/ceiling.png", "scene/caves/far.png", "scene/caves/mid.png", "scene/caves/ground.png"], spans: ["idle-rpg-vault"] },
@@ -232,7 +232,7 @@ describe("staying inside the scene", () => {
 
   test("the campfire's visible pixels", { todo: "the campfire's flames are cut by 2px at the lowest scene (230px; fine from 232)" }, async () => {
     const found = await sweep(
-      () => mountRaid({ battle: false }),
+      () => mountRaid({ view: "town" }),
       (v, w, h) => v.all((n) => n.type === "image" && n.src.includes("/campfire/")).flatMap((el) => outside("the campfire", visible(v, el), w, h)),
     );
     assert.ok(!found.length, summary(found));
@@ -240,7 +240,7 @@ describe("staying inside the scene", () => {
 
   test("the stations (book, dummy, stall)", { todo: "the stations stand at fixed x (the stall at 304..408): on a scene narrower than 408px the stall is cut off (by 88px at 320)" }, async () => {
     const found = await sweep(
-      () => mountRaid({ battle: false }),
+      () => mountRaid({ view: "town" }),
       (v, w, h) => ["codex", "skills", "shop"].flatMap((s) => imagesUnder(v, `idle-rpg-station-${s}-art`).flatMap((el) => outside(`the ${s} station`, visible(v, el), w, h))),
     );
     assert.ok(!found.length, summary(found));
@@ -301,7 +301,7 @@ describe("staying inside the scene", () => {
     const found = [];
     const cut = new Set();
     for (const battle of [true, false]) {
-      if (v.view.battle !== battle) v.click("idle-rpg-battle-toggle");
+      if ((v.view.view === "raid") !== battle) v.click("idle-rpg-view-toggle");
       if (!v.has("idle-rpg-settings")) v.click("idle-rpg-gear");
       for (const h of HEIGHTS)
         for (const w of [...new Set([...WIDTHS, ...range(320, 416, 8)])]) {
@@ -323,13 +323,14 @@ describe("staying inside the scene", () => {
 
   // A card goes clear of the HUD's frames where it can (above, beside either
   // side, or either lowered under them): six agents' cards at their default
-  // spots meet a frame only in the lowest raid (146px cards before the Health
+  // spots meet a frame only in the lowest scene (in town fewer: there the
+  // stage section keeps clear of the stations and everyone's spot) (146px cards before the Health
   // row met them 36 times on this sweep: town 296 10, raid 230 9, 296 12, 360 5).
   test("an agent's card keeps clear of the HUD's frames where there is a place", async () => {
     const meet = (a, b) => a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
     const n = {};
     for (const battle of [false, true]) {
-      const v = await mountRaid({ battle, classes: ["warrior", "archer", "wizard", "healer", "archer", "wizard"], statuses: Array(6).fill("idle") });
+      const v = await mountRaid({ view: battle ? "raid" : "town", classes: ["warrior", "archer", "wizard", "healer", "archer", "wizard"], statuses: Array(6).fill("idle") });
       for (const h of [230, 296, 360, 420, 480, 560])
         for (const w of [640, 1280, 1920]) {
           v.resize(w, h);
@@ -342,7 +343,7 @@ describe("staying inside the scene", () => {
           }
         }
     }
-    assert.deepEqual(n, { "raid 230": 6 });
+    assert.deepEqual(n, { "raid 230": 6, "town 230": 2 });
   });
 
   // A card's height as main.js estimates it (infoCard: the agent's 164, yours
@@ -351,7 +352,7 @@ describe("staying inside the scene", () => {
   test("the cards (yours and an agent's), with the class picker open or not", async () => {
     for (const battle of [true, false]) {
       const found = await sweep(
-        () => mountRaid({ classes: ["archer", "wizard"], battle }),
+        () => mountRaid({ classes: ["archer", "wizard"], view: battle ? "raid" : "town" }),
         (v, w, h) => {
           const out = [];
           for (const who of ["critter-t2", "idle-rpg-you"])
@@ -390,7 +391,7 @@ describe("nothing hard-coded to a width", () => {
     for (const w of [320, 640, 660, 1280, 5120]) {
       // (a spot behind the campfire, as a drag at a wider width leaves one: at 640-679px the
       // campfire's nearer side is past the right edge, so they stand at its far side)
-      const v = await mountView({ agents: Array.from({ length: 12 }, (_, i) => agent(`a${i}`, "idle")), width: w, saved: { ...raid({ battle: false }).saved, sprites: { you: "archer" }, spots: { a3: { x: 601, y: 40 } } } });
+      const v = await mountView({ agents: Array.from({ length: 12 }, (_, i) => agent(`a${i}`, "idle")), width: w, saved: { ...raid({ view: "town" }).saved, sprites: { you: "archer" }, spots: { a3: { x: 601, y: 40 } } } });
       for (const a of v.world.agents) {
         const s = v.view.at[a.address];
         assert.ok(s.x >= 36 && s.x <= w - 36, `${a.address} at ${s.x} of ${w}`);
