@@ -93,12 +93,18 @@ describe("the quest board's cards", () => {
     assert.deepEqual(v.text(gears), ["WIDGETS", "ACME/GEARS", "FIX/TEETH", "#12"]);
     // the colours: the project gold, the repo white, the branch grey, a pull request green
     assert.deepEqual(v.runs(gears).map((r) => r.colours[0]), ["gold", "white", "grey", "green"]);
-    // each agent a small picture of its class (t1 an archer, t2 a wizard), dimmed while it rests
+    // each agent a small picture of its class (t1 an archer, t2 a wizard), at full brightness
+    // whatever its status, which is a pip of its colour in the corner
     assert.ok(v.images(widgets).some((p) => p.includes("classes/archer/")));
     assert.ok(v.images(gears).some((p) => p.includes("classes/wizard/")));
     const id = (card, t) => `idle-rpg-board-agent-${card.slice("idle-rpg-board-card-".length)}-${t}`;
+    const pipId = (card, t) => `idle-rpg-board-pip-${card.slice("idle-rpg-board-card-".length)}-${t}`;
     assert.equal(v.get(id(widgets, "t1")).style.opacity, 1);
-    assert.equal(v.get(id(gears, "t2")).style.opacity, 0.45, "t2 is idle");
+    assert.equal(v.get(id(gears, "t2")).style.opacity, 1, "t2 is idle, and not dimmed for it");
+    const pip = (card, t) => v.get(pipId(card, t)).kids[0].style.bg;
+    assert.equal(pip(widgets, "t1"), "#ffd166", "working");
+    assert.equal(pip(gears, "t2"), "#9fb4cc", "resting");
+    assert.ok(inside(v.box(pipId(gears, "t2")), v.box(id(gears, "t2"))), "the pip inside the picture");
     assert.match(v.get(id(gears, "t2")).tip, /Resting/);
     assert.match(v.get(id(widgets, "t1")).tip, /Working/);
     // t3's branch merged (the person fetched): completed, once git has been asked (at most once a minute)
@@ -181,6 +187,81 @@ describe("the quest board's cards", () => {
     assert.ok(boxes.at(-1).y > well.y + well.h, "past the well's bottom");
     assert.ok(v.get("idle-rpg-board-progress").kids[0].style.h >= boxes.at(-1).y + boxes.at(-1).h - well.y);
     assert.equal(v.get("idle-rpg-board-progress").style.overflow_y_scroll, true);
+  });
+});
+
+describe("the agents who worked on a card", () => {
+  const short = (c) => c.slice("idle-rpg-board-card-".length);
+  const id = (card, t) => `idle-rpg-board-agent-${short(card)}-${t}`;
+  const pipId = (card, t) => `idle-rpg-board-pip-${short(card)}-${t}`;
+  const unknownId = (card, t) => `idle-rpg-board-unknown-${short(card)}-${t}`;
+
+  test("an agent that moved to another branch stays on the old card, dimmed, no pip, 'last here' in its tooltip; present on the new one", async () => {
+    const { v, m } = await mountWorld();
+    const gears = cardOf(v, "review", "acme/gears");
+    assert.equal(v.get(id(gears, "t2")).style.opacity, 1);
+    // t2 goes to a new branch of acme/widgets (t1's repo) and starts working
+    m.files["/w/widgets/.git/refs/heads/feat/other"] = `${sha("f")}\n`;
+    v.setAgents(v.world.agents.map((a) => (a.address === "t2" ? { ...a, status: "working", seq: a.seq + 1 } : a)));
+    v.world.panes = v.world.panes.map((p) => (p.pane === "p-t2" ? { ...p, cwd: "/w/widgets", branch: "feat/other" } : p));
+    v.advance(BOARD_REFRESH_OPEN_MS);
+    await v.settle();
+    v.advance(3 * 3600_000);
+    const name = v.view.cards.find((c) => c.branch === "fix/teeth").agents[0];
+    assert.deepEqual([name.address, name.present], ["t2", false]);
+    const past = v.get(id(gears, "t2"));
+    assert.equal(past.style.opacity, 0.55, "dimmed, still readable");
+    assert.ok(!v.has(pipId(gears, "t2")), "no status pip");
+    assert.match(past.tip, /: last here 3h ago$/);
+    assert.ok(!past.tip.startsWith("t2:"), "its live name, not its address");
+    assert.ok(v.images(id(gears, "t2")).some((p) => p.includes("classes/wizard/")), "still its class");
+    const other = v.ids("idle-rpg-board-card-").find((c) => v.text(c).includes("FEAT/OTHER"));
+    assert.ok(other, "a card for the new branch");
+    assert.equal(v.get(id(other, "t2")).style.opacity, 1);
+    assert.match(v.get(id(other, "t2")).tip, /: Working$/);
+    assert.ok(v.has(pipId(other, "t2")));
+  });
+
+  test("present agents drawn first, then remembered ones; one with no class a '?', its address in the tooltip; '+N' counts them all", async () => {
+    const { v } = await mountWorld();
+    const now = v.now;
+    const first = v.view.cards[0];
+    v.view.cards = [
+      {
+        ...first,
+        agents: [
+          { address: "t1", status: "done", present: true, lastSeenAt: null },
+          { address: "t3", status: "working", present: false, lastSeenAt: now - 5 * 60_000 },
+          { address: "gone", status: "idle", present: false, lastSeenAt: now - 3 * 86_400_000 },
+          { address: "t2", status: "idle", present: false, lastSeenAt: now - 2 * 3600_000 },
+        ],
+      },
+    ];
+    v.resize(1280, 360);
+    const card = `idle-rpg-board-card-${first.id}`;
+    const xs = ["t1", "t3", "gone", "t2"].map((t) => v.box(id(card, t)).x);
+    assert.deepEqual([...xs].sort((a, b) => a - b), xs, "in the order given");
+    assert.equal(v.get(id(card, "t1")).style.opacity, 1, "done, present: not dimmed");
+    assert.equal(v.get(pipId(card, "t1")).kids[0].style.bg, "#6fdc9a");
+    assert.match(v.get(id(card, "t3")).tip, /: last here 5m ago$/);
+    assert.equal(v.get(id(card, "gone")).tip, "gone: last here 3d ago");
+    assert.equal(v.get(id(card, "gone")).style.opacity, 0.55);
+    assert.deepEqual(v.text(unknownId(card, "gone")), ["?"]);
+    assert.ok(!v.images(id(card, "gone")).some((p) => p.includes("classes/")));
+    // narrow: two pictures fit an 80px card, then "+N" for the rest, remembered ones included
+    v.resize(320, 360);
+    assert.ok(v.text(card).includes("+3"), v.text(card).join());
+    assert.ok(v.has(id(card, "t1")) && !v.has(id(card, "t2")));
+  });
+
+  test("every id on a card unique, even for addresses ending like a part's name ('x' and 'x-status')", async () => {
+    const { v } = await mountWorld();
+    const first = v.view.cards[0];
+    const agents = ["x", "x-status", "x-unknown", "y-pip"].map((address) => ({ address, status: "working", present: true, lastSeenAt: null }));
+    v.view.cards = [{ ...first, agents }];
+    v.resize(1280, 360);
+    const ids = v.ids("idle-rpg-board-");
+    assert.equal(new Set(ids).size, ids.length, ids.join());
   });
 });
 
