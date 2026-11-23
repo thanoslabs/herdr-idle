@@ -1,7 +1,8 @@
 // Idle RPG's quest board: a read-only kanban of what the agents are working
-// on, one card per repo and branch an agent is on, in three columns:
-// "progress" (no pull request link seen yet), "review" (a pull request link
-// seen) and "completed" (the branch has been merged, per local git).
+// on, one card per repo and branch an agent is on (not the default branch),
+// in three columns: "progress" (no pull request link seen yet), "review" (a
+// pull request link seen) and "completed" (the branch has been merged, per
+// local git, or deleted here and on its remote after a pull request: Gone).
 //
 // Everything comes from the agents' own sessions and local files; nothing
 // goes over the network (git is run hardened against a repo's own settings:
@@ -34,8 +35,16 @@
 //   never done; a merged branch whose head moves on, or a merged head that is
 //   not the work seen, starts the card over (the name was reused). A squash or
 //   rebase merge leaves the branch's own commits out of the default branch, so
-//   it is not detected. For a space on another machine, files are read and
-//   git is run on that machine, through herdr-core (`on`).
+//   ancestry misses it; instead:
+// - Gone: no agent's pane names the branch, and neither refs/heads/<branch>
+//   nor refs/remotes/<remote>/<branch> is in the ref files (loose or
+//   packed-refs; in a reftable repo, `rev-parse --verify` says there is no
+//   such ref), on two checks in a row. Finished (completed) if it had a pull
+//   request link, or was seen with a commit of its own and seen pushed (its
+//   remote-tracking ref); otherwise abandoned, and the card goes.
+// - The default branch (origin/HEAD's, else main or master) gets no card.
+//   For a space on another machine, files are read and git is run on that
+//   machine, through herdr-core (`on`).
 //
 // The host passes `wait(ms)` (in main.js: `(ms) => new Promise((r) =>
 // cx.timer.after(ms, r))`; Herdr's engine has no usable setTimeout) to time
@@ -78,7 +87,8 @@ export const BOARD_LIMITS = {
   maxTickets: 4,
   agentsPerCard: 12, // agents a card remembers: all those on it now, then the most recently gone
   completedKeepMs: 24 * 3600_000, // completed cards stay a day after first seen completed
-  orphanKeepMs: 24 * 3600_000, // unfinished cards with no agent left stay a day
+  orphanKeepMs: 24 * 3600_000, // cards in review with no agent left stay a day
+  abandonedKeepMs: 2 * 3600_000, // cards in progress (no pull request link) with no agent left stay 2 hours
 };
 
 const TEXT_MAX = { repo: 120, branch: 120, project: 60, ticket: 32, url: 300 };
@@ -539,21 +549,41 @@ export function prsForRepo(prs, remote) {
 
 // The column a card belongs in. Merged counts only once the branch has been
 // seen not merged (a commit of its own): a branch just made from the default
-// branch is an ancestor of it too, link or no link.
+// branch is an ancestor of it too, link or no link. A branch gone both here
+// and as the remote's (`gone`: deleted after a squash or rebase merge, then
+// pruned) counts as finished only with evidence it was merged work
+// (goneFinished); otherwise it is abandoned and expires (cardAlive).
 export function columnOf(card) {
-  if (card.merged && !card.isDefault && card.hadOwnCommits) return "completed";
+  if (!card.isDefault && card.merged && card.hadOwnCommits) return "completed";
+  if (!card.isDefault && card.gone && goneFinished(card)) return "completed";
   return card.pr ? "review" : "progress";
 }
+
+// Whether a gone branch was finished work: it had a pull request link, or it
+// was seen with a commit of its own and seen pushed (its remote-tracking ref),
+// before both refs went. A branch never pushed and deleted is abandoned.
+export const goneFinished = (card) => !!card.pr || (!!card.hadOwnCommits && !!card.seenRemote);
 
 // Whether any agent is on the card's branch now (not only remembered).
 export const hasPresent = (card) => Array.isArray(card.agents) && card.agents.some((a) => a && a.present);
 
 // Whether a card is still shown at `now`. "No agent left" means none on the
-// branch now: the agents it only remembers do not keep it.
+// branch now: the agents it only remembers do not keep it. Completed: a day
+// after first seen completed. Otherwise, with nobody on it: gone (its branch
+// deleted everywhere, not finished) at once; in progress 2 hours, in review a
+// day after an agent was last on it.
 export function cardAlive(card, now, limits = BOARD_LIMITS) {
-  if (card.column === "completed" && card.completedAt != null && now - card.completedAt > limits.completedKeepMs) return false;
-  if (card.column !== "completed" && !hasPresent(card) && now - (card.lastSeenAt ?? 0) > limits.orphanKeepMs) return false;
-  return true;
+  if (card.column === "completed") return !(card.completedAt != null && now - card.completedAt > limits.completedKeepMs);
+  if (hasPresent(card)) return true;
+  if (card.gone) return false;
+  const keep = card.column === "progress" ? limits.abandonedKeepMs : limits.orphanKeepMs;
+  return now - (card.lastSeenAt ?? 0) <= keep;
+}
+
+// Whether `branch` is the repo's default branch, as board.js knows it: the
+// one origin/HEAD names, else "main" or "master". Agents on it get no card.
+export function isDefaultBranch(repo, branch) {
+  return repo && repo.defaultBranch != null ? branch === repo.defaultBranch : branch === "main" || branch === "master";
 }
 
 // Every agent a card has seen, merged with those on its branch now (`here`:
@@ -619,7 +649,10 @@ function settle(promise, ms, wait) {
 const ADDRESS = /^(?:[A-Za-z0-9_.-]{1,64}\/)?[A-Za-z0-9_.-]{1,64}$/;
 const STATUSES = new Set(["working", "blocked", "done", "idle"]);
 const ABANDONED = new Error("refresh abandoned");
+const MISSING = "missing"; // rev-parse said there is no such ref (not: it failed)
 const OUT_OF_READS = new Error("out of file reads");
+const READ_FAILED = Symbol("read failed"); // readTextFile rejected or timed out (not: the file is absent)
+const READ_MAX = 1024 * 1024; // readTextFile reads up to 1 MiB
 const STDOUT_MAX = 9 * 1024 * 1024; // more than exec and hc ever give (8 MiB)
 
 // new Board({ agents, panes, spaces, hc, exec, readTextFile, wait? }, options?)
@@ -683,6 +716,9 @@ export class Board {
     if (!data || data.version !== 1 || !Array.isArray(data.cards)) return;
     for (const raw of data.cards.slice(0, this.limits.maxCards)) {
       const r = revive(raw, this.ticketHosts, this.limits);
+      // A card for main or master never seen with work of its own: an agent on
+      // the default branch (saved before those got no card). Gone.
+      if (r && (r.branch === "main" || r.branch === "master") && !r.hadOwnCommits) continue;
       if (r && !this.records.has(r.id) && cardAlive(r, now, this.limits)) this.records.set(r.id, r);
     }
   }
@@ -722,8 +758,10 @@ export class Board {
     const panes = new Map(list(this.deps.panes).filter((p) => p && typeof p.pane === "string").map((p) => [p.pane, p]));
     const machines = new Map(list(this.deps.spaces).filter((s) => s && typeof s.id === "string").map((s) => [s.id, typeof s.machine === "string" ? s.machine : null]));
 
-    // 1. Who is where.
+    // 1. Who is where. An agent on the repo's default branch gets no card.
     const present = new Map(); // id -> { repo, branch, agents: [...] }
+    const onDefault = new Set(); // ids of default-branch "cards": none kept
+    const seenRepos = new Map(); // key -> repo, for restored cards (below)
     for (const a of agents) {
       if (!a || typeof a.address !== "string" || !ADDRESS.test(a.address) || a.address.startsWith("-")) continue;
       const pane = panes.get(a.pane);
@@ -731,8 +769,13 @@ export class Board {
       const machine = machines.get(a.space) ?? null;
       const repo = await this.#repoOf(machine, pane.cwd, now, call);
       if (!repo) continue;
+      seenRepos.set(repo.key, repo);
       const branch = pane.branch;
       const id = hashId(`${repo.key}\n${branch}`);
+      if (isDefaultBranch(repo, branch)) {
+        onDefault.add(id);
+        continue;
+      }
       let p = present.get(id);
       if (!p) present.set(id, (p = { repo, branch, agents: [] }));
       p.agents.push({
@@ -743,6 +786,8 @@ export class Board {
         seq: Number.isFinite(a.seq) ? a.seq : 0,
       });
     }
+
+    for (const id of onDefault) this.records.delete(id); // a saved one, or one from before
 
     // 2. Cards for them.
     for (const [id, p] of present) {
@@ -759,8 +804,16 @@ export class Board {
       r.remote = p.repo.remote;
       r.branch = clean(p.branch, TEXT_MAX.branch);
       r.rawBranch = p.branch;
-      r.isDefault = p.repo.defaultBranch != null ? p.branch === p.repo.defaultBranch : p.branch === "main" || p.branch === "master";
+      r.isDefault = isDefaultBranch(p.repo, p.branch); // false: those get no card (above)
       r.git = p.repo;
+      if (r.gone || r.goneAt != null) {
+        // An agent's pane names the branch: it is not gone. Confirmed gone
+        // before, it was made again: new work under the same name.
+        if (r.gone) this.#newGeneration(r);
+        r.gone = false;
+        r.goneAt = null;
+        r.gitCheckedAt = -Infinity;
+      }
       const agentsBySeq = [...p.agents].sort((x, y) => y.seq - x.seq);
       r.project = agentsBySeq.find((x) => x.project)?.project ?? r.project ?? "";
       r.agents = mergeAgents(r.agents, p.agents, now, this.limits.agentsPerCard);
@@ -771,6 +824,22 @@ export class Board {
     }
     // Cards nobody is on now keep their agents, remembered (not present).
     for (const r of this.records.values()) if (!present.has(r.id)) r.agents = mergeAgents(r.agents, [], now, this.limits.agentsPerCard);
+    // Restored cards (no paths in the save) get their repo back when an agent
+    // shows it again: the card's id is that repo's key and the branch, so
+    // they are checked again (merged, gone); one on its default branch goes.
+    for (const r of this.records.values()) {
+      if (r.git || !r.remote || !safeRef(r.branch)) continue;
+      for (const repo of seenRepos.values()) {
+        if (!repo.remote || hashId(`${repo.key}\n${r.branch}`) !== r.id) continue;
+        if (isDefaultBranch(repo, r.branch)) this.records.delete(r.id);
+        else {
+          r.git = repo;
+          r.rawBranch = r.branch;
+          r.remote = repo.remote;
+        }
+        break;
+      }
+    }
 
     // 3. Terminals, a few per refresh: never read first, then the longest unread.
     const candidates = [];
@@ -813,7 +882,7 @@ export class Board {
 
     // 4. Merged, for a few cards per refresh (those with agents first).
     const due = [...this.records.values()]
-          .filter((r) => r.git && !r.isDefault && !this.oldGit.has(r.git.machine ?? "") && now - r.gitCheckedAt >= this.limits.gitCheckMs)
+          .filter((r) => r.git && !r.isDefault && !r.gone && !this.oldGit.has(r.git.machine ?? "") && now - r.gitCheckedAt >= this.limits.gitCheckMs)
           .sort((x, y) => hasPresent(y) - hasPresent(x) || x.gitCheckedAt - y.gitCheckedAt);
     for (const r of due.slice(0, this.limits.gitChecksPerRefresh)) {
       r.gitCheckedAt = now;
@@ -862,16 +931,23 @@ export class Board {
   }
 
   async #read(path, machine, call) {
+    const text = await this.#readOrFail(path, machine, call);
+    return text === READ_FAILED ? null : text;
+  }
+
+  // The same, telling a file that is absent (null: readTextFile's answer for
+  // one) from a read that failed or timed out (READ_FAILED).
+  async #readOrFail(path, machine, call) {
     if (call.used.reads >= call.budget.reads) throw OUT_OF_READS;
     call.used.reads++;
     let text;
     try {
       text = await settle(this.deps.readTextFile(path, machine ? { on: machine } : undefined), this.limits.callTimeoutMs, this.wait);
     } catch {
-      text = null;
+      text = READ_FAILED;
     }
     this.#live(call);
-    return typeof text === "string" ? text : null;
+    return typeof text === "string" || text === READ_FAILED ? text : null;
   }
 
   async #git(args, cwd, machine, call) {
@@ -958,6 +1034,8 @@ export class Board {
           if ((await this.#read(joinPath(commonDir, "HEAD"), machine, call)) == null) return null;
         }
         const config = await this.#read(joinPath(commonDir, "config"), machine, call);
+        // A reftable repo keeps no ref files: a ref missing from them says nothing.
+        const refFiles = !/^\s*refstorage\s*=\s*"?reftable"?\s*$/im.test(config ?? "");
         const remote = pickRemote(parseGitConfigRemotes(config));
         const folder = baseName(commonDir) === ".git" ? baseName(parentPath(commonDir) ?? "") : baseName(dir);
         const display = remote ? clean(remote.slug, TEXT_MAX.repo) : clean(folder || baseName(dir), TEXT_MAX.repo);
@@ -972,27 +1050,48 @@ export class Board {
             defaultBranch = m[1].slice(remote.remote.length + 1);
           }
         }
-        return { key, display, remote: remote ? { host: remote.host, slug: remote.slug, name: remote.remote } : null, root: dir, gitDir, commonDir, machine, defaultRef, defaultBranch };
+        return { key, display, remote: remote ? { host: remote.host, slug: remote.slug, name: remote.remote } : null, root: dir, gitDir, commonDir, machine, defaultRef, defaultBranch, refFiles };
       }
       dir = parentPath(dir);
     }
     return null;
   }
 
-  // A ref's commit from git's files: the loose ref, else packed-refs.
+  // A ref's commit from git's files: the loose ref, else packed-refs. Sets
+  // `packed.unsure` when a miss proves nothing: a read failed, the loose file
+  // is there but holds no commit (a symbolic ref), or packed-refs may be cut
+  // short (readTextFile's 1 MiB; git ends the file with a newline).
   async #resolveRef(git, ref, call, packed) {
-    const loose = await this.#read(joinPath(git.commonDir, ...ref.split("/")), git.machine, call);
-    const sha = loose && loose.trim();
-    if (isSha(sha)) return sha;
-    if (!packed.refs) packed.refs = parsePackedRefs(await this.#read(joinPath(git.commonDir, "packed-refs"), git.machine, call));
+    const loose = await this.#readOrFail(joinPath(git.commonDir, ...ref.split("/")), git.machine, call);
+    if (loose === READ_FAILED) packed.unsure = true;
+    else if (loose != null) {
+      const sha = loose.trim();
+      if (isSha(sha)) return sha;
+      packed.unsure = true;
+    }
+    if (!packed.refs) {
+      const text = await this.#readOrFail(joinPath(git.commonDir, "packed-refs"), git.machine, call);
+      if (text === READ_FAILED || (typeof text === "string" && text && (!text.endsWith("\n") || text.length >= READ_MAX / 2))) packed.badPacked = true;
+      packed.refs = parsePackedRefs(text === READ_FAILED ? null : text);
+    }
+    if (packed.badPacked) packed.unsure = true;
     return isSha(packed.refs[ref]) ? packed.refs[ref] : null;
   }
 
   // A ref's commit from git itself (reftable repos, refs the files lack).
   async #revParse(git, ref, call) {
+    const s = await this.#revParseState(git, ref, call);
+    return isSha(s) ? s : null;
+  }
+
+  // The same, telling "no such ref" (MISSING: exit 1, nothing printed) from
+  // a failure or no git runs left (null).
+  async #revParseState(git, ref, call) {
     const r = await this.#git(["rev-parse", "--verify", "--quiet", "--end-of-options", `${ref}^{commit}`], git.root, git.machine, call);
-    const sha = r && r.code === 0 ? r.stdout.trim() : null;
-    return isSha(sha) ? sha : null;
+    if (!r) return null;
+    const out = typeof r.stdout === "string" ? r.stdout.trim() : "";
+    if (r.code === 0) return isSha(out) ? out : null;
+    return r.code === 1 && !out ? MISSING : null;
   }
 
   // The default branch's ref and its commit: <remote>/HEAD's file, else the
@@ -1044,6 +1143,9 @@ export class Board {
     r.mergedHead = null;
     r.descent = null;
     r.mergeCheck = null;
+    r.seenRemote = false;
+    r.gone = false;
+    r.goneAt = null;
   }
 
   async #checkMerged(r, call, now) {
@@ -1051,17 +1153,49 @@ export class Board {
     try {
       if (!git.remote || !safeRef(r.rawBranch)) return;
       const packed = {};
-      // The branch's commit: refs/heads/<branch>, else HEAD when detached.
-      let head = await this.#resolveRef(git, `refs/heads/${r.rawBranch}`, call, packed);
+      const branchRef = `refs/heads/${r.rawBranch}`;
+      const trackingRef = `refs/remotes/${git.remote.name}/${r.rawBranch}`;
+      // The branch's commit: refs/heads/<branch>; its remote-tracking ref is
+      // read until it has been seen once (the branch was pushed), and
+      // whenever the local one is missing. Files only: no git run.
+      const local = await this.#resolveRef(git, branchRef, call, packed);
+      const tracking = !local || !r.seenRemote ? await this.#resolveRef(git, trackingRef, call, packed) : null;
+      if (tracking) r.seenRemote = true;
+      const found = await this.#resolveBase(git, call, packed, now);
+      if (!found) return;
+      if (found.ref === trackingRef) return; // the default branch itself
+      let head = local ?? tracking;
+      let gone = false;
       if (!head) {
+        if (git.refFiles !== false && git.base && !git.base.viaGit) gone = !packed.unsure; // refs are in files (the default's was), and neither is there (every read answered)
+        else {
+          // Refs only git can read (reftable): ask it, within the budget.
+          const l = await this.#revParseState(git, branchRef, call);
+          if (isSha(l)) head = l;
+          else if (l === MISSING && !hasPresent(r)) {
+            const t = await this.#revParseState(git, trackingRef, call);
+            if (isSha(t)) {
+              head = t;
+              r.seenRemote = true;
+            } else if (t === MISSING) gone = true;
+          }
+        }
+      }
+      if (gone && !hasPresent(r)) {
+        // Gone both here and as the remote's. Seen so on two checks (a minute
+        // or more apart), so one failed read is not taken for a deletion.
+        if (r.goneAt == null) r.goneAt = now;
+        else if (now > r.goneAt) r.gone = true;
+        return;
+      }
+      r.goneAt = null;
+      if (!head && hasPresent(r)) {
+        // An agent on it, detached: HEAD's commit. (With nobody on it, the
+        // worktree's HEAD is another branch's, or another task's.)
         const h = await this.#read(joinPath(git.gitDir, "HEAD"), git.machine, call);
         if (isSha(h && h.trim())) head = h.trim();
       }
-      head ??= await this.#revParse(git, `refs/heads/${r.rawBranch}`, call);
       if (!head) return;
-      const found = await this.#resolveBase(git, call, packed, now);
-      if (!found) return;
-      if (found.ref === `refs/remotes/${git.remote.name}/${r.rawBranch}`) return; // the default branch itself
       const base = found.sha;
       if (r.mergeCheck && r.mergeCheck.head === head && r.mergeCheck.base === base) return; // nothing moved
       // Merged at one commit, now at another: new work under the same name.
@@ -1160,6 +1294,8 @@ function persisted(r, limits = BOARD_LIMITS) {
     hadOwnCommits: r.hadOwnCommits,
     unmergedHead: r.unmergedHead ?? null,
     mergedHead: r.mergedHead ?? null,
+    seenRemote: !!r.seenRemote,
+    gone: !!r.gone,
     gen: r.gen ?? 0,
     completedAt: r.completedAt,
     lastSeenAt: r.lastSeenAt,
@@ -1217,6 +1353,9 @@ function revive(raw, ticketHosts = DEFAULT_TICKET_HOSTS, limits = BOARD_LIMITS) 
     hadOwnCommits: raw.hadOwnCommits === true,
     unmergedHead: isSha(raw.unmergedHead) ? raw.unmergedHead : null,
     mergedHead: isSha(raw.mergedHead) ? raw.mergedHead : null,
+    seenRemote: raw.seenRemote === true,
+    gone: raw.gone === true,
+    goneAt: null,
     isDefault: false,
     completedAt: num(raw.completedAt),
     lastSeenAt: num(raw.lastSeenAt) ?? 0,

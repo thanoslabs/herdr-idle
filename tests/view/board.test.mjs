@@ -440,3 +440,25 @@ describe("the board's cards in the save", () => {
     }
   });
 });
+
+describe("the quest board's columns: the default branch and gone branches", () => {
+  test("an agent that moves to main leaves no card for main; its squash-merged branch, deleted and pruned, moves to completed", async () => {
+    const { v, m } = await mountWorld();
+    assert.ok(cardOf(v, "review", "acme/gears"));
+    // t2 merges its pull request (squash), deletes the branch and prunes, then sits on main
+    m.files["/w/gears/.git/refs/remotes/origin/fix/teeth"] = `${sha("c")}\n`; // pushed: seen by the first checks
+    v.advance(2 * BOARD_REFRESH_OPEN_MS);
+    await v.settle();
+    v.world.panes = v.world.panes.map((p) => (p.pane === "p-t2" ? { ...p, branch: "main" } : p));
+    delete m.files["/w/gears/.git/refs/heads/fix/teeth"];
+    delete m.files["/w/gears/.git/refs/remotes/origin/fix/teeth"];
+    for (let i = 0; i < 6; i++) {
+      v.advance(BOARD_REFRESH_OPEN_MS);
+      await v.settle();
+    }
+    assert.ok(cardOf(v, "completed", "acme/gears"), "gone both places, with its pull request: completed");
+    assert.deepEqual(v.text(cardOf(v, "completed", "acme/gears")).slice(1), ["ACME/GEARS", "FIX/TEETH", "#12"]);
+    assert.ok(!v.view.cards.some((c) => c.branch === "main"), "no card for main");
+    assert.equal(v.view.cards.length, 3);
+  });
+});
