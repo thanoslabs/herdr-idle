@@ -383,13 +383,14 @@ describe("the collector", () => {
     assert.equal(b.cards()[0].column, "review");
   });
 
-  test("an agent on the default branch is never completed", async () => {
+  test("an agent on the default branch gets no card: no terminal read, no git", async () => {
     const h = oneAgent({ branch: "main" });
     const b = board(h);
     await b.refresh(0);
     h.terminals.t1 = "https://github.com/acme/widgets/pull/3";
     await b.refresh(61_000);
-    assert.equal(b.cards()[0].column, "review");
+    assert.deepEqual(b.cards(), []);
+    assert.equal(h.calls.hc.length, 0);
     assert.equal(h.calls.exec.length, 0);
   });
 
@@ -513,7 +514,7 @@ describe("the collector", () => {
     assert.deepEqual(b.cards()[0].tickets, ["PROJ-7", "OPS-77"]);
   });
 
-  test("expiry: a finished card a day after first seen completed; an abandoned one a day after its agents left", async () => {
+  test("expiry: a finished card a day after first seen completed; one in review a day after its agents left", async () => {
     const h = oneAgent({ text: created("feat/PROJ-7-x", 12) });
     const b = board(h);
     await b.refresh(0);
@@ -524,14 +525,16 @@ describe("the collector", () => {
     assert.equal(b.cards().length, 1);
     await b.refresh(61_000 + 24 * HOUR + 1);
     assert.equal(b.cards().length, 0, "hidden though its agent is still there");
-    // An unfinished card whose agent left.
-    const h2 = oneAgent();
+    // A card in review whose agent left (in progress: 2 hours, below).
+    const h2 = oneAgent({ text: created("feat/PROJ-7-x", 12) });
     const b2 = board(h2);
     await b2.refresh(0);
     h2.agents = [];
     await b2.refresh(HOUR);
     assert.equal(b2.cards().length, 1);
-    await b2.refresh(25 * HOUR + 1);
+    await b2.refresh(24 * HOUR);
+    assert.equal(b2.cards()[0].column, "review");
+    await b2.refresh(24 * HOUR + 1);
     assert.equal(b2.cards().length, 0);
     assert.equal(b2.toJSON().cards.length, 0, "and forgotten");
   });
@@ -866,16 +869,16 @@ describe("remembered agents: who worked on what", () => {
     }
   });
 
-  test("expiry unchanged: remembered agents keep no card; a day after the last agent on it left, it goes", async () => {
+  test("expiry: remembered agents keep no card; 2 hours after the last agent on an in-progress card left, it goes", async () => {
     const h = twoBranches();
     const b = board(h);
     await b.refresh(0);
     h.panes = [pane(1, "/w/widgets", "feat/next")];
     await b.refresh(HOUR);
     assert.equal(b.cards().length, 2);
-    await b.refresh(24 * HOUR);
-    assert.ok(on(b, "feat/PROJ-7-x"), "a day after its last agent was seen on it (at 0)");
-    await b.refresh(24 * HOUR + 1);
+    await b.refresh(2 * HOUR);
+    assert.ok(on(b, "feat/PROJ-7-x"), "2 hours after its last agent was seen on it (at 0)");
+    await b.refresh(2 * HOUR + 1);
     assert.equal(on(b, "feat/PROJ-7-x"), undefined, "gone though it still remembers t1");
     assert.deepEqual(b.toJSON().cards.map((c) => c.branch), ["feat/next"], "and forgotten");
     assert.deepEqual(who(on(b, "feat/next")), [["t1", true, "working", null]]);
@@ -1093,5 +1096,383 @@ describe("the second review's cases", () => {
 
   test("status words with numbers are not tickets", () => {
     assert.deepEqual(B.scanText("ERR-404 PORT-8080 EXIT-1 OOMKILLED-1 ERROR-2 STATUS-3 SIG-9 OPS-1").tickets, ["OPS-1"]);
+  });
+});
+
+describe("accurate columns: gone branches, abandoned cards, the default branch", () => {
+  const PR = (n) => `https://github.com/o/r/pull/${n}`;
+  const BR = "feat/x";
+  const LOCAL = `/r/.git/refs/heads/${BR}`;
+  const TRACKING = `/r/.git/refs/remotes/origin/${BR}`;
+  // t1 on feat/x in /r (o/r), its own commit TIP over origin/main's MAIN;
+  // pushed (origin/feat/x's file) unless `pushed` is false.
+  function scene({ text = "", pushed = true, packed = false, originHead = true } = {}) {
+    const files = {};
+    repo(files, "/r", { remote: "git@github.com:o/r.git", branch: BR, packed, originHead });
+    if (pushed) files[TRACKING] = TIP + "\n";
+    return fakeHost({ files, agents: [agent(1)], panes: [pane(1, "/r", BR)], spaces: [{ id: "s1", machine: null }], terminals: { t1: text } });
+  }
+  // The agent moves to main (no card there), its branch's refs deleted (as
+  // `gh pr merge --delete-branch` then `git fetch --prune` leave them).
+  function leaveAndDelete(h, { local = true, tracking = true } = {}) {
+    h.panes = [pane(1, "/r", "main")];
+    if (local) delete h.files[LOCAL];
+    if (tracking) delete h.files[TRACKING];
+  }
+  const card = (b) => b.cards().find((c) => c.branch === BR);
+
+  test("columnOf and goneFinished: gone with a link, or pushed with work of its own, is completed; else not", () => {
+    assert.equal(B.columnOf({ gone: true, pr: { number: 1 } }), "completed");
+    assert.equal(B.columnOf({ gone: true, pr: null, hadOwnCommits: true, seenRemote: true }), "completed");
+    assert.equal(B.columnOf({ gone: true, pr: null, hadOwnCommits: true, seenRemote: false }), "progress", "never pushed");
+    assert.equal(B.columnOf({ gone: true, pr: null, hadOwnCommits: false, seenRemote: true }), "progress", "no work of its own seen");
+    assert.equal(B.columnOf({ gone: true, pr: { number: 1 }, isDefault: true }), "review");
+    assert.equal(B.columnOf({ gone: false, pr: null, hadOwnCommits: true, seenRemote: true }), "progress");
+  });
+
+  test("cardAlive: in progress 2 hours with nobody on it, in review a day, gone and unfinished at once, anything with an agent on it kept", () => {
+    const L = B.BOARD_LIMITS;
+    assert.equal(L.abandonedKeepMs, 2 * HOUR);
+    assert.equal(L.orphanKeepMs, 24 * HOUR);
+    assert.equal(L.completedKeepMs, 24 * HOUR);
+    const at = (column, extra = {}) => ({ column, lastSeenAt: 0, agents: [], ...extra });
+    assert.ok(B.cardAlive(at("progress"), 2 * HOUR));
+    assert.ok(!B.cardAlive(at("progress"), 2 * HOUR + 1));
+    assert.ok(B.cardAlive(at("review"), 24 * HOUR));
+    assert.ok(!B.cardAlive(at("review"), 24 * HOUR + 1));
+    assert.ok(!B.cardAlive(at("progress", { gone: true }), 1));
+    assert.ok(B.cardAlive(at("progress", { gone: true, agents: [{ address: "t1", present: true }] }), 1));
+    assert.ok(B.cardAlive(at("progress", { agents: [{ address: "t1", present: true }] }), 100 * HOUR));
+    assert.ok(B.cardAlive(at("completed", { completedAt: 0 }), 24 * HOUR));
+    assert.ok(!B.cardAlive(at("completed", { completedAt: 0 }), 24 * HOUR + 1));
+  });
+
+  test("the owner's case: squash-merged, the branch deleted and pruned, no link seen: completed after two checks, with no git run", async () => {
+    const h = scene();
+    const b = board(h);
+    await b.refresh(0);
+    assert.equal(card(b).column, "progress");
+    assert.equal(h.calls.exec.length, 1, "the first merged check");
+    leaveAndDelete(h);
+    await b.refresh(61_000);
+    assert.equal(card(b).column, "progress", "seen gone once: a failed read looks the same");
+    await b.refresh(122_000);
+    assert.equal(card(b).column, "completed");
+    assert.equal(card(b).completedAt, 122_000);
+    assert.equal(h.calls.exec.length, 1, "files only: no git run to see it gone");
+    assert.ok(!h.calls.exec.some((e) => e.args.includes("fetch") || e.cmd !== "git"));
+    const reads = h.calls.reads.length;
+    await b.refresh(183_000);
+    assert.equal(h.calls.reads.length, reads, "a gone card is not checked again");
+    assert.equal(card(b).column, "completed");
+    await b.refresh(122_000 + 24 * HOUR + 1);
+    assert.equal(card(b), undefined, "a day after, like any completed card");
+  });
+
+  test("the same from packed-refs: gone from packed-refs and loose files both", async () => {
+    const h = scene({ packed: true, pushed: false });
+    h.files["/r/.git/packed-refs"] += `${TIP} refs/remotes/origin/${BR}\n`;
+    const b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/r", "main")];
+    h.files["/r/.git/packed-refs"] = `# pack-refs with: peeled fully-peeled sorted\n${MAIN} refs/remotes/origin/main\n`;
+    await b.refresh(61_000);
+    await b.refresh(122_000);
+    assert.equal(card(b).column, "completed");
+  });
+
+  test("a card in review whose branch is gone both places: completed, pushed or not as far as the board saw", async () => {
+    const h = scene({ text: created(BR, 12, "o/r"), pushed: false });
+    const b = board(h);
+    await b.refresh(0);
+    assert.equal(card(b).column, "review");
+    leaveAndDelete(h);
+    await b.refresh(61_000);
+    await b.refresh(122_000);
+    assert.deepEqual([card(b).column, card(b).prs.map((p) => p.number)], ["completed", [12]]);
+  });
+
+  test("deleted here but still on origin: not finished (its head read from origin's ref, no extra git)", async () => {
+    const h = scene();
+    const b = board(h);
+    await b.refresh(0);
+    leaveAndDelete(h, { tracking: false });
+    for (let k = 1; k <= 3; k++) await b.refresh(k * 61_000);
+    assert.equal(card(b).column, "progress");
+    assert.equal(h.calls.exec.length, 1, "the same commit as before: nothing moved");
+    // merged (a merge commit) and fetched, origin's branch still there: completed as before
+    mergeItTo(h, sha("c"));
+    await b.refresh(4 * 61_000);
+    assert.equal(card(b).column, "completed");
+  });
+  function mergeItTo(h, c) {
+    h.files["/r/.git/refs/remotes/origin/main"] = c + "\n";
+    h.ancestors.add(`${TIP}>${c}`);
+  }
+
+  test("never pushed, deleted here, no link: abandoned, the card goes (not completed)", async () => {
+    const h = scene({ pushed: false });
+    const b = board(h);
+    await b.refresh(0);
+    leaveAndDelete(h);
+    await b.refresh(61_000);
+    assert.ok(card(b), "seen gone once");
+    await b.refresh(122_000);
+    assert.equal(card(b), undefined);
+    assert.deepEqual(b.toJSON().cards, [], "and forgotten");
+  });
+
+  test("a branch first seen already merged, then deleted: no work of its own seen, so it goes, never completed", async () => {
+    const h = scene();
+    h.ancestors.add(`${TIP}>${MAIN}`);
+    const b = board(h);
+    await b.refresh(0);
+    leaveAndDelete(h);
+    await b.refresh(61_000);
+    await b.refresh(122_000);
+    assert.equal(card(b), undefined);
+  });
+
+  test("an agent whose pane still names the branch keeps it from being gone, refs or no refs", async () => {
+    const h = scene();
+    const b = board(h);
+    await b.refresh(0);
+    delete h.files[LOCAL];
+    delete h.files[TRACKING];
+    for (let k = 1; k <= 3; k++) await b.refresh(k * 61_000);
+    assert.equal(card(b).column, "progress");
+    assert.equal(card(b).agents[0].present, true);
+  });
+
+  test("one missed read is not a deletion: gone once, there again, gone once more is still not two in a row", async () => {
+    const h = scene();
+    const b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/r", "main")];
+    h.files[LOCAL] = new Error("EIO");
+    h.files[TRACKING] = new Error("EIO");
+    await b.refresh(61_000);
+    h.files[LOCAL] = TIP;
+    h.files[TRACKING] = TIP;
+    await b.refresh(122_000);
+    delete h.files[LOCAL];
+    delete h.files[TRACKING];
+    await b.refresh(183_000);
+    assert.equal(card(b).column, "progress");
+    await b.refresh(244_000);
+    assert.equal(card(b).column, "completed");
+  });
+
+  test("no default ref in the files (only git could say): nothing is taken as gone from missing files", async () => {
+    const h = scene({ originHead: false });
+    delete h.files["/r/.git/refs/remotes/origin/main"];
+    h.revs["refs/remotes/origin/HEAD"] = MAIN;
+    h.revs[`refs/heads/${BR}`] = TIP;
+    h.revs[`refs/remotes/origin/${BR}`] = TIP;
+    const b = board(h);
+    await b.refresh(0);
+    leaveAndDelete(h);
+    for (let k = 1; k <= 3; k++) await b.refresh(k * 61_000);
+    assert.equal(card(b).column, "progress", "git still has both refs");
+  });
+
+  test("reftable: gone per git rev-parse (no such ref, twice), within the git budget; a failed run is not 'gone'", async () => {
+    const files = { "/w/rt/.git/HEAD": "ref: refs/heads/.invalid\n", "/w/rt/.git/config": '[core]\n\trepositoryformatversion = 1\n[extensions]\n\trefStorage = reftable\n[remote "origin"]\nurl = git@github.com:o/rt.git\n' };
+    const revs = { [`refs/heads/${BR}`]: TIP, [`refs/remotes/origin/${BR}`]: TIP, "refs/remotes/origin/HEAD": MAIN };
+    const h = fakeHost({ files, agents: [agent(1)], panes: [pane(1, "/w/rt", BR)], terminals: { t1: created(BR, 5, "o/rt") }, revs });
+    const b = board(h);
+    await b.refresh(0);
+    assert.equal(card(b).column, "review");
+    const steady = h.calls.exec.length;
+    await b.refresh(61_000);
+    assert.equal(h.calls.exec.length - steady, 2, "steady state as before: the two rev-parses, no merge-base");
+    h.panes = [pane(1, "/w/rt", "main")];
+    delete h.revs[`refs/heads/${BR}`];
+    delete h.revs[`refs/remotes/origin/${BR}`];
+    // a git that fails (not "no such ref") says nothing
+    const exec = h.deps.exec;
+    h.deps.exec = async (cmd, args, opts) => (args.includes(`refs/heads/${BR}^{commit}`) ? (h.calls.exec.push({ cmd, args, opts }), { code: 128, stdout: "", stderr: "fatal" }) : exec(cmd, args, opts));
+    for (let k = 2; k <= 4; k++) await b.refresh(k * 61_000);
+    assert.equal(card(b).column, "review");
+    h.deps.exec = exec;
+    const before = h.calls.exec.length;
+    const used = await b.refresh(5 * 61_000);
+    assert.ok(used.exec <= B.BOARD_LIMITS.execPerRefresh);
+    assert.deepEqual(h.calls.exec.slice(before).map((e) => e.args.at(-1)), ["refs/remotes/origin/HEAD^{commit}", `refs/heads/${BR}^{commit}`, `refs/remotes/origin/${BR}^{commit}`]);
+    await b.refresh(6 * 61_000);
+    assert.equal(card(b).column, "completed");
+    // no git runs left: skipped, not gone
+    const h2 = fakeHost({ files, agents: [agent(1)], panes: [pane(1, "/w/rt", BR)], terminals: { t1: created(BR, 5, "o/rt") }, revs: { ...revs } });
+    const b2 = board(h2, { limits: { execPerRefresh: 2 } });
+    await b2.refresh(0);
+    h2.panes = [pane(1, "/w/rt", "main")];
+    delete h2.revs[`refs/heads/${BR}`];
+    delete h2.revs[`refs/remotes/origin/${BR}`];
+    for (let k = 1; k <= 3; k++) await b2.refresh(k * 61_000);
+    assert.equal(card(b2).column, "review", "origin's ref never asked: out of git runs");
+    assert.ok(h2.calls.exec.length <= 2 * 4);
+  });
+
+  test("a reftable repo is never judged by missing files, even when the default ref's file is there", async () => {
+    const h = scene({ text: created(BR, 5, "o/r") });
+    h.files["/r/.git/config"] += "[extensions]\n\trefstorage = reftable\n";
+    h.revs[`refs/heads/${BR}`] = TIP;
+    const b = board(h);
+    await b.refresh(0);
+    leaveAndDelete(h);
+    for (let k = 1; k <= 3; k++) await b.refresh(k * 61_000);
+    assert.equal(card(b).column, "review", "git still has refs/heads/feat/x");
+  });
+
+  test("a gone card's branch made again (an agent back on the name): starts over in progress, no old link", async () => {
+    const h = scene({ text: created(BR, 12, "o/r") });
+    const b = board(h);
+    await b.refresh(0);
+    leaveAndDelete(h);
+    await b.refresh(61_000);
+    await b.refresh(122_000);
+    assert.equal(card(b).column, "completed");
+    h.files[LOCAL] = MAIN + "\n";
+    h.panes = [pane(1, "/r", BR)];
+    await b.refresh(130_000);
+    assert.deepEqual([card(b).column, card(b).prs], ["progress", []]);
+  });
+
+  test("an in-progress card nobody is on goes 2 hours after an agent was last on it; one in review stays a day", async () => {
+    const files = {};
+    repo(files, "/r", { remote: "git@github.com:o/r.git", branch: BR });
+    files["/r/.git/refs/heads/feat/y"] = TIP;
+    const h = fakeHost({ files, agents: [agent(1), agent(2)], panes: [pane(1, "/r", BR), pane(2, "/r", "feat/y")], terminals: { t1: "", t2: created("feat/y", 7, "o/r") } });
+    const b = board(h);
+    await b.refresh(0);
+    h.agents = [];
+    await b.refresh(2 * HOUR);
+    assert.deepEqual(b.cards().map((c) => c.column).sort(), ["progress", "review"]);
+    await b.refresh(2 * HOUR + 1);
+    assert.deepEqual(b.cards().map((c) => c.column), ["review"]);
+    await b.refresh(24 * HOUR + 1);
+    assert.deepEqual(b.cards(), []);
+  });
+
+  test("steady state unchanged: no git runs while nothing moves, and the tracking ref read only until seen", async () => {
+    const h = scene();
+    h.agents = [agent(1, { status: "idle" })];
+    const b = board(h);
+    const used = [];
+    for (let k = 0; k < 5; k++) used.push(await b.refresh(k * 61_000));
+    assert.deepEqual(used.map((u) => u.exec), [1, 0, 0, 0, 0]);
+    const trackingReads = h.calls.reads.filter((r) => r.path === TRACKING).length;
+    assert.equal(trackingReads, 1, "pushed once seen: not read again while the branch is here");
+    assert.ok(used.slice(1).every((u) => u.reads <= 2), JSON.stringify(used));
+  });
+
+  test("the default branch: origin/HEAD's when it names one, else main or master; a card for it from before goes", async () => {
+    // origin/HEAD names develop: develop gets no card, main is a branch like any other
+    const files = {};
+    repo(files, "/r", { remote: "git@github.com:o/r.git", branch: "main" });
+    files["/r/.git/refs/remotes/origin/HEAD"] = "ref: refs/remotes/origin/develop\n";
+    files["/r/.git/refs/remotes/origin/develop"] = MAIN;
+    files["/r/.git/refs/heads/develop"] = MAIN;
+    const h = fakeHost({ files, agents: [agent(1), agent(2)], panes: [pane(1, "/r", "main"), pane(2, "/r", "develop")], terminals: { t1: "", t2: "" } });
+    const b = board(h);
+    await b.refresh(0);
+    assert.deepEqual(b.cards().map((c) => c.branch), ["main"]);
+    assert.ok(!h.calls.hc.some((c) => c[1] === "t2"), "its terminal not read");
+    // no origin/HEAD: main and master get no card
+    const h2 = fakeHost({ files: (() => { const f = {}; repo(f, "/m", { remote: "git@github.com:o/m.git", branch: "master", originHead: false }); return f; })(), agents: [agent(1)], panes: [pane(1, "/m", "master")], terminals: { t1: "" } });
+    const b2 = board(h2);
+    await b2.refresh(0);
+    assert.deepEqual(b2.cards(), []);
+  });
+
+  test("restored: an old save's card for main goes; one for another branch stays; a card of the repo's own default (develop) goes once the repo is seen", async () => {
+    const id = (repoKey, branch) => B.hashId(`${repoKey}\n${branch}`);
+    const old = (branch, extra = {}) => ({ id: id("github.com/o/r", branch), repo: "o/r", host: "github.com", slug: "o/r", branch, project: "P", tickets: [], pr: null, agents: [{ address: "t1", status: "idle", lastSeenAt: 1000 }], merged: false, hadOwnCommits: false, completedAt: null, lastSeenAt: 1000, updatedAt: 1000, ...extra });
+    // as the board saved them before: no `gone` or `seenRemote`
+    const saved = { version: 1, cards: [old("main"), old("master", { pr: { url: PR(3), number: 3 } }), old("develop"), old(BR, { hadOwnCommits: true, unmergedHead: TIP })] };
+    const files = {};
+    repo(files, "/r", { remote: "git@github.com:o/r.git", branch: "feat/other" });
+    files["/r/.git/refs/remotes/origin/HEAD"] = "ref: refs/remotes/origin/develop\n";
+    files["/r/.git/refs/remotes/origin/develop"] = MAIN;
+    const h = fakeHost({ files, agents: [agent(2)], panes: [pane(2, "/r", "feat/other")], terminals: { t2: "" } });
+    const b = board(h);
+    b.restore(JSON.parse(JSON.stringify(saved)), 2000);
+    assert.deepEqual(b.cards(2000).map((c) => c.branch).sort(), ["develop", BR].sort(), "main and master dropped at once");
+    await b.refresh(3000);
+    assert.deepEqual(b.cards().map((c) => c.branch).sort(), [BR, "feat/other"].sort(), "develop, the repo's default, gone once the repo is seen");
+    // A restored card is checked again once its repo is seen: here, gone both places
+    // with no link and never seen pushed (the old save cannot say): it goes.
+    await b.refresh(64_000);
+    await b.refresh(125_000);
+    assert.deepEqual(b.cards().map((c) => c.branch), ["feat/other"]);
+    // gone and seenRemote round-trip; junk is false
+    const r2 = new B.Board(fakeHost().deps);
+    r2.restore({ version: 1, cards: [old(BR, { gone: true, seenRemote: true, hadOwnCommits: true }), old("feat/q", { gone: "yes", seenRemote: 1 }), old("feat/z", { gone: true, hadOwnCommits: true })] }, 2000);
+    assert.deepEqual(r2.cards(2000).map((c) => [c.branch, c.column]).sort(), [["feat/q", "progress"], [BR, "completed"]], "gone and unfinished (feat/z): not kept");
+    assert.deepEqual(r2.toJSON().cards.map((c) => [c.branch, c.gone, c.seenRemote]).sort(), [["feat/q", false, false], [BR, true, true]]);
+  });
+
+  test("a restored, pushed card squash-merged while Herdr was closed completes once its repo is seen again", async () => {
+    const h = scene();
+    const b = board(h);
+    await b.refresh(0);
+    const saved = JSON.parse(JSON.stringify(b.toJSON()));
+    assert.equal(saved.cards[0].seenRemote, true);
+    leaveAndDelete(h);
+    const again = board(h);
+    again.restore(saved, 1000);
+    await again.refresh(2000);
+    await again.refresh(63_000);
+    assert.equal(card(again).column, "completed");
+    assert.ok(!h.calls.exec.some((e) => !e.args.slice(0, GIT.length).every((a, i) => a === GIT[i])));
+  });
+
+  test("a miss that proves nothing is not gone: packed-refs unreadable or cut short, a symbolic ref, with a link", async () => {
+    // the branch's refs only in packed-refs (after `git gc`), the default's loose
+    const packedScene = () => {
+      const h = scene({ text: created(BR, 12, "o/r"), packed: true, pushed: false });
+      h.files["/r/.git/refs/remotes/origin/main"] = MAIN + "\n";
+      h.files["/r/.git/packed-refs"] += `${TIP} refs/remotes/origin/${BR}\n`;
+      return h;
+    };
+    const runs = async (h, b) => {
+      for (let k = 1; k <= 4; k++) await b.refresh(k * 61_000);
+      return card(b).column;
+    };
+    // packed-refs fails to read on every check (too big, EIO): unknown, not gone
+    let h = packedScene();
+    let b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/r", "main")];
+    h.files["/r/.git/packed-refs"] = new Error("EIO");
+    assert.equal(await runs(h, b), "review");
+    // packed-refs cut short (no final newline): its refs may be past the cut
+    h = packedScene();
+    b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/r", "main")];
+    h.files["/r/.git/packed-refs"] = h.files["/r/.git/packed-refs"].split("\n").slice(0, 2).join("\n").slice(0, -3);
+    assert.equal(await runs(h, b), "review");
+    // the branch's loose file is a symbolic ref: it is there
+    h = scene({ text: created(BR, 12, "o/r") });
+    b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/r", "main")];
+    h.files[LOCAL] = "ref: refs/heads/feat/other\n";
+    delete h.files[TRACKING];
+    assert.equal(await runs(h, b), "review");
+  });
+
+  test("a card nobody is on never takes the worktree's HEAD for its head (another task's commit)", async () => {
+    const h = scene({ pushed: false });
+    h.files["/r/.git/refs/heads/feat/x"] = new Error("EIO");
+    const b = board(h);
+    await b.refresh(0);
+    h.panes = [pane(1, "/r", "main")];
+    h.files["/r/.git/HEAD"] = sha("d") + "\n"; // detached at some other commit
+    const before = h.calls.exec.length;
+    for (let k = 1; k <= 3; k++) await b.refresh(k * 61_000);
+    assert.equal(h.calls.exec.length, before, "no merge-base on another commit");
+    assert.equal(card(b).column, "progress");
   });
 });
