@@ -44,7 +44,7 @@ jobs:
           limit=60000
           size="$(wc -c < RECIPE.md | tr -d ' ')"
           if [ "$size" -gt "$limit" ]; then
-            echo "Error: RECIPE.md is $size bytes, over $limit. Herdr's gallery drops the layout's listing past 64 KB: tighten the recipe (state each fact once, tables for runs of numbers) before adding to it."
+            echo "Error: RECIPE.md is $size bytes, over $limit. Herdr's gallery drops the layout's listing past 64 KB: keep it a brief (behaviour and key numbers, not the code's sizes and offsets; each fact once) before adding to it."
             exit 1
           fi
           echo "RECIPE.md: $size bytes (limit $limit)"
